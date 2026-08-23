@@ -120,9 +120,13 @@ export function SessionView(props: { id: string }): ReactNode {
         max={480}
         first={
           <div className="feed" ref={feedRef}>
-            {events.map((event) => (
-              <EventRow key={event.id} event={event} />
-            ))}
+            {groupEvents(events).map((item) =>
+              item.kind === "tools" ? (
+                <ToolGroup key={item.events[0]!.id} events={item.events} />
+              ) : (
+                <EventRow key={item.event.id} event={item.event} />
+              ),
+            )}
             {events.length === 0 && (
               <div className="empty">No journal events yet.</div>
             )}
@@ -162,6 +166,92 @@ function payloadOf(event: JournalEvent): Record<string, unknown> {
   return typeof event.payload === "object" && event.payload !== null
     ? (event.payload as Record<string, unknown>)
     : {};
+}
+
+// -- tool grouping -----------------------------------------------------------
+
+const TOOL_TYPES = new Set(["tool_call", "tool_result", "tool_error"]);
+
+export type FeedItem =
+  | { kind: "event"; event: JournalEvent }
+  | { kind: "tools"; events: JournalEvent[] };
+
+/**
+ * Collapse consecutive runs of tool activity into one group. Anything else
+ * (turn text, thinking, injections, turn ends) breaks the run — matching the
+ * intuition that tool chatter between visible turns is one unit of work.
+ * Runs with a single tool call stay inline; grouping one card adds friction.
+ */
+export function groupEvents(events: readonly JournalEvent[]): FeedItem[] {
+  const items: FeedItem[] = [];
+  let run: JournalEvent[] = [];
+
+  const flush = () => {
+    if (run.length === 0) return;
+    const calls = run.filter((e) => e.type === "tool_call").length;
+    if (calls >= 2) {
+      items.push({ kind: "tools", events: run });
+    } else {
+      for (const event of run) items.push({ kind: "event", event });
+    }
+    run = [];
+  };
+
+  for (const event of events) {
+    if (TOOL_TYPES.has(event.type)) {
+      run.push(event);
+    } else {
+      flush();
+      items.push({ kind: "event", event });
+    }
+  }
+  flush();
+  return items;
+}
+
+function toolName(event: JournalEvent): string {
+  const payload = payloadOf(event);
+  return String(payload.name ?? payload.toolName ?? payload.tool ?? "tool");
+}
+
+/** `bash ×2, write ×1` style tally of a group's tool calls. */
+export function groupLabel(events: readonly JournalEvent[]): string {
+  const tally = new Map<string, number>();
+  for (const event of events) {
+    if (event.type !== "tool_call") continue;
+    const name = toolName(event);
+    tally.set(name, (tally.get(name) ?? 0) + 1);
+  }
+  return [...tally.entries()]
+    .map(([name, count]) => (count > 1 ? `${name} ×${count}` : name))
+    .join(", ");
+}
+
+function ToolGroup(props: { events: JournalEvent[] }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const calls = props.events.filter((e) => e.type === "tool_call").length;
+  const errors = props.events.filter((e) => e.type === "tool_error").length;
+  return (
+    <div className={`tool-group${errors > 0 ? " tool-group-errors" : ""}`}>
+      <button
+        type="button"
+        className="tool-group-head"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="tool-caret">{open ? "▾" : "▸"}</span>
+        <b>{calls} tool calls</b>
+        <span className="tool-group-tally">{groupLabel(props.events)}</span>
+        {errors > 0 && <span className="tool-group-err">✗ {errors}</span>}
+      </button>
+      {open && (
+        <div className="tool-group-body">
+          {props.events.map((event) => (
+            <EventRow key={event.id} event={event} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function EventRow(props: { event: JournalEvent }): ReactNode {

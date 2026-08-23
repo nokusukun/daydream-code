@@ -504,6 +504,59 @@ h2 {
   overflow-y: auto;
 }
 
+.tool-group {
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-input);
+  align-self: stretch;
+  margin: 0 24px 0 0;
+}
+
+.tool-group-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 6px 10px;
+}
+
+.tool-group-head b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tool-group-tally {
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-group-err {
+  margin-left: auto;
+  color: var(--red);
+  flex: none;
+}
+
+.tool-group-errors {
+  border-color: var(--red);
+}
+
+.tool-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 8px 8px;
+}
+
+.tool-group-body .tool-card {
+  margin: 0;
+}
+
 .turn-sep {
   display: flex;
   align-items: center;
