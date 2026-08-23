@@ -1,0 +1,30 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../kernel"
+    },
+    {
+      "path": "../shared"
+    },
+    {
+      "path": "../session"
+    },
+    {
+      "path": "../journal"
+    },
+    {
+      "path": "../thread"
+    },
+    {
+      "path": "../store"
+    }
+  ]
+}

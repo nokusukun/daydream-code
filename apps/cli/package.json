@@ -1,0 +1,29 @@
+{
+  "name": "@daydream-code/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "daydream-code": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@daydream-code/kernel": "workspace:*",
+    "@daydream-code/shared": "workspace:*",
+    "@daydream-code/boot": "workspace:*",
+    "@daydream-code/store": "workspace:*",
+    "@daydream-code/journal": "workspace:*",
+    "@daydream-code/thread": "workspace:*",
+    "@daydream-code/tokens": "workspace:*",
+    "@daydream-code/normalize": "workspace:*",
+    "@daydream-code/compaction": "workspace:*",
+    "@daydream-code/summarize": "workspace:*",
+    "@daydream-code/driver": "workspace:*",
+    "@daydream-code/tools": "workspace:*",
+    "@daydream-code/session": "workspace:*",
+    "@daydream-code/server": "workspace:*"
+  }
+}

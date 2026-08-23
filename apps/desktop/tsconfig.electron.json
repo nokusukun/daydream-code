@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "electron",
+    "outDir": "dist-electron",
+    "tsBuildInfoFile": "dist-electron/.tsbuildinfo"
+  },
+  "include": ["electron"],
+  "references": [
+    { "path": "../../packages/kernel" },
+    { "path": "../../packages/shared" },
+    { "path": "../../packages/boot" },
+    { "path": "../../packages/store" },
+    { "path": "../../packages/journal" },
+    { "path": "../../packages/thread" },
+    { "path": "../../packages/tokens" },
+    { "path": "../../packages/normalize" },
+    { "path": "../../packages/compaction" },
+    { "path": "../../packages/summarize" },
+    { "path": "../../packages/driver" },
+    { "path": "../../packages/tools" },
+    { "path": "../../packages/session" },
+    { "path": "../../packages/server" }
+  ]
+}

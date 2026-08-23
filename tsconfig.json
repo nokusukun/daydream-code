@@ -1,0 +1,53 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./packages/boot"
+    },
+    {
+      "path": "./packages/compaction"
+    },
+    {
+      "path": "./packages/driver"
+    },
+    {
+      "path": "./packages/journal"
+    },
+    {
+      "path": "./packages/kernel"
+    },
+    {
+      "path": "./packages/normalize"
+    },
+    {
+      "path": "./packages/server"
+    },
+    {
+      "path": "./packages/session"
+    },
+    {
+      "path": "./packages/shared"
+    },
+    {
+      "path": "./packages/store"
+    },
+    {
+      "path": "./packages/summarize"
+    },
+    {
+      "path": "./packages/thread"
+    },
+    {
+      "path": "./packages/tokens"
+    },
+    {
+      "path": "./packages/tools"
+    },
+    {
+      "path": "./apps/cli"
+    },
+    {
+      "path": "./apps/desktop"
+    }
+  ]
+}

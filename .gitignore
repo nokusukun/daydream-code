@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.daydream-code/*.sqlite*
+*.log
+dist-electron/
+dist-types/
+.impeccable/

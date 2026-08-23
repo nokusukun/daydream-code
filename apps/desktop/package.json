@@ -1,0 +1,40 @@
+{
+  "name": "@daydream-code/desktop",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "node scripts/rebuild-native.mjs electron && node scripts/dev.mjs",
+    "build": "tsc -b tsconfig.electron.json && vite build",
+    "start": "node scripts/rebuild-native.mjs electron && electron .",
+    "rebuild:electron": "node scripts/rebuild-native.mjs electron",
+    "rebuild:node": "node scripts/rebuild-native.mjs node"
+  },
+  "dependencies": {
+    "@daydream-code/kernel": "workspace:*",
+    "@daydream-code/shared": "workspace:*",
+    "@daydream-code/boot": "workspace:*",
+    "@daydream-code/store": "workspace:*",
+    "@daydream-code/journal": "workspace:*",
+    "@daydream-code/thread": "workspace:*",
+    "@daydream-code/tokens": "workspace:*",
+    "@daydream-code/normalize": "workspace:*",
+    "@daydream-code/compaction": "workspace:*",
+    "@daydream-code/summarize": "workspace:*",
+    "@daydream-code/driver": "workspace:*",
+    "@daydream-code/tools": "workspace:*",
+    "@daydream-code/session": "workspace:*",
+    "@daydream-code/server": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "electron": "^38.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.0",
+    "vite": "^6.3.0"
+  }
+}

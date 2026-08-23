@@ -1,0 +1,33 @@
+{
+  "name": "@daydream-code/server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@daydream-code/journal": "workspace:*",
+    "@daydream-code/kernel": "workspace:*",
+    "@daydream-code/session": "workspace:*",
+    "@daydream-code/shared": "workspace:*",
+    "@daydream-code/store": "workspace:*",
+    "@daydream-code/thread": "workspace:*",
+    "@fastify/cors": "^11.3.0",
+    "@fastify/websocket": "^11.0.0",
+    "fastify": "^5.0.0",
+    "ws": "^8.18.0",
+    "zod": "^4.0.0"
+  }
+}
