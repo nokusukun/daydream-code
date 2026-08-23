@@ -6,6 +6,7 @@ import {
   type RegistryEntry,
 } from "./bridge.js";
 import { HarnessProvider, useHarness } from "./harness.js";
+import { SplitPane } from "./split.js";
 import { ProjectPicker } from "./views/ProjectPicker.js";
 import { ProjectHome } from "./views/ProjectHome.js";
 import { SessionView } from "./views/SessionView.js";
@@ -91,7 +92,11 @@ function Shell(props: { onSwitchProject?: (() => void) | undefined }): ReactNode
         <nav className="tabs">
           <button
             type="button"
-            className={view.name === "home" ? "tab active" : "tab"}
+            className={
+              view.name === "home" || view.name === "session"
+                ? "tab active"
+                : "tab"
+            }
             onClick={() => navigate({ name: "home" })}
           >
             home
@@ -120,7 +125,19 @@ function Shell(props: { onSwitchProject?: (() => void) | undefined }): ReactNode
       </header>
       <main className="content">
         {view.name === "home" && <ProjectHome />}
-        {view.name === "session" && <SessionView key={view.id} id={view.id} />}
+        {view.name === "session" && (
+          // Master thread stays visible beside the session; the handle
+          // adjusts the session pane's width (persisted).
+          <SplitPane
+            id="shell-session"
+            direction="row"
+            initial={620}
+            min={380}
+            max={1400}
+            first={<ProjectHome />}
+            second={<SessionView key={view.id} id={view.id} />}
+          />
+        )}
         {view.name === "search" && <JournalSearch />}
         {view.name === "fibers" && <FibersPanel />}
       </main>

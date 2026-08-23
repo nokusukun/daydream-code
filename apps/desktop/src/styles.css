@@ -173,6 +173,86 @@ h2 {
   display: flex;
 }
 
+/* -- split panes ----------------------------------------------------------- */
+
+.split {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.split-row {
+  flex-direction: row;
+}
+
+.split-column {
+  flex-direction: column;
+}
+
+.split-first {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.split-second {
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.split-handle {
+  flex: none;
+  background: transparent;
+  position: relative;
+  z-index: 2;
+  touch-action: none;
+}
+
+.split-row > .split-handle {
+  width: 7px;
+  margin: 0 -1px;
+  cursor: col-resize;
+}
+
+.split-column > .split-handle {
+  height: 7px;
+  margin: -1px 0;
+  cursor: row-resize;
+}
+
+/* hairline that brightens on hover/drag */
+.split-handle::after {
+  content: "";
+  position: absolute;
+  background: var(--border-soft);
+  transition: background 0.12s;
+}
+
+.split-row > .split-handle::after {
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+}
+
+.split-column > .split-handle::after {
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 1px;
+}
+
+.split-handle:hover::after,
+.split-handle:active::after {
+  background: var(--accent);
+}
+
 /* -- views ---------------------------------------------------------------- */
 
 .view {
@@ -306,17 +386,20 @@ h2 {
 /* -- composer ------------------------------------------------------------- */
 
 .composer {
-  flex: none;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 0 16px;
-  border-top: 1px solid var(--border);
+  padding: 10px 0 16px;
 }
 
+/* the split handle above the composer owns resizing now */
 .composer textarea {
   width: 100%;
-  resize: vertical;
+  flex: 1;
+  min-height: 0;
+  resize: none;
 }
 
 .composer-row {

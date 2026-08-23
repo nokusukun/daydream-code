@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { SessionRecord, ThreadEntry } from "@daydream-code/shared";
 import { useHarness } from "../harness.js";
+import { SplitPane } from "../split.js";
 import { Badge, SessionLink, StatusPill, fmtTime, messageText } from "../ui.js";
 
 const DRIVERS = ["claude", "codex", "mock"] as const;
@@ -97,59 +98,70 @@ export function ProjectHome(): ReactNode {
 
       {error !== null && <div className="error-bar">{error}</div>}
 
-      <div className="feed" ref={feedRef}>
-        {entries.length === 0 && (
-          <div className="empty">
-            Nothing on the master thread yet. Dispatch a session below — every
-            dispatch, turn-end and summary lands here as it happens.
-          </div>
-        )}
-        {entries.map((entry) => (
-          <TimelineEntry
-            key={entry.id}
-            entry={entry}
-            session={
-              entry.sessionId !== undefined
-                ? sessions.get(entry.sessionId as string)
-                : undefined
-            }
-            onOpenSession={openSession}
-          />
-        ))}
-      </div>
-
-      <div className="composer">
-        {dispatchError !== null && <div className="error-bar">{dispatchError}</div>}
-        <textarea
-          value={task}
-          placeholder="Describe a task to dispatch…  (ctrl+enter to send)"
-          rows={3}
-          onChange={(e) => setTask(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-              e.preventDefault();
-              dispatch();
-            }
-          }}
-        />
-        <div className="composer-row">
-          <select value={driver} onChange={(e) => setDriver(e.target.value)}>
-            {DRIVERS.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
+      <SplitPane
+        id="home-composer"
+        direction="column"
+        initial={150}
+        min={104}
+        max={520}
+        first={
+          <div className="feed" ref={feedRef}>
+            {entries.length === 0 && (
+              <div className="empty">
+                Nothing on the master thread yet. Dispatch a session below —
+                every dispatch, turn-end and summary lands here as it happens.
+              </div>
+            )}
+            {entries.map((entry) => (
+              <TimelineEntry
+                key={entry.id}
+                entry={entry}
+                session={
+                  entry.sessionId !== undefined
+                    ? sessions.get(entry.sessionId as string)
+                    : undefined
+                }
+                onOpenSession={openSession}
+              />
             ))}
-          </select>
-          <button
-            type="button"
-            className="primary"
-            disabled={dispatching || task.trim().length === 0}
-            onClick={dispatch}
-          >
-            {dispatching ? "dispatching…" : "dispatch"}
-          </button>
-        </div>
-      </div>
+          </div>
+        }
+        second={
+          <div className="composer">
+            {dispatchError !== null && (
+              <div className="error-bar">{dispatchError}</div>
+            )}
+            <textarea
+              value={task}
+              placeholder="Describe a task to dispatch…  (ctrl+enter to send)"
+              onChange={(e) => setTask(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  dispatch();
+                }
+              }}
+            />
+            <div className="composer-row">
+              <select value={driver} onChange={(e) => setDriver(e.target.value)}>
+                {DRIVERS.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="primary"
+                disabled={dispatching || task.trim().length === 0}
+                onClick={dispatch}
+              >
+                {dispatching ? "dispatching…" : "dispatch"}
+              </button>
+            </div>
+          </div>
+        }
+      />
     </div>
   );
 }

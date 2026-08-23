@@ -11,6 +11,7 @@ import {
 } from "react";
 import type { JournalEvent, SessionRecord } from "@daydream-code/shared";
 import { useHarness } from "../harness.js";
+import { SplitPane } from "../split.js";
 import { StatusPill, fmtDateTime, fmtTime, short } from "../ui.js";
 
 export function SessionView(props: { id: string }): ReactNode {
@@ -111,37 +112,48 @@ export function SessionView(props: { id: string }): ReactNode {
 
       {error !== null && <div className="error-bar">{error}</div>}
 
-      <div className="feed" ref={feedRef}>
-        {events.map((event) => (
-          <EventRow key={event.id} event={event} />
-        ))}
-        {events.length === 0 && <div className="empty">No journal events yet.</div>}
-      </div>
-
-      <div className="composer">
-        <textarea
-          value={message}
-          placeholder="Send a message into this session…  (ctrl+enter to send)"
-          rows={2}
-          onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-              e.preventDefault();
-              send();
-            }
-          }}
-        />
-        <div className="composer-row">
-          <button
-            type="button"
-            className="primary"
-            disabled={busy || message.trim().length === 0}
-            onClick={send}
-          >
-            {busy ? "sending…" : "send"}
-          </button>
-        </div>
-      </div>
+      <SplitPane
+        id="session-composer"
+        direction="column"
+        initial={124}
+        min={92}
+        max={480}
+        first={
+          <div className="feed" ref={feedRef}>
+            {events.map((event) => (
+              <EventRow key={event.id} event={event} />
+            ))}
+            {events.length === 0 && (
+              <div className="empty">No journal events yet.</div>
+            )}
+          </div>
+        }
+        second={
+          <div className="composer">
+            <textarea
+              value={message}
+              placeholder="Send a message into this session…  (ctrl+enter to send)"
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+            />
+            <div className="composer-row">
+              <button
+                type="button"
+                className="primary"
+                disabled={busy || message.trim().length === 0}
+                onClick={send}
+              >
+                {busy ? "sending…" : "send"}
+              </button>
+            </div>
+          </div>
+        }
+      />
     </div>
   );
 }
