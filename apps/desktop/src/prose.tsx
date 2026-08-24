@@ -14,7 +14,13 @@ import {
   type Language,
   type Token,
 } from "./highlight.js";
-import { parseMarkdown, looksLikeMarkdown, type Block, type Inline } from "./markdown.js";
+import {
+  parseMarkdown,
+  parseInline,
+  looksLikeMarkdown,
+  type Block,
+  type Inline,
+} from "./markdown.js";
 
 /* ==========================================================================
    Code
@@ -260,6 +266,19 @@ function tight(block: Block): ReactNode {
  * renders as preserved-whitespace text — most turns are a sentence, and a
  * paragraph pass would only cost their line breaks.
  */
+/**
+ * Inline markdown only — emphasis, code spans, links — with no block wrapper.
+ *
+ * For a one-line summary that has to stay one line: `Markdown` would wrap the
+ * text in a paragraph and defeat the caller's line clamp, and a collapsed lede
+ * is a sentence fragment anyway, so block syntax in it would be a truncated
+ * half of something rather than a list or a heading.
+ */
+export function InlineMarkdown(props: { text: string }): ReactNode {
+  const nodes = useMemo(() => parseInline(props.text), [props.text]);
+  return <>{inlines(nodes)}</>;
+}
+
 export function Markdown(props: { text: string; className?: string }): ReactNode {
   const parsed = useMemo(
     () => (looksLikeMarkdown(props.text) ? parseMarkdown(props.text) : null),

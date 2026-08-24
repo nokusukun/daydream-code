@@ -13,6 +13,8 @@ import type { SessionRecord, ThreadEntry } from "@daydream-code/shared";
 import { useHarness } from "../harness.js";
 import { entryKind, lede, useMaster } from "../master.js";
 import { fmtTime, messageText } from "../ui.js";
+import { InlineMarkdown, Markdown } from "../prose.js";
+import { Entry as Row } from "./Entry.js";
 
 export function MasterThread(props: { showAll: boolean }): ReactNode {
   const { select } = useHarness();
@@ -87,37 +89,42 @@ function Entry(props: {
   const kind = entryKind(entry);
 
   return (
-    <article className={`entry${open ? " is-open" : ""}`}>
-      <div className="entry-gutter" aria-hidden="true">
-        <span className={`entry-mark entry-mark-${kind}`} />
-        {!props.last && <span className="entry-line" />}
-      </div>
-      <div className="entry-body">
-        <div className="entry-meta">
-          <span className="entry-kind">{kind}</span>
-          {entry.sessionId !== undefined && (
-            <button
-              type="button"
-              className="entry-session"
-              title={entry.sessionId as string}
-              onClick={() => props.onOpen(entry.sessionId as string)}
-            >
-              {session?.name ?? (entry.sessionId as string)}
-            </button>
-          )}
-          <span className="entry-time">{fmtTime(entry.createdAt)}</span>
-        </div>
-        <div className="entry-text">{open ? text : first}</div>
-        {long && (
+    <Row
+      kind={kind}
+      label={kind}
+      time={fmtTime(entry.createdAt)}
+      line={!props.last}
+      {...(open ? { className: "is-open" } : {})}
+      meta={
+        entry.sessionId !== undefined ? (
           <button
             type="button"
-            className="entry-more"
-            onClick={() => setOpen((v) => !v)}
+            className="entry-session"
+            title={entry.sessionId as string}
+            onClick={() => props.onOpen(entry.sessionId as string)}
           >
-            {open ? "show less" : "show more"}
+            {session?.name ?? (entry.sessionId as string)}
           </button>
-        )}
+        ) : undefined
+      }
+    >
+      {/* Thread prose is model output, so it is markdown: sessions write
+          `code` spans and **emphasis** into their summaries and broadcasts.
+          The lede gets inline syntax only — block syntax in a truncated
+          sentence is half a list, and a paragraph wrapper would defeat the
+          clamp. */}
+      <div className="entry-text">
+        {open ? <Markdown text={text} /> : <InlineMarkdown text={first} />}
       </div>
-    </article>
+      {long && (
+        <button
+          type="button"
+          className="entry-more"
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "show less" : "show more"}
+        </button>
+      )}
+    </Row>
   );
 }

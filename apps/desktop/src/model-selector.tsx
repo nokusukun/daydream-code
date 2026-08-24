@@ -13,6 +13,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import type { DriverCatalogEntry } from "./api.js";
 import { useHarness } from "./harness.js";
 import { ProviderIcon } from "./provider-icon.js";
@@ -27,6 +28,10 @@ const CHOICE_KEY = "daydream.model-choice";
 const FAVORITES_KEY = "daydream.model-favorites";
 
 const DEFAULT_CHOICE: ModelChoice = { driver: "claude", modelId: null };
+
+/** Popover width, mirrored from `.model-pop`, and the viewport gutter it keeps. */
+const POP_WIDTH = 320;
+const EDGE = 8;
 
 /** Shown before the catalog loads or when the endpoint is unreachable. */
 const FALLBACK_CATALOG: DriverCatalogEntry[] = [
@@ -161,7 +166,11 @@ export function ModelSelector(props: {
   const [favorites, setFavorites] = useState<Set<string>>(loadFavorites);
   const [active, setActive] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  /** Viewport coordinates for the portaled popover, measured off the trigger. */
+  const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(null);
 
   useEffect(() => {
     let stale = false;
@@ -185,16 +194,44 @@ export function ModelSelector(props: {
   useEffect(() => setActive(0), [query, open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setAnchor(null);
+      return;
+    }
     searchRef.current?.focus();
-    const onDown = (event: MouseEvent): void => {
-      const root = rootRef.current;
-      if (root !== null && event.target instanceof Node && !root.contains(event.target)) {
-        setOpen(false);
-      }
+
+    // The popover renders through a portal, so it is positioned against the
+    // viewport rather than the trigger. `bottom` anchors it above the trigger,
+    // which is where it has always opened.
+    const place = (): void => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect === undefined) return;
+      const width = popRef.current?.offsetWidth ?? POP_WIDTH;
+      setAnchor({
+        left: Math.max(EDGE, Math.min(rect.left, window.innerWidth - width - EDGE)),
+        bottom: window.innerHeight - rect.top + 6,
+      });
     };
+    place();
+
+    const onDown = (event: MouseEvent): void => {
+      if (!(event.target instanceof Node)) return;
+      // The popover is no longer a descendant of the trigger, so "outside" has
+      // to consider both.
+      if (rootRef.current?.contains(event.target) === true) return;
+      if (popRef.current?.contains(event.target) === true) return;
+      setOpen(false);
+    };
+
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    window.addEventListener("resize", place);
+    // Capture, so a scroll in any ancestor scroller moves the popover with it.
+    window.addEventListener("scroll", place, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
   }, [open]);
 
   const select = useCallback(
@@ -251,6 +288,7 @@ export function ModelSelector(props: {
   return (
     <div className="model-select" ref={rootRef}>
       <button
+        ref={triggerRef}
         type="button"
         className="model-trigger"
         disabled={props.disabled}
@@ -264,8 +302,26 @@ export function ModelSelector(props: {
           {open ? "▾" : "▴"}
         </span>
       </button>
-      {open && (
-        <div className="model-pop glass-strong" role="dialog" onKeyDown={onKeyDown}>
+      {open &&
+        createPortal(
+          /*
+           * Portaled to the body on purpose. `backdrop-filter` on an ancestor
+           * establishes a backdrop root, and the composer has one — so a blur
+           * here sampled the composer's own composited output instead of the
+           * transcript behind it, and the glass flattened to a plain tint.
+           * Out here it filters the page, so the material reads.
+           */
+          <div
+            ref={popRef}
+            className="model-pop glass-strong"
+            role="dialog"
+            onKeyDown={onKeyDown}
+            style={
+              anchor === null
+                ? { visibility: "hidden" }
+                : { left: anchor.left, bottom: anchor.bottom }
+            }
+          >
           <input
             ref={searchRef}
             type="text"
@@ -333,8 +389,9 @@ export function ModelSelector(props: {
               </div>
             ))}
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
     </div>
   );
 }
