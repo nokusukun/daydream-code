@@ -344,27 +344,53 @@ type Item =
   | { kind: "event"; event: JournalEvent }
   | { kind: "tools"; key: number; events: JournalEvent[] };
 
-function groupEvents(events: JournalEvent[]): Item[] {
+/**
+ * Consecutive tool traffic collapses into one row; anything else breaks the
+ * run. A run of a single call stays inline, because wrapping one quiet row in
+ * a second layer buys nothing.
+ *
+ * The count decides here rather than in the renderer so that "what groups" is
+ * one pure function with tests, instead of a rule the feed re-derives while
+ * drawing.
+ */
+export function groupEvents(events: readonly JournalEvent[]): Item[] {
   const out: Item[] = [];
+  let run: JournalEvent[] = [];
+
+  const flush = (): void => {
+    if (run.length === 0) return;
+    const calls = run.filter((event) => event.type === "tool_call").length;
+    if (calls >= 2) out.push({ kind: "tools", key: run[0]!.id, events: run });
+    else for (const event of run) out.push({ kind: "event", event });
+    run = [];
+  };
+
   for (const event of events) {
-    if (!TOOL_TYPES.has(event.type)) {
-      out.push({ kind: "event", event });
+    if (TOOL_TYPES.has(event.type)) {
+      run.push(event);
       continue;
     }
-    const last = out[out.length - 1];
-    if (last !== undefined && last.kind === "tools") last.events.push(event);
-    else out.push({ kind: "tools", key: event.id, events: [event] });
+    flush();
+    out.push({ kind: "event", event });
   }
+  flush();
   return out;
+}
+
+/** "Bash ×11, Read ×2" — what a collapsed run did, without opening it. */
+export function groupLabel(events: readonly JournalEvent[]): string {
+  return summarize(events).label;
 }
 
 function toolName(event: JournalEvent): string {
   const p = payloadOf(event);
-  return String(p.name ?? p.toolName ?? "tool");
+  return String(p.name ?? p.toolName ?? p.tool ?? "tool");
 }
 
 /** "Bash ×11, Read ×2" — what the group actually did, without opening it. */
-function summarize(events: JournalEvent[]): { label: string; calls: number; errors: number } {
+function summarize(
+  events: readonly JournalEvent[],
+): { label: string; calls: number; errors: number } {
   const counts = new Map<string, number>();
   let calls = 0;
   let errors = 0;
@@ -390,22 +416,6 @@ function ToolGroup(props: {
 }): ReactNode {
   const [open, setOpen] = useState(false);
   const { label, calls, errors } = useMemo(() => summarize(props.events), [props.events]);
-
-  // A lone call is already quiet; don't wrap it in a second layer.
-  if (calls + errors <= 1) {
-    return (
-      <>
-        {props.events.map((event) => (
-          <Event
-            key={event.id}
-            event={event}
-            names={props.names}
-            changed={props.changed}
-          />
-        ))}
-      </>
-    );
-  }
 
   return (
     <div className={`tool-group${open ? " is-open" : ""}`}>

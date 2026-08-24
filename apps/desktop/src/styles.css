@@ -444,8 +444,10 @@ pre {
 }
 
 .sidebar {
-  width: var(--sidebar-w);
-  flex: none;
+  /* Width comes from the SplitPane that wraps it; --sidebar-w is only the
+     initial value the handle starts from. */
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -5306,5 +5308,100 @@ table.fibers td:first-child {
     animation: none;
     width: 100%;
     opacity: 0.55;
+  }
+}
+
+/* ==========================================================================
+   Split panes
+
+   Ported from the SplitPane that landed upstream. The hairline uses this
+   sheet's own tokens rather than upstream's `--border-soft`, which this
+   accent-derived palette does not define.
+   ========================================================================== */
+
+.split {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.split-row {
+  flex-direction: row;
+}
+
+.split-column {
+  flex-direction: column;
+}
+
+.split-first,
+.split-second {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Whichever pane the handle sizes holds its size; the other takes the rest. */
+.split-fixed-second > .split-first,
+.split-fixed-first > .split-second {
+  flex: 1;
+}
+
+.split-fixed-second > .split-second,
+.split-fixed-first > .split-first {
+  flex: none;
+}
+
+.split-handle {
+  flex: none;
+  background: transparent;
+  position: relative;
+  z-index: 20;
+  touch-action: none;
+}
+
+.split-row > .split-handle {
+  width: 7px;
+  margin: 0 -1px;
+  cursor: col-resize;
+}
+
+.split-column > .split-handle {
+  height: 7px;
+  margin: -1px 0;
+  cursor: row-resize;
+}
+
+/* A hairline that brightens on hover and while dragging. */
+.split-handle::after {
+  content: "";
+  position: absolute;
+  background: var(--hairline);
+  transition: background var(--t-fast) var(--ease-out-quart);
+}
+
+.split-row > .split-handle::after {
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+}
+
+.split-column > .split-handle::after {
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 1px;
+}
+
+.split-handle:hover::after,
+.split-handle:active::after {
+  background: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .split-handle::after {
+    transition: none;
   }
 }

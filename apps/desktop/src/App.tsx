@@ -14,6 +14,7 @@ import { bridge, connectionFromQuery, type ConnectionInfo } from "./bridge.js";
 import { useAppearance, type ThemeState } from "./appearance.js";
 import { HarnessProvider, useHarness, type Mode } from "./harness.js";
 import { WorkspaceProvider, useWorkspace } from "./workspace.js";
+import { SplitPane } from "./split.js";
 import { ProjectPicker } from "./views/ProjectPicker.js";
 import { ProjectSwitcher, useSwitcherHotkey } from "./views/ProjectSwitcher.js";
 import { ThreadRail } from "./views/ThreadRail.js";
@@ -139,6 +140,15 @@ function Workspace(props: {
   // App-level shortcuts, bound here rather than per-view because none of them
   // belongs to a view: ⌘K and ⌘N reach the whole window, ⌘, is the platform's
   // settings key, and ⌘⇧E is what every editor uses to get to the file tree.
+  const panel =
+    mode === "code" ? (
+      <CodeView />
+    ) : selected === null ? (
+      <MasterPanel />
+    ) : (
+      <SessionPanel key={selected} id={selected} />
+    );
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (!(event.metaKey || event.ctrlKey)) {
@@ -245,21 +255,27 @@ function Workspace(props: {
         <AppMenu theme={props.theme} />
       </header>
 
-      <div className="body">
-        {sidebar && (
-          <aside className="sidebar glass">
-            {mode === "agent" ? <ThreadRail /> : <FileTree />}
-          </aside>
-        )}
-
-        {mode === "code" ? (
-          <CodeView />
-        ) : selected === null ? (
-          <MasterPanel />
-        ) : (
-          <SessionPanel key={selected} id={selected} />
-        )}
-      </div>
+      {/* Two ids, not one: a file tree and a run list want different widths,
+          and sharing a key would make switching modes resize the other one. */}
+      {sidebar ? (
+        <SplitPane
+          id={mode === "code" ? "shell-tree" : "shell-rail"}
+          className="body"
+          direction="row"
+          fixed="first"
+          initial={268}
+          min={180}
+          max={520}
+          first={
+            <aside className="sidebar glass">
+              {mode === "agent" ? <ThreadRail /> : <FileTree />}
+            </aside>
+          }
+          second={panel}
+        />
+      ) : (
+        <div className="body">{panel}</div>
+      )}
 
       {overlay === "palette" && (
         <CommandPalette
