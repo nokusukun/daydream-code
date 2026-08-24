@@ -2878,52 +2878,6 @@ table.fibers td:first-child {
   -webkit-app-region: no-drag;
 }
 
-.title-trigger {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  column-gap: var(--s2);
-  align-items: center;
-  /* Pulled back by its own padding so the title sits where it always did. */
-  margin-left: calc(var(--s2) * -1);
-  padding: 3px var(--s2);
-  border: 0;
-  border-radius: var(--r-md);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  transition: background var(--t-instant) var(--ease-out-quart);
-}
-
-.title-trigger .title-name {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.title-trigger .title-sub {
-  grid-column: 1;
-  grid-row: 2;
-}
-
-.title-caret {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  display: grid;
-  place-items: center;
-  color: var(--text-3);
-  transition: color var(--t-instant) var(--ease-out-quart);
-}
-
-.title-trigger:hover,
-.title-trigger[aria-expanded="true"] {
-  background: color-mix(in oklab, var(--text-1) 7%, transparent);
-}
-
-.title-trigger:hover .title-caret,
-.title-trigger[aria-expanded="true"] .title-caret {
-  color: var(--text-1);
-}
-
 /*
  * Opaque, not glass. The popover is a descendant of the glass toolbar, so its
  * backdrop root is the toolbar: a blur here samples the desktop behind the
@@ -3778,15 +3732,27 @@ table.fibers td:first-child {
   width: 0;
 }
 
+/*
+ * The one definition of the trigger. There were two for a while — this one and
+ * a `display: grid` set written for the older markup, where the name and the
+ * branch were direct children — and because neither reset `flex-direction`,
+ * the `title-block` class the button also carried stacked it into a column.
+ * The button no longer carries that class, and this is the only rule.
+ */
 .title-trigger {
   display: flex;
   align-items: center;
   gap: var(--s2);
+  min-width: 0;
   height: 32px;
+  /* Pulled back by its own padding so the title sits where it always did. */
+  margin-left: calc(var(--s2) * -1);
   padding: 0 var(--s2);
   border-radius: var(--r-md);
   border: 1px solid transparent;
   background: transparent;
+  color: inherit;
+  font: inherit;
   text-align: left;
   transition: background var(--t-fast) var(--ease-out-quart),
     border-color var(--t-fast) var(--ease-out-quart);
@@ -3828,9 +3794,15 @@ table.fibers td:first-child {
 
 .title-caret {
   flex: none;
-  color: var(--text-3);
   display: grid;
   place-items: center;
+  color: var(--text-3);
+  transition: color var(--t-instant) var(--ease-out-quart);
+}
+
+.title-trigger:hover .title-caret,
+.title-trigger[aria-expanded="true"] .title-caret {
+  color: var(--text-1);
 }
 
 /* -- segmented control ----------------------------------------------------- */
@@ -5373,11 +5345,15 @@ table.fibers td:first-child {
   cursor: row-resize;
 }
 
-/* A hairline that brightens on hover and while dragging. */
+/*
+ * The handle draws nothing at rest and paints on hover. Both panes it sits
+ * between already carry an edge — the sidebar its specular lens, the panel its
+ * ring — so a hairline here would be a third line inside seven pixels.
+ */
 .split-handle::after {
   content: "";
   position: absolute;
-  background: var(--hairline);
+  background: transparent;
   transition: background var(--t-fast) var(--ease-out-quart);
 }
 
@@ -5398,6 +5374,11 @@ table.fibers td:first-child {
 .split-handle:hover::after,
 .split-handle:active::after {
   background: var(--accent);
+}
+
+.split-second > .panel,
+.split-second > .editor {
+  box-shadow: var(--shadow-panel);
 }
 
 @media (prefers-reduced-motion: reduce) {

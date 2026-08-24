@@ -214,7 +214,7 @@ export function ProjectSwitcher(props: {
     <div className="proj-select" ref={rootRef}>
       <button
         type="button"
-        className="title-block title-trigger"
+        className="title-trigger"
         aria-expanded={open}
         aria-haspopup="dialog"
         onClick={() => onOpenChange(!open)}
