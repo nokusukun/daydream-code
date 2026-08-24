@@ -24,8 +24,13 @@
     "@daydream-code/summarize": "workspace:*",
     "@daydream-code/driver": "workspace:*",
     "@daydream-code/tools": "workspace:*",
+    "@daydream-code/workspace": "workspace:*",
     "@daydream-code/session": "workspace:*",
-    "@daydream-code/server": "workspace:*"
+    "@daydream-code/server": "workspace:*",
+    "@daydream-code/questions": "workspace:*",
+    "better-sqlite3": "^12.0.0",
+    "@daydream-code/routes": "workspace:*",
+    "@daydream-code/settings": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",

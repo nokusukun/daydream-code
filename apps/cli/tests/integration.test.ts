@@ -1,9 +1,20 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { boot, baseBundle, type BootResult } from "@daydream-code/boot";
-import { SessionId, ThreadId } from "@daydream-code/shared";
+import {
+  SessionId,
+  ThreadId,
+  compareSessionRecency,
+} from "@daydream-code/shared";
 
 /**
  * End-to-end: boot the real composed system (mock driver) against a temp
@@ -34,6 +45,16 @@ async function bootProject(
   });
   systems.push(result);
   return result;
+}
+
+/** A real PNG header, so the sniffer reads genuine dimensions from it. */
+function pngBytes(width: number, height: number): Buffer {
+  const header = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+  header.write("\x00\x00\x00\x0dIHDR", 8, "latin1");
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(height, 20);
+  return Buffer.concat([header, Buffer.from("pixels")]);
 }
 
 afterEach(async () => {
@@ -85,9 +106,212 @@ describe("headless end-to-end (mock driver)", () => {
     expect(kinds).toContain("session_summary");
     const dispatch = entries.find((e) => e.kind === "session_dispatch")!;
     expect(dispatch.message.content).toContain(
-      `new session ${final.id} with msg:`,
+      `new session ${final.name} with msg:`,
     );
     expect(dispatch.message.content).toContain("test the harness");
+  });
+
+  it("names sessions from their task and numbers collisions", async () => {
+    const { ctx } = await bootProject(tempProject(), [{ turn: "ok" }]);
+
+    const first = await ctx.sessions.dispatch({
+      task: "fix the failing tests",
+      driver: "mock",
+    });
+    expect(first.record.name).toBe("fix-failing-tests");
+
+    // Same task again — the name must stay unique within the project.
+    const second = await ctx.sessions.dispatch({
+      task: "fix the failing tests",
+      driver: "mock",
+    });
+    expect(second.record.name).toBe("fix-failing-tests-2");
+
+    // An explicit name is slugged, not taken verbatim.
+    const third = await ctx.sessions.dispatch({
+      task: "anything",
+      name: "Ship The Release",
+      driver: "mock",
+    });
+    expect(third.record.name).toBe("ship-release");
+
+    await Promise.all([first.done, second.done, third.done]);
+  });
+
+  it("carries an attached image from dispatch through to the driver", async () => {
+    const root = tempProject();
+    const { ctx } = await bootProject(root, [{ turn: "looked at it" }]);
+    const shot = join(root, "shot.png");
+    writeFileSync(shot, pngBytes(1092, 800));
+
+    const handle = await ctx.sessions.dispatch({
+      task: "what is wrong in this screenshot?",
+      driver: "mock",
+      attachments: [{ path: shot }],
+    });
+    await handle.done;
+
+    const attached = ctx.journal
+      .read({ sessionId: handle.record.id })
+      .find((e) => e.type === "images_attached");
+    expect(attached).toBeDefined();
+    const images = (attached!.payload as { images: Record<string, unknown>[] }).images;
+    expect(images).toHaveLength(1);
+    // Sniffed from the bytes, not guessed from the filename.
+    expect(images[0]).toMatchObject({
+      mediaType: "image/png",
+      alt: "shot.png",
+      width: 1092,
+      height: 800,
+    });
+
+    // The driver got a real readable path inside the project — Codex needs
+    // that, and its sandbox will not read outside the workspace.
+    const path = images[0]!["path"] as string;
+    expect(existsSync(path)).toBe(true);
+    expect(path.startsWith(root)).toBe(true);
+    expect(readFileSync(path)).toEqual(pngBytes(1092, 800));
+  });
+
+  it("stores images content-addressed, so the same paste costs one copy", async () => {
+    const root = tempProject();
+    const { ctx } = await bootProject(root, [{ turn: "ok" }]);
+    const a = join(root, "a.png");
+    const b = join(root, "b.png");
+    writeFileSync(a, pngBytes(50, 50));
+    writeFileSync(b, pngBytes(50, 50)); // identical bytes, different name
+
+    const first = await ctx.sessions.dispatch({
+      task: "one",
+      driver: "mock",
+      attachments: [{ path: a }],
+    });
+    await first.done;
+    const second = await ctx.sessions.dispatch({
+      task: "two",
+      driver: "mock",
+      attachments: [{ path: b }],
+    });
+    await second.done;
+
+    const blobDir = join(root, ".daydream-code", "blobs");
+    expect(readdirSync(blobDir)).toHaveLength(1);
+  });
+
+  it("attaches images to a mid-session message and prices them by pixels", async () => {
+    const root = tempProject();
+    const { ctx } = await bootProject(root, [{ turn: "first" }]);
+    const handle = await ctx.sessions.dispatch({ task: "start", driver: "mock" });
+    await handle.done;
+
+    const shot = join(root, "later.png");
+    writeFileSync(shot, pngBytes(300, 300));
+    const continued = await ctx.sessions.continueSession(
+      handle.record.id,
+      "look at this",
+      [{ path: shot }],
+    );
+    await continued.done;
+
+    const attached = ctx.journal
+      .read({ sessionId: handle.record.id })
+      .filter((e) => e.type === "images_attached");
+    expect(attached).toHaveLength(1);
+
+    // A base64-derived estimate would have charged tens of thousands here.
+    const estimate = ctx.tokens.estimateMessage({
+      role: "user",
+      content: [
+        {
+          type: "image",
+          blobId: `${"c".repeat(64)}.png`,
+          mediaType: "image/png",
+          width: 300,
+          height: 300,
+        },
+      ],
+    });
+    expect(estimate).toBe(124);
+  });
+
+  it("rejects a non-image attachment instead of sending it to the model", async () => {
+    const root = tempProject();
+    const { ctx } = await bootProject(root, [{ turn: "ok" }]);
+    const notes = join(root, "notes.txt");
+    writeFileSync(notes, "definitely not a png");
+
+    await expect(
+      ctx.sessions.dispatch({
+        task: "read this",
+        driver: "mock",
+        attachments: [{ path: notes }],
+      }),
+    ).rejects.toThrow(/unsupported attachment/);
+  });
+
+  it("titles a session from its task, and retitles it when redirected", async () => {
+    const { ctx } = await bootProject(tempProject(), [{ turn: "ok" }]);
+    const handle = await ctx.sessions.dispatch({
+      task: "fix the failing tests. start with auth.",
+      driver: "mock",
+    });
+    await handle.done;
+    expect(handle.record.title).toBe("fix the failing tests");
+    expect(handle.record.name).toBe("fix-failing-tests");
+
+    // A new instruction is the current task now — the title follows it.
+    const continued = await ctx.sessions.continueSession(
+      handle.record.id,
+      "actually, update the changelog instead",
+    );
+    await continued.done;
+    expect(continued.record.title).toBe(
+      "actually, update the changelog instead",
+    );
+
+    // The name is an address: master-thread entries and links point at it, so
+    // it must not drift when the title does.
+    expect(continued.record.name).toBe("fix-failing-tests");
+    expect(ctx.sessions.resolve("fix-failing-tests")?.id).toBe(handle.record.id);
+
+    // And the change is durable, not just on the returned handle.
+    expect(ctx.sessions.get(handle.record.id)?.title).toBe(
+      "actually, update the changelog instead",
+    );
+    // The original dispatch task is preserved alongside the evolved title.
+    expect(ctx.sessions.get(handle.record.id)?.task).toBe(
+      "fix the failing tests. start with auth.",
+    );
+  });
+
+  it("resolves sessions by name or id, and recall tools accept both", async () => {
+    const { ctx } = await bootProject(tempProject(), [{ turn: "ok" }]);
+    const handle = await ctx.sessions.dispatch({
+      task: "audit the token budget",
+      driver: "mock",
+    });
+    await handle.done;
+    const { id, name } = handle.record;
+    expect(name).toBe("audit-token-budget");
+
+    expect(ctx.sessions.resolve(name)?.id).toBe(id);
+    expect(ctx.sessions.resolve(id)?.id).toBe(id);
+    expect(ctx.sessions.resolve("no-such-session")).toBeUndefined();
+
+    // read_session is what the model reaches for after reading a master-thread
+    // summary, which now names sessions rather than id-ing them.
+    const readSession = ctx.tools.get("read_session")!;
+    const run = { sessionId: id, projectRoot: "." };
+    const byName = (await readSession.execute(
+      { session_id: name },
+      run,
+    )) as unknown[];
+    const byId = (await readSession.execute(
+      { session_id: id },
+      run,
+    )) as unknown[];
+    expect(byName.length).toBeGreaterThan(0);
+    expect(byName).toEqual(byId);
   });
 
   it("a second session sees the first session's activity (sibling awareness via fork)", async () => {
@@ -121,11 +345,11 @@ describe("headless end-to-end (mock driver)", () => {
         : JSON.stringify(e.message.content),
     );
     expect(fork.forkedFromThread).toBe(ctx.threads.ensureMaster().id);
-    expect(texts.some((t) => t.includes(`new session ${first.record.id}`))).toBe(
+    expect(texts.some((t) => t.includes(`new session ${first.record.name}`))).toBe(
       true,
     );
     expect(
-      texts.some((t) => t.includes(`session ${first.record.id} ended`)),
+      texts.some((t) => t.includes(`session ${first.record.name} ended`)),
     ).toBe(true);
   });
 
@@ -172,6 +396,50 @@ describe("headless end-to-end (mock driver)", () => {
     const blob = JSON.stringify(injected.map((e) => e.payload));
     expect(blob).toContain("master thread update");
     expect(blob).toContain("second note after B forked");
+  });
+
+  it("broadcasts that a sibling's turn ended, without its summary text", async () => {
+    const root = tempProject();
+    // The mock summary is built from the turn text, so this token appears in
+    // A's summary but in neither session's task line.
+    const { ctx } = await bootProject(root, [{ turn: "flibbertigibbet" }]);
+
+    // B forks master first, so everything A writes lands after B's cut and has
+    // to arrive by injection rather than through the fork context.
+    const b = await ctx.sessions.dispatch({ task: "beta work", driver: "mock" });
+    await b.done;
+    const a = await ctx.sessions.dispatch({ task: "alpha work", driver: "mock" });
+    const aRecord = await a.done;
+    expect(aRecord.summary).toContain("flibbertigibbet"); // the token is real
+
+    const revived = await ctx.sessions.continueSession(
+      b.record.id,
+      "keep going",
+    );
+    await revived.done;
+
+    const injected = ctx.journal
+      .read({ sessionId: b.record.id })
+      .filter((e) => e.type === "user_injected");
+    const blob = JSON.stringify(injected.map((e) => e.payload));
+
+    expect(blob).toContain("master thread update");
+    expect(blob).toContain(`session ${aRecord.name} turn end`);
+    expect(blob).toContain(`session ${aRecord.name} ended (completed)`);
+    expect(blob).toContain("read_session");
+    // The dispatch line still carries the task verbatim; only summaries go.
+    expect(blob).toContain(`new session ${aRecord.name} with msg:`);
+    expect(blob).not.toContain("flibbertigibbet");
+    expect(blob).not.toContain("mock summary");
+
+    // ...but the master thread itself keeps the full text as the record.
+    const entries = ctx.threads.entries(
+      ThreadId(ctx.threads.ensureMaster().id),
+    );
+    const summary = entries.find(
+      (e) => e.kind === "session_summary" && e.sessionId === aRecord.id,
+    )!;
+    expect(summary.message.content).toContain("flibbertigibbet");
   });
 
   it("recall tools read journal and master history", async () => {
@@ -268,6 +536,43 @@ describe("headless end-to-end (mock driver)", () => {
         String(d.message.content).includes("continue session"),
       ),
     ).toBe(true);
+  });
+
+  it("lists sessions most recently finished first, not most recently started", async () => {
+    const { ctx } = await bootProject(tempProject(), [{ turn: "ok" }]);
+    const alpha = await ctx.sessions.dispatch({ task: "alpha work", driver: "mock" });
+    await alpha.done;
+    const beta = await ctx.sessions.dispatch({ task: "beta work", driver: "mock" });
+    await beta.done;
+    // beta started last, so a start-time sort would put it on top. alpha then
+    // does another turn and finishes after it.
+    const revived = await ctx.sessions.continueSession(alpha.record.id, "more");
+    await revived.done;
+
+    const names = ctx.sessions.list().map((s) => s.name);
+    expect(names).toEqual(["alpha-work", "beta-work"]);
+    // The SQL order and the comparator the UIs sort with must not disagree.
+    expect(names).toEqual(
+      [...ctx.sessions.list()].sort(compareSessionRecency).map((s) => s.name),
+    );
+  });
+
+  it("ranks a still-running session by its start time", async () => {
+    const { ctx } = await bootProject(tempProject(), [{ turn: "ok" }]);
+    const older = await ctx.sessions.dispatch({ task: "older done", driver: "mock" });
+    await older.done;
+    const newer = await ctx.sessions.dispatch({ task: "newer live", driver: "mock" });
+    await newer.done;
+    // Put the newer row back the way a mid-run session looks — ended_at NULL —
+    // rather than racing a real run, so the fallback to start time is what is
+    // under test and nothing here depends on timing.
+    ctx.store.sqlite
+      .prepare("UPDATE sessions SET status = 'running', ended_at = NULL WHERE id = ?")
+      .run(newer.record.id as string);
+
+    const rows = ctx.sessions.list();
+    expect(rows.map((s) => s.name)).toEqual(["newer-live", "older-done"]);
+    expect(rows[0]!.endedAt).toBe(null);
   });
 
   it("crash recovery marks stale running sessions killed on next boot", async () => {

@@ -1,5 +1,6 @@
 import { Service, type Context } from "@daydream-code/kernel";
 import type { SessionId, SessionRecord } from "@daydream-code/shared";
+import type { Injection } from "@daydream-code/driver";
 
 declare module "@daydream-code/kernel" {
   interface Context {
@@ -19,10 +20,16 @@ declare module "@daydream-code/kernel" {
     /**
      * @mode emit — a session was dispatched (new) or continued. Fired after
      * the row exists; master-writeback turns this into a master-thread entry.
+     *
+     * `ask` is a continue whose message is machine-written: one session's
+     * question, delivered by the runner. It is called out separately so the
+     * master thread can say that it happened without reprinting the prose —
+     * that text is addressed to one session, and broadcasting it verbatim
+     * would put tool-call boilerplate in front of every other session.
      */
     "session/dispatched"(
       session: SessionRecord,
-      kind: "new" | "continue",
+      kind: "new" | "continue" | "ask" | "message",
       message: string,
     ): void;
     /** @mode emit — a turn finished; `summary` is the one-liner for master. */
@@ -40,13 +47,42 @@ declare module "@daydream-code/kernel" {
   }
 }
 
+/**
+ * An image on its way in, before it reaches the blob store: either a path on
+ * disk (CLI, Electron drag-and-drop) or raw base64 (clipboard paste, HTTP).
+ */
+export type AttachmentInput =
+  | { path: string }
+  | { data: string; alt?: string | undefined };
+
 export interface DispatchRequest {
   task: string;
-  title?: string;
+  /** Images attached to the opening task. */
+  attachments?: AttachmentInput[];
+  /**
+   * Preferred human-readable name. Slugged and de-duplicated before it lands,
+   * so the stored name may differ. Omit to derive one from `task`.
+   */
+  name?: string;
   driver?: string;
   modelId?: string;
   permissionMode?: "auto" | "ask" | "readonly";
 }
+
+/**
+ * What happened to a message handed to `deliver`.
+ *
+ * `queued` and `woke` are both success and are distinguished because they cost
+ * the sender different things: queueing rides an existing run and is free,
+ * waking spends from the target's wake budget. `refused` is the budget being
+ * spent out — not an error, and the sender is expected to carry on without the
+ * target rather than retry.
+ */
+export type DeliveryOutcome =
+  | { kind: "queued" }
+  | { kind: "woke" }
+  | { kind: "refused"; reason: string }
+  | { kind: "gone"; reason: string };
 
 export interface SessionHandle {
   record: SessionRecord;
@@ -66,9 +102,33 @@ export abstract class Sessions extends Service {
 
   abstract dispatch(request: DispatchRequest): Promise<SessionHandle>;
   /** Send a message into a session; restarts the loop if it already ended. */
-  abstract continueSession(id: SessionId, message: string): Promise<SessionHandle>;
+  abstract continueSession(
+    id: SessionId,
+    message: string,
+    attachments?: AttachmentInput[],
+  ): Promise<SessionHandle>;
+  /**
+   * Hand text to a session without blocking the sender: queue it into a live
+   * run, or wake an idle one, whichever applies.
+   *
+   * This is a seam method rather than something a caller assembles out of
+   * `get` + `continueSession` because the choice between those two branches is
+   * exactly where the wake budget is enforced. A caller that made the choice
+   * itself would spend no budget, and the cap that stops sessions restarting
+   * each other unattended would hold only for the callers that remembered it.
+   */
+  abstract deliver(
+    id: SessionId,
+    text: string,
+    options?: { kind?: Injection["kind"] },
+  ): Promise<DeliveryOutcome>;
   abstract stop(id: SessionId): Promise<void>;
   abstract get(id: SessionId): SessionRecord | undefined;
+  /**
+   * Look a session up by id or by human-readable name. Every entry point that
+   * takes a session from a human or a model should go through this.
+   */
+  abstract resolve(idOrName: string): SessionRecord | undefined;
   abstract list(): SessionRecord[];
   /** Sessions currently running in this process. */
   abstract running(): SessionId[];

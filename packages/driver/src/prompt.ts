@@ -5,6 +5,10 @@ function renderPart(part: MessagePart): string {
     case "text":
     case "marker":
       return part.text;
+    // The bytes ride as a separate content block; this keeps the transcript
+    // readable and tells the model an image was there.
+    case "image":
+      return `[image${part.alt ? ` ${part.alt}` : ""}]`;
     case "tool_call":
       return `[tool_call ${part.toolName} ${JSON.stringify(part.args ?? null)}]`;
     case "tool_result":

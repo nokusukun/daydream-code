@@ -52,6 +52,26 @@ describe("adapter plugins mount", () => {
     expect(ctx.drivers.get("claude-alt")?.id).toBe("claude-alt");
     expect(ctx.drivers.get("codex-alt")?.id).toBe("codex-alt");
   });
+
+  it("serves each adapter's model catalog, replaceable via config", async () => {
+    const app = new App();
+    const ctx = app.rootCtx;
+    ctx.plugin(SessionDrivers);
+    ctx.plugin(claudePlugin);
+    ctx.plugin(codexPlugin, {
+      id: "codex",
+      models: [{ id: "custom-1", label: "Custom One", isDefault: true }],
+    });
+    await app.settle();
+
+    const catalog = ctx.drivers.catalog();
+    const claude = catalog.find((entry) => entry.driver === "claude");
+    expect(claude?.models.map((m) => m.id)).toContain("claude-opus-5");
+    const codex = catalog.find((entry) => entry.driver === "codex");
+    expect(codex?.models).toEqual([
+      { id: "custom-1", label: "Custom One", isDefault: true },
+    ]);
+  });
 });
 
 describe("jsonSchemaToZodShape", () => {

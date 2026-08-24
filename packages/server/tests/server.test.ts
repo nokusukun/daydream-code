@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { App, type Context } from "@daydream-code/kernel";
+import { Questions } from "@daydream-code/questions";
 import {
   ProjectId,
   SessionId,
@@ -28,6 +29,15 @@ import {
   type DispatchRequest,
   type SessionHandle,
 } from "@daydream-code/session";
+import { SessionDrivers } from "@daydream-code/driver";
+import { HttpRoutes } from "@daydream-code/routes";
+import metaRoutes from "@daydream-code/routes/meta";
+import storeRoutes from "@daydream-code/store/routes";
+import journalRoutes from "@daydream-code/journal/routes";
+import threadRoutes from "@daydream-code/thread/routes";
+import driverRoutes from "@daydream-code/driver/routes";
+import questionRoutes from "@daydream-code/questions/routes";
+import sessionRoutes from "@daydream-code/session/routes";
 import type { StreamMessage } from "@daydream-code/server";
 import FastifyServer, {
   type FastifyServerConfig,
@@ -187,7 +197,7 @@ function fakeRecord(id: string, task: string): SessionRecord {
     id: SessionId(id),
     projectId,
     threadId: ThreadId(`thr_${id}`),
-    title: null,
+    name: "test-session",
     task,
     driver: "mock",
     modelId: null,
@@ -229,12 +239,34 @@ class FakeSessions extends Sessions {
     return this.records.get(id);
   }
 
+  resolve(idOrName: string): SessionRecord | undefined {
+    return (
+      this.records.get(idOrName) ??
+      [...this.records.values()].find((r) => r.name === idOrName)
+    );
+  }
+
   list(): SessionRecord[] {
     return [...this.records.values()];
   }
 
   running(): SessionIdT[] {
     return [];
+  }
+}
+
+class FakeDrivers extends SessionDrivers {
+  constructor(ctx: Context) {
+    super(ctx);
+    this.register(ctx, {
+      id: "claude",
+      models: [{ id: "m-1", label: "Model One", isDefault: true }],
+      run: () => Promise.reject(new Error("not used in server tests")),
+    });
+    this.register(ctx, {
+      id: "mock",
+      run: () => Promise.reject(new Error("not used in server tests")),
+    });
   }
 }
 
@@ -256,6 +288,24 @@ async function makeHarness(config: Partial<FastifyServerConfig> = {}) {
   ctx.plugin(FakeJournal);
   ctx.plugin(FakeThreads);
   ctx.plugin(FakeSessions);
+  ctx.plugin(FakeDrivers);
+  // The real seam: the answer route settles promises held here, and the
+  // service is small enough that faking it would only test the fake.
+  ctx.plugin(Questions);
+  // The REST surface under test is not the server's own: it lives in each
+  // capability package and reaches the transport through the route registry.
+  ctx.plugin(HttpRoutes);
+  for (const routes of [
+    metaRoutes,
+    storeRoutes,
+    journalRoutes,
+    threadRoutes,
+    driverRoutes,
+    questionRoutes,
+    sessionRoutes,
+  ]) {
+    ctx.plugin(routes);
+  }
   const fiber = ctx.plugin(FastifyServer, {
     port: 0,
     ...config,
@@ -308,6 +358,19 @@ describe("FastifyServer", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  it("serves the driver model catalog on /api/models", async () => {
+    const { base } = await makeHarness();
+    const res = await fetch(`${base}/api/models`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([
+      {
+        driver: "claude",
+        models: [{ id: "m-1", label: "Model One", isDefault: true }],
+      },
+      { driver: "mock", models: [] },
+    ]);
+  });
+
   it("rejects unauthorized requests when a token is configured, accepts bearer/query token", async () => {
     const { base } = await makeHarness({ token: "s3cret" });
 
@@ -345,14 +408,14 @@ describe("FastifyServer", () => {
     const res = await fetch(`${base}/api/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ task: "do the thing", driver: "mock", title: "t" }),
+      body: JSON.stringify({ task: "do the thing", driver: "mock", name: "t" }),
     });
     expect(res.status).toBe(200);
     const record = (await res.json()) as SessionRecord;
     expect(record.task).toBe("do the thing");
     expect(record.status).toBe("running");
     expect(sessions.dispatches).toEqual([
-      { task: "do the thing", driver: "mock", title: "t" },
+      { task: "do the thing", driver: "mock", name: "t" },
     ]);
 
     // continue + stop round-trip through the same seam.
@@ -419,6 +482,190 @@ describe("FastifyServer", () => {
     const frame = await framePromise;
     expect(frame).toEqual({ kind: "journal", event: appended });
     ws.close();
+  });
+
+  it("settles a blocking question through the answer route", async () => {
+    const { base, ctx, sessions } = await makeHarness();
+    const record = (await sessions.dispatch({ task: "pick one" })).record;
+    const question = {
+      id: "Which store?",
+      header: "Store",
+      question: "Which store?",
+      options: [
+        { label: "sqlite", description: "" },
+        { label: "postgres", description: "" },
+      ],
+      multiSelect: false,
+    };
+    const asked = ctx.questions.ask(record.id, [question]);
+
+    const res = await fetch(`${base}/api/sessions/${record.id}/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ answers: { "Which store?": "sqlite" } }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ settled: true });
+    await expect(asked).resolves.toEqual({
+      kind: "answered",
+      answers: { "Which store?": "sqlite" },
+    });
+  });
+
+  it("declines on request, handing the decision back to the model", async () => {
+    const { base, ctx, sessions } = await makeHarness();
+    const record = (await sessions.dispatch({ task: "pick one" })).record;
+    const asked = ctx.questions.ask(record.id, [
+      {
+        id: "q?",
+        header: "H",
+        question: "q?",
+        options: [
+          { label: "a", description: "" },
+          { label: "b", description: "" },
+        ],
+        multiSelect: false,
+      },
+    ]);
+    const res = await fetch(`${base}/api/sessions/${record.id}/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ decline: true }),
+    });
+    expect(res.status).toBe(200);
+    await expect(asked).resolves.toEqual({ kind: "declined" });
+  });
+
+  it("lists pending questions and empties as they settle", async () => {
+    const { base, ctx, sessions } = await makeHarness();
+    const record = (await sessions.dispatch({ task: "pick one" })).record;
+    ctx.questions.ask(record.id, [
+      {
+        id: "q?",
+        header: "H",
+        question: "q?",
+        options: [
+          { label: "a", description: "" },
+          { label: "b", description: "" },
+        ],
+        multiSelect: false,
+      },
+    ]);
+    const listed = (await (await fetch(`${base}/api/questions`)).json()) as unknown[];
+    expect(listed).toHaveLength(1);
+
+    ctx.questions.cancelSession(record.id, "test");
+    expect(await (await fetch(`${base}/api/questions`)).json()).toEqual([]);
+  });
+
+  it("409s a late answer whose request no longer exists", async () => {
+    // The shape a restart leaves behind: the promise died with its process, so
+    // the client must be told to retire the question rather than keep offering it.
+    const { base, sessions } = await makeHarness();
+    const record = (await sessions.dispatch({ task: "pick one" })).record;
+    const res = await fetch(`${base}/api/sessions/${record.id}/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requestId: "qst_gone", answers: { "q?": "a" } }),
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/no pending question/);
+  });
+
+  it("rejects an answer that is neither a pick nor a decline", async () => {
+    const { base, sessions } = await makeHarness();
+    const record = (await sessions.dispatch({ task: "pick one" })).record;
+    const res = await fetch(`${base}/api/sessions/${record.id}/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ answers: {} }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("404s an answer for an unknown session", async () => {
+    const { base } = await makeHarness();
+    const res = await fetch(`${base}/api/sessions/nope/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ decline: true }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("serves the routes other packages registered, and 404s the rest", async () => {
+    const { base, threads } = await makeHarness();
+    const master = threads.ensureMaster();
+    threads.append({
+      threadId: master.id,
+      kind: "note",
+      message: { role: "user", content: "hello" },
+    });
+
+    const project = (await (await fetch(`${base}/api/project`)).json()) as {
+      name: string;
+    };
+    expect(project.name).toBe("fake-project");
+
+    const entries = (await (await fetch(`${base}/api/master`)).json()) as unknown[];
+    expect(entries).toHaveLength(1);
+
+    const fibers = (await (await fetch(`${base}/api/fibers`)).json()) as Array<{
+      name: string;
+    }>;
+    expect(fibers.some((f) => f.name === "HttpRoutes")).toBe(true);
+
+    // Nothing is registered at the root, and the catch-all must not swallow it.
+    const root = await fetch(`${base}/`);
+    expect(root.status).toBe(404);
+    expect(await root.json()).toEqual({ error: "not found: GET /" });
+    expect((await fetch(`${base}/api/nope`)).status).toBe(404);
+
+    // HEAD rides on the GET route rather than falling through to the 404.
+    expect((await fetch(`${base}/health`, { method: "HEAD" })).status).toBe(200);
+  });
+
+  it("leaves OPTIONS to the cors plugin instead of claiming it", async () => {
+    // The catch-all deliberately skips OPTIONS: @fastify/cors registers its own
+    // preflight route, and two wildcards on one method is a boot-time collision.
+    const { base, errors } = await makeHarness();
+    const res = await fetch(`${base}/api/sessions`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://localhost:5173",
+        "access-control-request-method": "POST",
+      },
+    });
+    expect(res.status).toBeLessThan(300);
+    expect(res.headers.get("access-control-allow-origin")).toBe(
+      "http://localhost:5173",
+    );
+    expect(errors).toEqual([]);
+  });
+
+  it("serves a route registered after it is already listening, and drops it on unload", async () => {
+    // The reason dispatch resolves per request: fastify freezes its router at
+    // listen(), but plugins keep loading and unloading for the app's lifetime.
+    const { app, ctx, base } = await makeHarness();
+    expect((await fetch(`${base}/api/late`)).status).toBe(404);
+
+    const fiber = ctx.plugin({
+      name: "late-routes",
+      inject: ["routes"],
+      apply: (own: Context) =>
+        void own.routes.register(own, {
+          method: "GET",
+          path: "/api/late",
+          handle: () => ({ late: true }),
+        }),
+    });
+    await app.settle();
+    const res = await fetch(`${base}/api/late`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ late: true });
+
+    await app.dispose(fiber);
+    expect((await fetch(`${base}/api/late`)).status).toBe(404);
   });
 
   it("stops accepting connections after the server fiber is disposed", async () => {

@@ -2,10 +2,25 @@
   "files": [],
   "references": [
     {
+      "path": "./apps/cli"
+    },
+    {
+      "path": "./apps/desktop"
+    },
+    {
+      "path": "./packages/asks"
+    },
+    {
+      "path": "./packages/blobs"
+    },
+    {
       "path": "./packages/boot"
     },
     {
       "path": "./packages/compaction"
+    },
+    {
+      "path": "./packages/config"
     },
     {
       "path": "./packages/driver"
@@ -20,10 +35,19 @@
       "path": "./packages/normalize"
     },
     {
+      "path": "./packages/questions"
+    },
+    {
+      "path": "./packages/routes"
+    },
+    {
       "path": "./packages/server"
     },
     {
       "path": "./packages/session"
+    },
+    {
+      "path": "./packages/settings"
     },
     {
       "path": "./packages/shared"
@@ -44,10 +68,7 @@
       "path": "./packages/tools"
     },
     {
-      "path": "./apps/cli"
-    },
-    {
-      "path": "./apps/desktop"
+      "path": "./packages/workspace"
     }
   ]
 }

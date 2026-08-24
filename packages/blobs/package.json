@@ -1,0 +1,30 @@
+{
+  "name": "@daydream-code/blobs",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@daydream-code/kernel": "workspace:*",
+    "@daydream-code/shared": "workspace:*",
+    "@daydream-code/store": "workspace:*",
+    "zod": "^4.0.0",
+    "@daydream-code/config": "workspace:*"
+  },
+  "devDependencies": {
+    "@daydream-code/store": "workspace:*"
+  }
+}

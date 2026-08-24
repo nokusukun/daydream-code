@@ -1,7 +1,8 @@
-import type { JournalEvent } from "@daydream-code/shared";
+import { titleFromTask, type JournalEvent } from "@daydream-code/shared";
 import {
   Summarizer,
   type SessionSummaryInput,
+  type TitleInput,
   type TurnSummaryInput,
 } from "./index.js";
 
@@ -11,6 +12,10 @@ import {
  * Guaranteed fallback provider; also used for crash-recovery write-backs.
  */
 export default class MechanicalSummarizer extends Summarizer {
+  async title({ task }: TitleInput): Promise<string> {
+    return titleFromTask(task);
+  }
+
   async turnSummary({ turnEvents }: TurnSummaryInput): Promise<string> {
     if (turnEvents.length === 0) return "turn ended (no events recorded)";
     const turns = turnEvents.filter((e) => e.type === "turn");

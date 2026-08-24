@@ -13,6 +13,12 @@
     },
     {
       "path": "../shared"
+    },
+    {
+      "path": "../routes"
+    },
+    {
+      "path": "../config"
     }
   ]
 }

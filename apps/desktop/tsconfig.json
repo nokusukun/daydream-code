@@ -1,7 +1,20 @@
 {
   "files": [],
   "references": [
-    { "path": "./tsconfig.electron.json" },
-    { "path": "./tsconfig.web.json" }
+    {
+      "path": "./tsconfig.electron.json"
+    },
+    {
+      "path": "./tsconfig.web.json"
+    },
+    {
+      "path": "../../packages/routes"
+    },
+    {
+      "path": "../../packages/settings"
+    },
+    {
+      "path": "../../packages/workspace"
+    }
   ]
 }

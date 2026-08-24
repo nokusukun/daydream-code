@@ -6,40 +6,68 @@ import Fastify, {
 import websocket from "@fastify/websocket";
 import cors from "@fastify/cors";
 import { z } from "zod";
+import { defineConfig, field } from "@daydream-code/config";
 import type { Context, Disposer } from "@daydream-code/kernel";
-import {
-  SessionId,
-  type JournalEvent,
-  type SessionRecord,
-  type ThreadEntry,
+import type {
+  JournalEvent,
+  SessionRecord,
+  ThreadEntry,
 } from "@daydream-code/shared";
-import type { JournalReadOptions } from "@daydream-code/journal";
-import type { DispatchRequest } from "@daydream-code/session";
-import type {} from "@daydream-code/thread";
-import type {} from "@daydream-code/store";
+import { HttpError, type HttpMethod, type RouteRequest } from "@daydream-code/routes";
+import type {} from "@daydream-code/routes";
+import type {} from "@daydream-code/journal";
 import { HarnessServer, type StreamMessage } from "./index.js";
 
-export const Config = z
-  .object({
-    host: z.string().default("127.0.0.1"),
-    port: z.number().int().min(0).max(65535).default(4870),
-    token: z.string().optional(),
-  })
-  .prefault({});
+export const { Config, settings } = defineConfig({
+  host: field.string({
+    label: "bind address",
+    help: "loopback keeps the harness off the network. Change it only if you know why.",
+    default: "127.0.0.1",
+    placeholder: "127.0.0.1",
+    restart: true,
+  }),
+  port: field.number({
+    label: "port",
+    help: "0 picks a free port at startup.",
+    default: 4870,
+    integer: true,
+    min: 0,
+    max: 65_535,
+    restart: true,
+  }),
+  token: field.string({
+    label: "bearer token",
+    help: "required on every request except the health check. Unset means no auth.",
+    optional: true,
+    secret: true,
+    restart: true,
+  }),
+  bodyLimit: field.number({
+    label: "request limit",
+    help:
+      "fastify defaults to 1 MB, which a single screenshot exceeds. Sized to " +
+      "clear the blob store's own cap plus base64 overhead.",
+    default: 24 * 1024 * 1024,
+    integer: true,
+    min: 1,
+    unit: "bytes",
+    advanced: true,
+    restart: true,
+  }),
+});
 
 export type FastifyServerConfig = z.infer<typeof Config>;
 
-const DispatchBody = z.object({
-  task: z.string(),
-  driver: z.string().optional(),
-  modelId: z.string().optional(),
-  title: z.string().optional(),
-});
-
-const MessageBody = z.object({ message: z.string() });
-
 /** Sockets buffering more than this are cut loose; they resync on reconnect. */
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Methods the catch-all claims. OPTIONS is left to `@fastify/cors`, which
+ * registers its own preflight route and would collide with ours. HEAD is left
+ * to fastify's `exposeHeadRoutes`, which mirrors every GET — the registry
+ * resolves HEAD against GET, so those land on the same handler.
+ */
+const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 /** The slice of a `ws` WebSocket the stream needs (no @types/ws dependency). */
 interface StreamSocket {
@@ -51,12 +79,22 @@ interface StreamSocket {
   on(event: "close", listener: () => void): void;
 }
 
-type Query = Record<string, string | undefined>;
+function pathOf(url: string): string {
+  const query = url.indexOf("?");
+  return query === -1 ? url : url.slice(0, query);
+}
 
-function intParam(value: string | undefined): number | undefined {
-  if (value === undefined || value === "") return undefined;
-  const n = Number(value);
-  return Number.isFinite(n) ? Math.trunc(n) : undefined;
+/** Collapse repeated query params / headers to their first value. */
+function flatten(
+  source: Record<string, unknown> | undefined,
+): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(source ?? {})) {
+    const first = Array.isArray(value) ? value[0] : value;
+    if (typeof first === "string") out[key] = first;
+    else if (first !== undefined && first !== null) out[key] = String(first);
+  }
+  return out;
 }
 
 /**
@@ -64,10 +102,17 @@ function intParam(value: string | undefined): number | undefined {
  * websocket that forwards journal/thread/session events. DB-first ordering is
  * inherited from the journal — `journal/append` only fires after commit, so
  * every frame a client sees is durable.
+ *
+ * It serves no routes of its own. Every REST endpoint comes from `ctx.routes`,
+ * which capability packages register into, and dispatch happens per request
+ * rather than at bind time: fastify freezes its router once it is listening,
+ * and a route plugin that loaded after boot — or unloaded when its provider
+ * went away — has to take effect anyway.
  */
 export default class FastifyServer extends HarnessServer {
-  static inject = ["store", "journal", "threads", "sessions"];
+  static inject = ["routes", "journal"];
   static Config = Config;
+  static settings = settings;
 
   /** Resolves once the server is listening (rejects if listen fails). */
   readonly ready: Promise<void>;
@@ -81,26 +126,31 @@ export default class FastifyServer extends HarnessServer {
     this.#host = config.host;
     this.#port = config.port;
 
-    const app = Fastify();
+    const app = Fastify({ bodyLimit: config.bodyLimit });
     this.#app = app;
 
     app.setErrorHandler((error, _req, reply) => {
+      const status = error instanceof HttpError ? error.status : 500;
       void reply
-        .code(500)
+        .code(status)
         .send({ error: error instanceof Error ? error.message : String(error) });
     });
 
     const token = config.token;
     if (token !== undefined) {
       app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
-        if (req.routeOptions.url === "/health") return;
+        // Re-resolving the route here costs one scan of a list a dozen long,
+        // and keeps one place deciding what is reachable unauthenticated.
+        // `/stream` is not in the registry, so it never matches and is gated.
+        const match = ctx.routes.match(req.method, pathOf(req.url));
+        if (match?.route.public === true) return;
         if (req.headers.authorization === `Bearer ${token}`) return;
-        if ((req.query as Query).token === token) return;
+        if (flatten(req.query as Record<string, unknown>).token === token) return;
         return reply.code(401).send({ error: "unauthorized" });
       });
     }
 
-    this.#restRoutes(app);
+    this.#mountDispatch(app);
 
     // Websocket routes must land after the websocket plugin; a sibling scope
     // registered afterwards inherits its onRoute hook (fastify-plugin).
@@ -144,92 +194,38 @@ export default class FastifyServer extends HarnessServer {
   }
 
   // -------------------------------------------------------------------------
-  // REST
+  // REST: one catch-all, dispatched through the route registry.
 
-  #restRoutes(app: FastifyInstance): void {
+  #mountDispatch(app: FastifyInstance): void {
     const ctx = this.ctx;
 
-    app.get("/health", async () => ({ ok: true }));
-
-    app.get("/api/project", async () => ctx.store.project);
-
-    app.get("/api/sessions", async () => ctx.sessions.list());
-
-    app.get("/api/sessions/:id", async (req, reply) => {
-      const id = SessionId((req.params as { id: string }).id);
-      const session = ctx.sessions.get(id);
-      if (session === undefined) {
-        return reply.code(404).send({ error: `unknown session: ${id}` });
+    const dispatch = async (
+      req: FastifyRequest,
+      reply: FastifyReply,
+    ): Promise<unknown> => {
+      const path = pathOf(req.url);
+      const match = ctx.routes.match(req.method, path);
+      if (match === undefined) {
+        return reply.code(404).send({ error: `not found: ${req.method} ${path}` });
       }
-      const limit = intParam((req.query as Query).limit) ?? 200;
-      const journal = ctx.journal.read({ sessionId: id, limit, latest: true });
-      return { session, journal };
-    });
-
-    app.post("/api/sessions", async (req) => {
-      const body = DispatchBody.parse(req.body);
-      const request: DispatchRequest = {
-        task: body.task,
-        ...(body.driver !== undefined ? { driver: body.driver } : {}),
-        ...(body.modelId !== undefined ? { modelId: body.modelId } : {}),
-        ...(body.title !== undefined ? { title: body.title } : {}),
+      const request: RouteRequest = {
+        method: match.route.method,
+        path,
+        params: match.params,
+        query: flatten(req.query as Record<string, unknown>),
+        headers: flatten(req.headers as Record<string, unknown>),
+        body: req.body,
       };
-      const handle = await ctx.sessions.dispatch(request);
-      void handle.done.catch(() => {});
-      return handle.record;
-    });
+      const result = await match.route.handle(request);
+      // A handler that returns nothing means no content; fastify would
+      // otherwise reject the undefined payload and turn it into a 500.
+      if (result === undefined) return reply.code(204).send();
+      return result;
+    };
 
-    app.post("/api/sessions/:id/message", async (req) => {
-      const id = SessionId((req.params as { id: string }).id);
-      const body = MessageBody.parse(req.body);
-      const handle = await ctx.sessions.continueSession(id, body.message);
-      void handle.done.catch(() => {});
-      return handle.record;
-    });
-
-    app.post("/api/sessions/:id/stop", async (req) => {
-      const id = SessionId((req.params as { id: string }).id);
-      await ctx.sessions.stop(id);
-      return { stopped: true };
-    });
-
-    app.get("/api/journal", async (req) => {
-      const query = req.query as Query;
-      const options: JournalReadOptions = {
-        ...(query.sessionId !== undefined
-          ? { sessionId: SessionId(query.sessionId) }
-          : {}),
-        ...(intParam(query.afterId) !== undefined
-          ? { afterId: intParam(query.afterId)! }
-          : {}),
-        ...(intParam(query.limit) !== undefined
-          ? { limit: intParam(query.limit)! }
-          : {}),
-        ...(query.latest === "true" ? { latest: true } : {}),
-      };
-      return ctx.journal.read(options);
-    });
-
-    app.get("/api/journal/search", async (req) => {
-      const query = req.query as Query;
-      const q = query.q ?? "";
-      return ctx.journal.search(q, {
-        ...(query.sessionId !== undefined
-          ? { sessionId: SessionId(query.sessionId) }
-          : {}),
-        ...(intParam(query.limit) !== undefined
-          ? { limit: intParam(query.limit)! }
-          : {}),
-      });
-    });
-
-    app.get("/api/master", async (req) => {
-      const master = ctx.threads.ensureMaster();
-      const all = (req.query as Query).all === "true";
-      return all ? ctx.threads.entries(master.id) : ctx.threads.liveContext(master.id);
-    });
-
-    app.get("/api/fibers", async () => ctx.registry.dumpState());
+    // Both, because "/*" does not cover the root path.
+    app.route({ method: METHODS, url: "/", handler: dispatch });
+    app.route({ method: METHODS, url: "/*", handler: dispatch });
   }
 
   // -------------------------------------------------------------------------

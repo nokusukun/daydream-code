@@ -16,6 +16,12 @@
     },
     {
       "path": "../tools"
+    },
+    {
+      "path": "../routes"
+    },
+    {
+      "path": "../config"
     }
   ]
 }

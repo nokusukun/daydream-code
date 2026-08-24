@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { App, type Context } from "@daydream-code/kernel";
+import { Composition } from "./composition.js";
 import {
   composeEntries,
   renderConfigDump,
@@ -17,6 +18,7 @@ import { mountEntries, type MountedEntry } from "./loader.js";
 export * from "./entries.js";
 export * from "./loader.js";
 export { baseBundle } from "./base.js";
+export { Composition } from "./composition.js";
 
 export interface BootOptions {
   projectRoot: string;
@@ -53,19 +55,26 @@ function fileLayer(path: string, source: string): Layer | null {
   return { source, baseDir: dirname(path), rows: parsed as PatchRow[] };
 }
 
-export function composeLayers(options: BootOptions): {
-  entries: ComposedEntry[];
-  warnings: ComposeWarning[];
-} {
+/** Absolute path of a writable config layer. */
+export function layerPath(which: "user" | "project", projectRoot: string): string {
+  return which === "user"
+    ? join(homedir(), ".daydream-code", "config.yml")
+    : join(resolve(projectRoot), ".daydream-code", "config.yml");
+}
+
+/**
+ * Read the layers in precedence order. Exported so a reload can re-read them
+ * without going through `composeLayers` — the settings surface needs the
+ * layers themselves to answer "which one set this value", which the composed
+ * result no longer distinguishes.
+ */
+export function collectLayers(options: BootOptions): Layer[] {
   const projectRoot = resolve(options.projectRoot);
   const layers: Layer[] = [options.base ?? baseBundle(projectRoot)];
-  const userConfig = fileLayer(
-    join(homedir(), ".daydream-code", "config.yml"),
-    "user:config.yml",
-  );
+  const userConfig = fileLayer(layerPath("user", projectRoot), "user:config.yml");
   if (userConfig) layers.push(userConfig);
   const projectConfig = fileLayer(
-    join(projectRoot, ".daydream-code", "config.yml"),
+    layerPath("project", projectRoot),
     "project:config.yml",
   );
   if (projectConfig) layers.push(projectConfig);
@@ -76,7 +85,14 @@ export function composeLayers(options: BootOptions): {
       rows: options.overrides,
     });
   }
-  return composeEntries(layers);
+  return layers;
+}
+
+export function composeLayers(options: BootOptions): {
+  entries: ComposedEntry[];
+  warnings: ComposeWarning[];
+} {
+  return composeEntries(collectLayers(options));
 }
 
 /**
@@ -89,11 +105,27 @@ export async function boot(options: BootOptions): Promise<BootResult> {
   const app = new App();
   let mounted = new Map<string, MountedEntry>();
   if (!options.composeOnly) {
-    mounted = await mountEntries(app.rootCtx, entries, [
+    const resolutionPaths = [
       ...(options.resolutionPaths ?? []),
       resolve(options.projectRoot),
-    ]);
+    ];
+    // Before the rows, so a row may inject it. It closes over `options` so a
+    // reload re-reads the same layers this boot did, CLI overrides included.
+    let composition!: Composition;
+    app.rootCtx.plugin(
+      (ctx: Context) => {
+        composition = new Composition(
+          ctx,
+          () => collectLayers(options),
+          resolutionPaths,
+        );
+      },
+      undefined,
+    );
     await app.settle();
+    mounted = await mountEntries(app.rootCtx, entries, resolutionPaths);
+    await app.settle();
+    composition.adopt(entries, warnings, mounted);
   }
   return {
     app,

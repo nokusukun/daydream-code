@@ -145,4 +145,27 @@ describe("JournalSqlite", () => {
     expect(journal.search("nothing", { sessionId: s1 })).toHaveLength(0);
     expect(journal.search("nothing", { sessionId: s2 })).toHaveLength(1);
   });
+
+  it("excludeTail hides one session's tail without touching the others", async () => {
+    const { journal } = await makeJournal();
+    const a1 = journal.append({ sessionId: s1, type: "turn", payload: "needle one" });
+    const b1 = journal.append({ sessionId: s2, type: "turn", payload: "needle two" });
+    const a2 = journal.append({ sessionId: s1, type: "turn", payload: "needle three" });
+    const b2 = journal.append({ sessionId: s2, type: "turn", payload: "needle four" });
+
+    // Everything from s1 at or after a2 is dropped; s2 is untouched even
+    // though b2 was appended after the cutoff. A global `beforeId` would have
+    // taken b2 with it, which is the whole reason this option is scoped.
+    const hits = journal.search("needle", {
+      excludeTail: { sessionId: s1, fromId: a2.id },
+    });
+    expect(hits.map((h) => h.eventId)).toEqual([a1.id, b1.id, b2.id]);
+
+    // Combined with sessionId it degrades to a plain cutoff on that session.
+    const own = journal.search("needle", {
+      sessionId: s1,
+      excludeTail: { sessionId: s1, fromId: a2.id },
+    });
+    expect(own.map((h) => h.eventId)).toEqual([a1.id]);
+  });
 });

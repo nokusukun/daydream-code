@@ -9,6 +9,9 @@
   ],
   "references": [
     {
+      "path": "../asks"
+    },
+    {
       "path": "../kernel"
     },
     {
@@ -16,6 +19,9 @@
     },
     {
       "path": "../store"
+    },
+    {
+      "path": "../blobs"
     },
     {
       "path": "../journal"
@@ -40,6 +46,15 @@
     },
     {
       "path": "../compaction"
+    },
+    {
+      "path": "../questions"
+    },
+    {
+      "path": "../routes"
+    },
+    {
+      "path": "../config"
     }
   ]
 }

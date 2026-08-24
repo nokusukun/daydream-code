@@ -18,7 +18,10 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "@daydream-code/asks": "workspace:*",
+    "@daydream-code/blobs": "workspace:*",
     "@daydream-code/kernel": "workspace:*",
+    "@daydream-code/questions": "workspace:*",
     "yaml": "^2.6.0"
   }
 }

@@ -23,6 +23,7 @@
     "zod": "^4.0.0",
     "@daydream-code/thread": "workspace:*",
     "@daydream-code/tokens": "workspace:*",
-    "@daydream-code/summarize": "workspace:*"
+    "@daydream-code/summarize": "workspace:*",
+    "@daydream-code/config": "workspace:*"
   }
 }

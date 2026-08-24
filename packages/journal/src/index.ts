@@ -28,6 +28,25 @@ export interface JournalReadOptions {
   latest?: boolean;
 }
 
+export interface JournalSearchOptions {
+  sessionId?: SessionId;
+  limit?: number;
+  /**
+   * Hide one session's own tail: events from `sessionId` with an id at or
+   * above `fromId` are dropped, while every other session is returned in
+   * full.
+   *
+   * This exists because a tool call is journaled with its full arguments
+   * before the tool runs, so the search query is inside the corpus being
+   * searched — a session searching for a term it just typed matches its own
+   * call, and every earlier search it made for the same term. The exclusion
+   * is scoped to one session rather than applied as a global `beforeId`
+   * because a sibling's event journaled a second ago is legitimate context;
+   * only the caller's own in-flight step is noise.
+   */
+  excludeTail?: { sessionId: SessionId; fromId: number };
+}
+
 export interface JournalSearchHit {
   eventId: number;
   sessionId: SessionId;
@@ -48,6 +67,6 @@ export abstract class Journal extends Service {
 
   abstract append(input: JournalEventInput): JournalEvent;
   abstract read(options?: JournalReadOptions): JournalEvent[];
-  abstract search(query: string, options?: { sessionId?: SessionId; limit?: number }): JournalSearchHit[];
+  abstract search(query: string, options?: JournalSearchOptions): JournalSearchHit[];
   abstract maxId(): number;
 }

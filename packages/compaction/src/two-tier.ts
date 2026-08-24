@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { defineConfig, field } from "@daydream-code/config";
 import type { Context } from "@daydream-code/kernel";
 import type {
   ModelMessage,
@@ -13,12 +14,24 @@ import { Compactor, type CompactionResult } from "./index.js";
 export const COMPACTION_HEADER =
   "[memory compaction] The following replaces all earlier master-thread entries:";
 
-const Config = z
-  .object({
-    budgetTokens: z.number().default(50_000),
-    keepTokens: z.number().default(10_000),
-  })
-  .prefault({});
+const { Config, settings } = defineConfig({
+  budgetTokens: field.number({
+    label: "context budget",
+    help: "the master thread is compacted once its live context passes this.",
+    default: 50_000,
+    min: 0,
+    unit: "tokens",
+  }),
+  keepTokens: field.number({
+    label: "verbatim tail",
+    help: "the most recent stretch, never folded into a digest.",
+    default: 10_000,
+    min: 0,
+    unit: "tokens",
+  }),
+});
+
+export { Config, settings };
 
 type ConfigOut = z.infer<typeof Config>;
 
@@ -34,6 +47,7 @@ type ConfigOut = z.infer<typeof Config>;
 export default class TwoTierCompactor extends Compactor {
   static inject = ["threads", "tokens"];
   static Config = Config;
+  static settings = settings;
 
   readonly #config: ConfigOut;
 

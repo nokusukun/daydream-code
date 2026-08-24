@@ -25,6 +25,9 @@
     },
     {
       "path": "../normalize"
+    },
+    {
+      "path": "../routes"
     }
   ]
 }

@@ -1,5 +1,5 @@
 import { Service, type Context } from "@daydream-code/kernel";
-import type { ModelMessage, ThreadEntry } from "@daydream-code/shared";
+import type { ImagePart, ModelMessage, ThreadEntry } from "@daydream-code/shared";
 
 declare module "@daydream-code/kernel" {
   interface Context {
@@ -21,6 +21,24 @@ export abstract class TokenEstimator extends Service {
   }
 }
 
+/**
+ * Cost of an image, which scales with pixels rather than bytes. Roughly
+ * `(width x height) / 750`, the published rule of thumb.
+ *
+ * Falling back to JSON.stringify here would be catastrophic rather than
+ * merely imprecise: an ImagePart is a short blob reference, so a 4 MB
+ * screenshot would estimate at a few dozen tokens and quietly overrun the
+ * master budget. An unmeasurable image is charged a typical full-size cost.
+ */
+const IMAGE_TOKENS_UNKNOWN = 1600;
+
+function estimateImage(part: ImagePart): number {
+  if (part.width === undefined || part.height === undefined) {
+    return IMAGE_TOKENS_UNKNOWN;
+  }
+  return Math.ceil((part.width * part.height) / 750);
+}
+
 /** Default provider: ~4 chars per token, +4 per message overhead. */
 export class CharEstimator extends TokenEstimator {
   estimateText(text: string): number {
@@ -28,10 +46,14 @@ export class CharEstimator extends TokenEstimator {
   }
 
   estimateMessage(message: ModelMessage): number {
-    const content =
-      typeof message.content === "string"
-        ? message.content
-        : JSON.stringify(message.content);
-    return this.estimateText(content) + 4;
+    if (typeof message.content === "string") {
+      return this.estimateText(message.content) + 4;
+    }
+    // Sum per part: images are priced by pixels, everything else by its JSON.
+    const total = message.content.reduce((sum, part) => {
+      if (part.type === "image") return sum + estimateImage(part);
+      return sum + this.estimateText(JSON.stringify(part));
+    }, 0);
+    return total + 4;
   }
 }

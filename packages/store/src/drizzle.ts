@@ -16,6 +16,7 @@ export {
   inArray,
   lt,
   lte,
+  ne,
   not,
   or,
   sql,

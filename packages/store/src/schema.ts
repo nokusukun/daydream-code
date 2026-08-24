@@ -61,12 +61,16 @@ export const sessions = sqliteTable(
     id: text("id").primaryKey(),
     projectId: text("project_id").notNull(),
     threadId: text("thread_id").notNull(),
-    title: text("title"),
+    name: text("name").notNull(),
+    title: text("title").notNull(),
     task: text("task").notNull(),
     driver: text("driver").notNull(),
     modelId: text("model_id"),
+    // No migration accompanies `waiting`: the column is a bare `TEXT NOT NULL`
+    // in every shipped migration, so this enum is a compile-time narrowing
+    // only and widening it needs no DDL.
     status: text("status", {
-      enum: ["running", "completed", "failed", "killed"],
+      enum: ["running", "waiting", "completed", "failed", "killed"],
     }).notNull(),
     lastSeenMasterSeq: integer("last_seen_master_seq").notNull().default(0),
     startedAt: text("started_at").notNull(),
@@ -77,7 +81,10 @@ export const sessions = sqliteTable(
     tokensOut: integer("tokens_out").notNull().default(0),
     costUsd: real("cost_usd").notNull().default(0),
   },
-  (t) => [index("sessions_project_started").on(t.projectId, t.startedAt)],
+  (t) => [
+    index("sessions_project_started").on(t.projectId, t.startedAt),
+    uniqueIndex("sessions_project_name").on(t.projectId, t.name),
+  ],
 );
 
 export const journalEvents = sqliteTable(

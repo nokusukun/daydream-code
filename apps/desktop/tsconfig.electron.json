@@ -20,6 +20,7 @@
     { "path": "../../packages/driver" },
     { "path": "../../packages/tools" },
     { "path": "../../packages/session" },
-    { "path": "../../packages/server" }
+    { "path": "../../packages/server" },
+    { "path": "../../packages/workspace" }
   ]
 }

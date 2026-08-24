@@ -1,5 +1,7 @@
+import { z } from "zod";
 import { Service, type Context, type Disposer } from "@daydream-code/kernel";
 import type {
+  ImagePart,
   JournalEventInput,
   ModelMessage,
   SessionId,
@@ -13,10 +15,46 @@ declare module "@daydream-code/kernel" {
   }
 }
 
+/**
+ * One selectable model in a driver's catalog. Adapters ship a baked-in default
+ * list; a config row can replace it wholesale (`{ id: "driver-claude",
+ * config: { models: [...] } }`) — same swap-by-config rule as everything else.
+ */
+export const DriverModelSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  /** Preselected in pickers; omitting `modelId` on dispatch means "driver default". */
+  isDefault: z.boolean().optional(),
+});
+
+export type DriverModel = z.infer<typeof DriverModelSchema>;
+
+/** One driver's slice of the catalog, as served by `GET /api/models`. */
+export interface DriverCatalogEntry {
+  driver: string;
+  models: DriverModel[];
+}
+
+/**
+ * An image part resolved to bytes. Supplied by the runner, which owns the
+ * blob store — drivers stay ignorant of the blobs seam, and each one takes
+ * whichever form its SDK accepts: Claude wants base64, Codex wants a path.
+ */
+export interface ResolvedImage {
+  /** Absolute path on disk, inside the project so Codex sandboxes can read it. */
+  path: string;
+  mediaType: string;
+  /** File contents as base64, read on demand. */
+  base64(): string;
+}
+
 /** A message injected into a running session between or during turns. */
 export interface Injection {
-  kind: "user" | "master_update";
+  kind: "user" | "master_update" | "ask" | "message";
   text: string;
+  /** Images attached to this message, resolved through `ctx.blobs`. */
+  images?: ImagePart[];
 }
 
 export type PermissionMode = "auto" | "ask" | "readonly";
@@ -27,6 +65,12 @@ export interface DriverRunInput {
   /** Forked master-thread context, normalized, oldest first. */
   context: ModelMessage[];
   task: string;
+  /**
+   * Images attached to the opening task. Kept beside `task` rather than
+   * folded into it because the prompt preamble is text and every SDK wants
+   * images as separate content blocks.
+   */
+  taskImages?: ImagePart[];
   modelId: string | null;
   tools: HarnessToolDefinition[];
   /**
@@ -39,6 +83,8 @@ export interface DriverRunInput {
    * master-thread updates) to feed into the next turn, or an empty array.
    */
   drainInjections(): Injection[];
+  /** Resolve an attached image to bytes. Throws if the blob is missing. */
+  resolveImage(part: ImagePart): ResolvedImage;
   /** Resolves when the driver should wrap up (used by continue-session waits). */
   signal: AbortSignal;
   permissionMode: PermissionMode;
@@ -53,6 +99,8 @@ export interface DriverSessionResult extends SessionResult {
 
 export interface SessionDriver {
   readonly id: string;
+  /** Models this driver can dispatch with; empty/absent means "default only". */
+  readonly models?: readonly DriverModel[];
   /**
    * Run one session turn-loop until the agent finishes the task (or the
    * signal aborts). Must journal every model-visible thing through onEvent.
@@ -84,5 +132,13 @@ export class SessionDrivers extends Service {
 
   list(): string[] {
     return [...this.#drivers.keys()];
+  }
+
+  /** Every registered driver with its selectable models, in registration order. */
+  catalog(): DriverCatalogEntry[] {
+    return [...this.#drivers.values()].map((driver) => ({
+      driver: driver.id,
+      models: [...(driver.models ?? [])],
+    }));
   }
 }

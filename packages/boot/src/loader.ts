@@ -10,7 +10,15 @@ export interface MountedEntry {
   error?: unknown;
 }
 
-async function resolvePlugin(
+/**
+ * Resolve a config entry to its plugin module.
+ *
+ * Exported because reading what a plugin *could* be configured with is not the
+ * same as mounting it: a settings UI has to describe a disabled row, and
+ * importing a module only evaluates its declarations — `apply` still runs only
+ * when the kernel mounts it.
+ */
+export async function resolvePlugin(
   entry: ComposedEntry,
   resolutionPaths: readonly string[],
 ): Promise<Plugin> {

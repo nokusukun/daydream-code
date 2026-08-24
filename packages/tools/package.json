@@ -18,10 +18,13 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@daydream-code/kernel": "workspace:*",
-    "@daydream-code/shared": "workspace:*",
-    "zod": "^4.0.0",
+    "@daydream-code/asks": "workspace:*",
     "@daydream-code/journal": "workspace:*",
-    "@daydream-code/thread": "workspace:*"
+    "@daydream-code/kernel": "workspace:*",
+    "@daydream-code/questions": "workspace:*",
+    "@daydream-code/shared": "workspace:*",
+    "@daydream-code/store": "workspace:*",
+    "@daydream-code/thread": "workspace:*",
+    "zod": "^4.0.0"
   }
 }

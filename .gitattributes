@@ -1,0 +1,32 @@
+# Git decides "binary" by sniffing the first 8k of a blob for a NUL byte. One
+# stray control character in a source file is therefore enough to make `git
+# diff` refuse to render the change at all — and everything built on top of it
+# (`--numstat`, review tools, the harness's own Changes tab) reports the file
+# as unreviewable rather than as the text it plainly is.
+#
+# That is not hypothetical here: the committed `apps/cli/src/bin.ts` carries a
+# literal 0x00 inside a string literal at offset 7370, where `"\0"` was meant.
+# The byte is in published history, so it cannot be taken back out without
+# rewriting a commit that is already on the remote. Setting the `diff`
+# attribute fixes the symptom for good instead: git treats these paths as text
+# "even when they contain byte values that normally never appear in text
+# files, such as NUL" (gitattributes(5)).
+#
+# Only `diff` is set, deliberately. Adding `text` would enable end-of-line
+# normalization for every matching path, which rewrites working copies on the
+# next checkout — a much larger change than this one is trying to make.
+
+*.ts    diff
+*.tsx   diff
+*.cts   diff
+*.mts   diff
+*.js    diff
+*.mjs   diff
+*.cjs   diff
+*.json  diff
+*.jsonc diff
+*.css   diff
+*.html  diff
+*.md    diff
+*.yml   diff
+*.yaml  diff

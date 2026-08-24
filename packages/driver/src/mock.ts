@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { defineConfig, field } from "@daydream-code/config";
 import type { Context } from "@daydream-code/kernel";
 import { signalAborted } from "./abort.js";
 import type {
@@ -19,12 +20,20 @@ const Step = z.union([TurnStep, ToolStep]);
 
 export type MockStep = z.infer<typeof Step>;
 
-export const Config = z
-  .object({
-    id: z.string().default("mock"),
-    script: z.array(Step).default([]),
-  })
-  .prefault({});
+export const { Config, settings } = defineConfig({
+  id: field.string({
+    label: "driver id",
+    help: "how sessions name this driver.",
+    default: "mock",
+  }),
+  script: field.json({
+    label: "script",
+    help: "the canned steps this driver replays. Used by tests; there is no useful way to author it in a form.",
+    schema: z.array(Step),
+    default: [] as MockStep[],
+    advanced: true,
+  }),
+});
 
 export type MockConfig = z.infer<typeof Config>;
 
@@ -37,6 +46,34 @@ export class MockDriver implements SessionDriver {
   async run(input: DriverRunInput): Promise<DriverSessionResult> {
     const turnTexts: string[] = [];
 
+    /**
+     * Record what actually arrived, resolved through the runner's blob
+     * resolver. Real drivers hand these to their SDK; journaling them is how
+     * the end-to-end tests prove an attachment survived the whole path.
+     */
+    const noteImages = (images: DriverRunInput["taskImages"]): void => {
+      if (images === undefined || images.length === 0) return;
+      input.onEvent({
+        type: "images_attached",
+        payload: {
+          images: images.map((image) => {
+            const resolved = input.resolveImage(image);
+            return {
+              blobId: image.blobId,
+              mediaType: resolved.mediaType,
+              alt: image.alt ?? null,
+              width: image.width ?? null,
+              height: image.height ?? null,
+              path: resolved.path,
+              base64Bytes: resolved.base64().length,
+            };
+          }),
+        },
+      });
+    };
+
+    noteImages(input.taskImages);
+
     const drain = (): number => {
       const injections = input.drainInjections();
       for (const injection of injections) {
@@ -44,6 +81,7 @@ export class MockDriver implements SessionDriver {
           type: "user_injected",
           payload: { kind: injection.kind, text: injection.text },
         });
+        noteImages(injection.images);
         const reply = `ack: ${injection.text}`;
         input.onEvent({ type: "turn", payload: { text: reply } });
         input.onEvent({ type: "turn_end", payload: { reason: "end_turn" } });
@@ -112,4 +150,4 @@ export function apply(ctx: Context, config: MockConfig): void {
   ctx.drivers.register(ctx, new MockDriver(config.id, config.script));
 }
 
-export default { name, inject, Config, apply };
+export default { name, inject, Config, settings, apply };

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { defineConfig, field } from "@daydream-code/config";
 import {
   createSdkMcpServer,
   query,
@@ -7,12 +8,14 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Context } from "@daydream-code/kernel";
-import { zeroUsage, type Usage } from "@daydream-code/shared";
+import { zeroUsage, type ImagePart, type Usage } from "@daydream-code/shared";
 import type { HarnessToolDefinition } from "@daydream-code/tools";
-import type {
-  DriverRunInput,
-  DriverSessionResult,
-  SessionDriver,
+import {
+  DriverModelSchema,
+  type DriverModel,
+  type DriverRunInput,
+  type DriverSessionResult,
+  type SessionDriver,
 } from "./index.js";
 import { onAbort, signalAborted, triggerAbort } from "./abort.js";
 import { renderInitialPrompt } from "./prompt.js";
@@ -20,8 +23,16 @@ import { renderInitialPrompt } from "./prompt.js";
 export { renderInitialPrompt } from "./prompt.js";
 
 // ---------------------------------------------------------------------------
-// JSON Schema -> zod raw shape (covers the harness-tool schemas: object with
-// string/number/boolean/array-of-string props + required)
+// JSON Schema -> zod raw shape.
+//
+// Recursive: arrays carry their item type and objects their inner shape, so a
+// nested schema (the `ask_user` array of questions, each with an array of
+// options) reaches the model as structure rather than as `unknown`. The old
+// one-level version silently flattened anything nested, which reads as a
+// working tool right up until the model has to guess the argument shape.
+//
+// Structural only — JSON Schema bounds like minItems are not translated, so a
+// tool with real bounds still validates its own arguments.
 
 function propToZod(prop: unknown): z.ZodType {
   const p =
@@ -40,16 +51,18 @@ function propToZod(prop: unknown): z.ZodType {
     case "boolean":
       type = z.boolean();
       break;
-    case "array": {
-      const items =
+    case "array":
+      type = z.array(
         p.items !== null && typeof p.items === "object"
-          ? (p.items as Record<string, unknown>)
-          : {};
-      type = items.type === "string" ? z.array(z.string()) : z.array(z.unknown());
+          ? propToZod(p.items)
+          : z.unknown(),
+      );
       break;
-    }
     case "object":
-      type = z.looseObject({});
+      type =
+        p.properties !== null && typeof p.properties === "object"
+          ? z.object(jsonSchemaToZodShape(p))
+          : z.looseObject({});
       break;
     default:
       type = z.unknown();
@@ -123,12 +136,59 @@ class AsyncPushQueue<T> implements AsyncIterable<T> {
   }
 }
 
-function userMessage(text: string): SDKUserMessage {
+/** A text block plus one block per image, in the shape the SDK accepts. */
+type ContentBlock =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      source: { type: "base64"; media_type: string; data: string };
+    };
+
+function userMessage(text: string, blocks: ContentBlock[] = []): SDKUserMessage {
+  // Plain string when there is nothing to attach: the SDK is happiest with
+  // its simplest form, and this keeps existing transcripts byte-identical.
+  const content =
+    blocks.length === 0
+      ? text
+      : ([{ type: "text", text }, ...blocks] as ContentBlock[]);
   return {
     type: "user",
-    message: { role: "user", content: text },
+    message: {
+      role: "user",
+      content: content as SDKUserMessage["message"]["content"],
+    },
     parent_tool_use_id: null,
   };
+}
+
+/** Map attached images to base64 blocks, skipping any the store lost. */
+function imageBlocks(
+  images: readonly ImagePart[] | undefined,
+  input: DriverRunInput,
+): ContentBlock[] {
+  if (images === undefined || images.length === 0) return [];
+  const blocks: ContentBlock[] = [];
+  for (const image of images) {
+    try {
+      const resolved = input.resolveImage(image);
+      blocks.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: resolved.mediaType,
+          data: resolved.base64(),
+        },
+      });
+    } catch (error) {
+      // A missing blob must not kill a turn — the prompt preamble still
+      // carries an `[image]` placeholder, so the model knows one was meant.
+      input.onEvent({
+        type: "driver_error",
+        payload: { error: `image ${image.blobId} unavailable: ${String(error)}` },
+      });
+    }
+  }
+  return blocks;
 }
 
 function permissionOptions(mode: DriverRunInput["permissionMode"]): Options {
@@ -179,12 +239,35 @@ function harnessMcpServer(input: DriverRunInput) {
 // ---------------------------------------------------------------------------
 // Driver
 
+/**
+ * Baked-in catalog (config-replaceable). No `isDefault`: an unset modelId
+ * defers to the user's own Claude Code default model.
+ */
+const CLAUDE_MODELS: DriverModel[] = [
+  { id: "claude-fable-5", label: "Claude Fable 5", description: "most capable, Mythos-class" },
+  { id: "claude-opus-5", label: "Claude Opus 5" },
+  { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
+  { id: "claude-opus-4-7", label: "Claude Opus 4.7" },
+  { id: "claude-opus-4-6", label: "Claude Opus 4.6" },
+  { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", description: "fast and cheap" },
+];
+
 export class ClaudeDriver implements SessionDriver {
-  constructor(readonly id: string) {}
+  constructor(
+    readonly id: string,
+    readonly models: readonly DriverModel[] = CLAUDE_MODELS,
+  ) {}
 
   async run(input: DriverRunInput): Promise<DriverSessionResult> {
     const prompt = new AsyncPushQueue<SDKUserMessage>();
-    prompt.push(userMessage(renderInitialPrompt(input.context, input.task)));
+    prompt.push(
+      userMessage(
+        renderInitialPrompt(input.context, input.task),
+        imageBlocks(input.taskImages, input),
+      ),
+    );
 
     const controller = new AbortController();
     const offAbort = onAbort(input.signal, () => triggerAbort(controller));
@@ -300,7 +383,10 @@ export class ClaudeDriver implements SessionDriver {
             // Batch into one user message; [master thread update] blocks
             // arrive already formatted and are passed through verbatim.
             prompt.push(
-              userMessage(injections.map((i) => i.text).join("\n\n")),
+              userMessage(
+                injections.map((i) => i.text).join("\n\n"),
+                injections.flatMap((i) => imageBlocks(i.images, input)),
+              ),
             );
           } else {
             prompt.close();
@@ -323,12 +409,28 @@ export class ClaudeDriver implements SessionDriver {
 export const name = "driver-claude";
 export const inject = ["drivers"] as const;
 
-export const Config = z
-  .object({ id: z.string().default("claude") })
-  .prefault({});
+export const { Config, settings } = defineConfig({
+  id: field.string({
+    label: "driver id",
+    help: "how sessions name this driver. Changing it orphans sessions that pinned the old name.",
+    default: "claude",
+    advanced: true,
+  }),
+  models: field.list({
+    label: "model catalog",
+    help: "what the model picker offers. Removing one does not stop a session that already pinned it.",
+    item: {
+      id: field.string({ label: "model id", placeholder: "claude_models" }),
+      label: field.string({ label: "shown as" }),
+      description: field.string({ label: "description", optional: true }),
+      isDefault: field.boolean({ label: "preselected", optional: true }),
+    },
+    default: CLAUDE_MODELS,
+  }),
+});
 
 export function apply(ctx: Context, config: z.infer<typeof Config>): void {
-  ctx.drivers.register(ctx, new ClaudeDriver(config.id));
+  ctx.drivers.register(ctx, new ClaudeDriver(config.id, config.models));
 }
 
-export default { name, inject, Config, apply };
+export default { name, inject, Config, settings, apply };

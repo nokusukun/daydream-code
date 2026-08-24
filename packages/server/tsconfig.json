@@ -9,22 +9,34 @@
   ],
   "references": [
     {
-      "path": "../kernel"
-    },
-    {
-      "path": "../shared"
-    },
-    {
-      "path": "../session"
+      "path": "../driver"
     },
     {
       "path": "../journal"
     },
     {
-      "path": "../thread"
+      "path": "../kernel"
+    },
+    {
+      "path": "../session"
+    },
+    {
+      "path": "../shared"
     },
     {
       "path": "../store"
+    },
+    {
+      "path": "../thread"
+    },
+    {
+      "path": "../questions"
+    },
+    {
+      "path": "../routes"
+    },
+    {
+      "path": "../config"
     }
   ]
 }

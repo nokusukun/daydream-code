@@ -15,10 +15,17 @@ import {
   gt,
   inArray,
   lt,
+  ne,
+  or,
   sql,
   type SQL,
 } from "@daydream-code/store/drizzle";
-import { Journal, type JournalReadOptions, type JournalSearchHit } from "./index.js";
+import {
+  Journal,
+  type JournalReadOptions,
+  type JournalSearchHit,
+  type JournalSearchOptions,
+} from "./index.js";
 
 const t = schema.journalEvents;
 
@@ -81,16 +88,21 @@ export default class JournalSqlite extends Journal {
     return rows.map((row) => this.#toEvent(row));
   }
 
-  search(
-    query: string,
-    options: { sessionId?: SessionId; limit?: number } = {},
-  ): JournalSearchHit[] {
+  search(query: string, options: JournalSearchOptions = {}): JournalSearchHit[] {
     const escaped = query.replace(/[\\%_]/g, (char) => `\\${char}`);
     const conditions: SQL[] = [
       sql`${t.payloadJson} LIKE ${`%${escaped}%`} ESCAPE '\\'`,
     ];
     if (options.sessionId !== undefined) {
       conditions.push(eq(t.sessionId, options.sessionId));
+    }
+    if (options.excludeTail !== undefined) {
+      const { sessionId, fromId } = options.excludeTail;
+      // "Not (this session AND at/after the cutoff)" — a different session's
+      // recent events still match, only the caller's own tail is dropped.
+      conditions.push(
+        or(ne(t.sessionId, sessionId), lt(t.id, fromId)) as SQL,
+      );
     }
     const rows = this.#db
       .select()

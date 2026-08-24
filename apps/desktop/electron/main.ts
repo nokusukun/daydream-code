@@ -5,6 +5,7 @@
  * renderer speaks HTTP/WS exclusively, so it could point at a remote core.
  */
 import { randomBytes } from "node:crypto";
+import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // Inside the Electron runtime only CJS require("electron") is reliably
@@ -13,7 +14,8 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 const electron =
   createRequire(import.meta.url)("electron") as typeof import("electron");
-const { BrowserWindow, app: electronApp, dialog, ipcMain } = electron;
+const { BrowserWindow, app: electronApp, dialog, ipcMain, nativeTheme, systemPreferences } =
+  electron;
 import { boot, type BootResult } from "@daydream-code/boot";
 import type { HarnessServer } from "@daydream-code/server";
 import {
@@ -23,6 +25,17 @@ import {
   writeRegistry,
   type RegistryEntry,
 } from "./registry.js";
+import { summarizeProjects, type ProjectSummary } from "./stats.js";
+
+/**
+ * `home` travels with the list so the renderer can print `~/projects` the way
+ * a Mac app does. The renderer has no filesystem, and asking for it separately
+ * would be a second round trip for a value that never changes.
+ */
+export interface ProjectList {
+  home: string;
+  projects: ProjectSummary[];
+}
 
 /** apps/desktop — bare plugin specifiers resolve from this package's deps. */
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -116,13 +129,86 @@ function openProjectSafe(rootPath: string): Promise<OpenResult> {
 }
 
 // ---------------------------------------------------------------------------
+// Appearance: the renderer paints with the OS accent + theme so the app reads
+// as native rather than as a web page that picked its own blue.
+
+const IS_MAC = process.platform === "darwin";
+
+/** macOS default "multicolor" blue, used off-macOS and when the API is absent. */
+const FALLBACK_ACCENT = "#0a84ff";
+
+export interface Appearance {
+  /** #rrggbb — the user's System Settings accent. */
+  accent: string;
+  dark: boolean;
+  platform: NodeJS.Platform;
+  /** Whether the window is backed by a real vibrancy material. */
+  vibrancy: boolean;
+}
+
+function readAppearance(): Appearance {
+  let accent = FALLBACK_ACCENT;
+  if (IS_MAC) {
+    try {
+      // Returns RRGGBBAA (no leading #); alpha is meaningless for our use.
+      const raw = systemPreferences.getAccentColor();
+      if (typeof raw === "string" && raw.length >= 6) accent = `#${raw.slice(0, 6)}`;
+    } catch {
+      // Older macOS or a locked-down environment: keep the fallback.
+    }
+  }
+  return {
+    accent,
+    dark: nativeTheme.shouldUseDarkColors,
+    platform: process.platform,
+    vibrancy: IS_MAC,
+  };
+}
+
+/** Push appearance to every window whenever macOS changes theme or accent. */
+function watchAppearance(): void {
+  const push = (): void => broadcast("daydream:appearance", readAppearance());
+  nativeTheme.on("updated", push);
+  if (IS_MAC) {
+    try {
+      systemPreferences.subscribeNotification(
+        "AppleColorPreferencesChangedNotification",
+        push,
+      );
+    } catch {
+      // Notification unavailable; theme changes still propagate via nativeTheme.
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // IPC surface (mirrored by the preload bridge)
 
 function registerIpc(): void {
+  ipcMain.handle("daydream:get-appearance", () => readAppearance());
+
+  ipcMain.handle("daydream:open-settings", () => {
+    openSettingsWindow();
+  });
+
   ipcMain.handle("daydream:get-state", () => ({
     connection: active?.connection ?? null,
     recent: readRegistry(defaultRegistryPath()) satisfies RegistryEntry[],
   }));
+
+  /**
+   * The switcher's data. Read on demand rather than cached: the numbers move
+   * while the app is open, and reading a handful of small sqlite files costs
+   * about a millisecond each. `active` is passed in so that only the project
+   * whose core is running here reports live state (see stats.ts).
+   */
+  ipcMain.handle("daydream:list-projects", (): ProjectList => {
+    const entries = readRegistry(defaultRegistryPath());
+    return {
+      home: homedir(),
+      projects: summarizeProjects(entries, active?.connection.rootPath ?? null),
+    };
+  });
 
   ipcMain.handle("daydream:open-project", (_event, rootPath: unknown) => {
     if (typeof rootPath !== "string" || rootPath.length === 0) {
@@ -147,9 +233,22 @@ function registerIpc(): void {
 
 function createWindow(): void {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    backgroundColor: "#0d1017",
+    width: 1440,
+    height: 900,
+    minWidth: 880,
+    minHeight: 560,
+    // macOS: the window itself is the glass. The sidebar leaves it exposed;
+    // the session panel paints an opaque surface over it. Off macOS the
+    // renderer falls back to solid surfaces (see .no-vibrancy in styles.css).
+    ...(IS_MAC
+      ? {
+          vibrancy: "sidebar" as const,
+          visualEffectState: "followWindow" as const,
+          backgroundColor: "#00000000",
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 19, y: 18 },
+        }
+      : { backgroundColor: "#16181d" }),
     webPreferences: {
       preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs"),
       contextIsolation: true,
@@ -165,6 +264,61 @@ function createWindow(): void {
     void win.loadURL(devUrl);
   } else {
     void win.loadFile(join(appDir, "dist", "index.html"));
+  }
+}
+
+/**
+ * The settings window.
+ *
+ * A real second window rather than a panel or a sheet, because settings are
+ * not one of the three jobs the workspace exists to keep co-visible, and
+ * hiding a running session to change a token budget is exactly the navigation
+ * PRODUCT.md rules out. Singleton: asking twice focuses the one that is open.
+ */
+let settingsWindow: import("electron").BrowserWindow | null = null;
+
+function openSettingsWindow(): void {
+  if (settingsWindow !== null && !settingsWindow.isDestroyed()) {
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+  const win = new BrowserWindow({
+    width: 860,
+    height: 640,
+    minWidth: 720,
+    minHeight: 480,
+    title: "settings",
+    // Narrower chrome than the workspace: no traffic-light inset to dodge,
+    // because the source list starts below the toolbar rather than beside it.
+    ...(IS_MAC
+      ? {
+          vibrancy: "sidebar" as const,
+          visualEffectState: "followWindow" as const,
+          backgroundColor: "#00000000",
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 13, y: 15 },
+        }
+      : { backgroundColor: "#16181d" }),
+    webPreferences: {
+      preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+    },
+  });
+  settingsWindow = win;
+  win.on("closed", () => {
+    settingsWindow = null;
+  });
+  // The hash, not a query param: Vite's dev server 403s request URLs that
+  // contain `//`, and `connectionFromQuery` already reads the hash for the
+  // same reason.
+  const devUrl = process.env.ELECTRON_RENDERER_URL;
+  if (devUrl !== undefined && devUrl.length > 0) {
+    void win.loadURL(`${devUrl}#view=settings`);
+  } else {
+    void win.loadFile(join(appDir, "dist", "index.html"), { hash: "view=settings" });
   }
 }
 
@@ -198,6 +352,7 @@ async function runSmoke(rootPath: string): Promise<never> {
 /** Load the built renderer in a hidden window; count renderer errors. */
 async function smokeRenderer(): Promise<number> {
   registerIpc();
+  watchAppearance();
   let errors = 0;
   const win = new BrowserWindow({
     show: false,
@@ -223,10 +378,13 @@ async function smokeRenderer(): Promise<number> {
   await win.loadFile(join(appDir, "dist", "index.html"));
   // Give the renderer time to call getState, fetch the timeline, open the WS.
   await new Promise((resolve) => setTimeout(resolve, 4000));
+  // `.app` is the renderer's root element. This probe asked for `.shell`,
+  // which no longer exists, so the UI smoke reported a failure on every run
+  // and could not have caught a real one.
   const probe = (await win.webContents
-    .executeJavaScript("document.querySelector('.shell') !== null")
+    .executeJavaScript("document.querySelector('.app, .picker') !== null")
     .catch(() => false)) as boolean;
-  console.log(`[smoke:renderer] shell mounted: ${String(probe)}`);
+  console.log(`[smoke:renderer] renderer mounted: ${String(probe)}`);
   if (!probe) errors += 1;
   win.destroy();
   return errors;

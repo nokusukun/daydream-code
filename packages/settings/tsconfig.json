@@ -1,0 +1,33 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../kernel"
+    },
+    {
+      "path": "../shared"
+    },
+    {
+      "path": "../store"
+    },
+    {
+      "path": "../routes"
+    },
+    {
+      "path": "../boot"
+    },
+    {
+      "path": "../session"
+    },
+    {
+      "path": "../config"
+    }
+  ]
+}

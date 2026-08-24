@@ -23,7 +23,11 @@
     "@daydream-code/summarize": "workspace:*",
     "@daydream-code/driver": "workspace:*",
     "@daydream-code/tools": "workspace:*",
+    "@daydream-code/workspace": "workspace:*",
     "@daydream-code/session": "workspace:*",
-    "@daydream-code/server": "workspace:*"
+    "@daydream-code/server": "workspace:*",
+    "@daydream-code/questions": "workspace:*",
+    "@daydream-code/routes": "workspace:*",
+    "@daydream-code/settings": "workspace:*"
   }
 }

@@ -1,67 +1,58 @@
-/** Shown when no project is open: recent projects + open-folder dialog. */
-import { useState, type ReactNode } from "react";
-import type { RegistryEntry } from "../bridge.js";
-import { fmtDateTime } from "../ui.js";
+/**
+ * First run: pick a project folder. The only screen without the workspace.
+ *
+ * It renders the same `ProjectRow` as the toolbar switcher, so the list you
+ * learn on launch is the list you use forever after. Before, this screen and
+ * the (nonexistent) switcher were going to be two designs for one job.
+ */
+import type { ReactNode } from "react";
+import { rankProjects } from "../projects.js";
+import { ProjectRow, useProjectList } from "./ProjectSwitcher.js";
 
 export function ProjectPicker(props: {
-  recent: RegistryEntry[];
   opening: string | null;
   error: string | null;
+  hasBridge: boolean;
   onOpen(rootPath: string): void;
   onPick(): void;
-  hasBridge: boolean;
 }): ReactNode {
-  const [busyPick, setBusyPick] = useState(false);
+  const { home, projects, loaded } = useProjectList();
+
   return (
     <div className="picker">
-      <div className="picker-card">
-        <h1>daydream-code</h1>
-        <p className="picker-sub">
-          Pick a project — the harness boots per project, and every project
-          carries one continuous, journaled master thread.
-        </p>
-        {props.error !== null && <div className="error-bar">{props.error}</div>}
-        {!props.hasBridge && (
-          <div className="error-bar">
-            No Electron bridge found. Run inside the desktop shell, or pass
-            ?url=&amp;token= to point this page at a running core.
-          </div>
+      <div className="picker-drag" />
+      <div className="picker-inner">
+        <div className="picker-mark" aria-hidden="true">
+          d
+        </div>
+        <h1>Daydream Code</h1>
+
+        {props.hasBridge ? (
+          <button type="button" className="btn btn-primary" onClick={props.onPick}>
+            Open project folder…
+          </button>
+        ) : (
+          <p className="picker-sub">
+            Running outside the desktop app. Point the renderer at a core with{" "}
+            <code>#url=http://host:port&amp;token=…</code>
+          </p>
         )}
-        <button
-          type="button"
-          className="primary picker-open"
-          disabled={!props.hasBridge || busyPick || props.opening !== null}
-          onClick={() => {
-            setBusyPick(true);
-            props.onPick();
-            // Re-enabled when state updates propagate; cheap safety timer:
-            setTimeout(() => setBusyPick(false), 500);
-          }}
-        >
-          Open project folder…
-        </button>
-        {props.recent.length > 0 && (
-          <>
-            <h3>recent</h3>
-            <ul className="picker-recent">
-              {props.recent.map((entry) => (
-                <li key={entry.rootPath}>
-                  <button
-                    type="button"
-                    disabled={!props.hasBridge || props.opening !== null}
-                    onClick={() => props.onOpen(entry.rootPath)}
-                  >
-                    <span className="picker-name">
-                      {props.opening === entry.rootPath ? "booting… " : ""}
-                      {entry.name}
-                    </span>
-                    <span className="picker-path">{entry.rootPath}</span>
-                    <span className="picker-when">{fmtDateTime(entry.lastOpenedAt)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </>
+
+        {props.error !== null && <div className="error-bar">{props.error}</div>}
+
+        {loaded && projects.length > 0 && (
+          <div className="picker-recent">
+            <div className="picker-recent-head">recent</div>
+            {rankProjects(projects, "").map((project) => (
+              <ProjectRow
+                key={project.rootPath}
+                project={project}
+                home={home}
+                opening={props.opening === project.rootPath}
+                onOpen={props.onOpen}
+              />
+            ))}
+          </div>
         )}
       </div>
     </div>

@@ -29,9 +29,12 @@ export type StreamMessage =
 // Seam
 
 /**
- * Exclusive seam: the harness HTTP/WS surface. The default provider
- * (server-fastify) serves REST + a websocket event stream; a different
- * provider can replace the whole transport.
+ * Exclusive seam: the transport that carries the harness's HTTP/WS surface.
+ *
+ * It owns binding and framing, not endpoints — REST routes come from
+ * `ctx.routes`, which every capability package registers into, so replacing
+ * this provider swaps the transport without moving a single route. The default
+ * (server-fastify) serves those routes plus a websocket event stream.
  */
 export abstract class HarnessServer extends Service {
   constructor(ctx: Context) {

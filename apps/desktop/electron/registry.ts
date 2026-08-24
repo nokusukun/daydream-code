@@ -5,7 +5,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 
 export interface RegistryEntry {
   rootPath: string;
@@ -51,6 +51,15 @@ export function writeRegistry(file: string, entries: RegistryEntry[]): void {
  * Return a new list with `rootPath` present, its lastOpenedAt bumped, sorted
  * most-recently-opened first. Never mutates the input.
  */
+/**
+ * Last path segment, splitting on both separators — registry files travel
+ * between platforms, so a Windows rootPath must still name itself on POSIX.
+ */
+function lastSegment(rootPath: string): string {
+  const segments = rootPath.split(/[\\/]/).filter((s) => s.length > 0);
+  return segments[segments.length - 1] ?? "";
+}
+
 export function touchProject(
   entries: readonly RegistryEntry[],
   rootPath: string,
@@ -60,7 +69,7 @@ export function touchProject(
   const existing = entries.find((e) => e.rootPath === rootPath);
   const entry: RegistryEntry = {
     rootPath,
-    name: name ?? existing?.name ?? (basename(rootPath) || rootPath),
+    name: name ?? existing?.name ?? (lastSegment(rootPath) || rootPath),
     lastOpenedAt: now.toISOString(),
   };
   const rest = entries.filter((e) => e.rootPath !== rootPath);

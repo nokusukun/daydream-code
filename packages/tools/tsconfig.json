@@ -9,16 +9,25 @@
   ],
   "references": [
     {
+      "path": "../asks"
+    },
+    {
       "path": "../kernel"
     },
     {
       "path": "../shared"
     },
     {
+      "path": "../store"
+    },
+    {
       "path": "../journal"
     },
     {
       "path": "../thread"
+    },
+    {
+      "path": "../questions"
     }
   ]
 }

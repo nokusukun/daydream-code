@@ -51,4 +51,16 @@ const result = spawnSync(
   [prebuildBin, `--runtime=${runtime}`, `--target=${target}`, "--force", "--verbose"],
   { cwd: sqliteDir, stdio: "inherit" },
 );
-process.exit(result.status ?? 1);
+if ((result.status ?? 1) !== 0) process.exit(result.status ?? 1);
+
+// prebuild-install overwrites the .node in place; macOS caches code signatures
+// by inode, so after a swap the kernel SIGKILLs any process that dlopens the
+// binding. Re-signing ad hoc invalidates the stale cache entry.
+if (process.platform === "darwin") {
+  const binding = join(sqliteDir, "build", "Release", "better_sqlite3.node");
+  const sign = spawnSync("codesign", ["-f", "-s", "-", binding], { stdio: "inherit" });
+  if ((sign.status ?? 1) !== 0) {
+    console.warn("[rebuild-native] codesign failed; loading may SIGKILL until re-signed");
+  }
+}
+process.exit(0);

@@ -18,8 +18,11 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "@daydream-code/driver": "workspace:*",
     "@daydream-code/journal": "workspace:*",
     "@daydream-code/kernel": "workspace:*",
+    "@daydream-code/questions": "workspace:*",
+    "@daydream-code/routes": "workspace:*",
     "@daydream-code/session": "workspace:*",
     "@daydream-code/shared": "workspace:*",
     "@daydream-code/store": "workspace:*",
@@ -28,6 +31,7 @@
     "@fastify/websocket": "^11.0.0",
     "fastify": "^5.0.0",
     "ws": "^8.18.0",
-    "zod": "^4.0.0"
+    "zod": "^4.0.0",
+    "@daydream-code/config": "workspace:*"
   }
 }

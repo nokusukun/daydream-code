@@ -71,6 +71,7 @@ export const durableRules = {
             return part.text.length > 0 ? part : null;
           }
           if (
+            part.type === "image" ||
             part.type === "tool_call" ||
             part.type === "tool_result" ||
             part.type === "marker"

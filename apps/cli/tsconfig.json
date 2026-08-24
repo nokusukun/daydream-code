@@ -49,6 +49,18 @@
     },
     {
       "path": "../../packages/server"
+    },
+    {
+      "path": "../../packages/questions"
+    },
+    {
+      "path": "../../packages/routes"
+    },
+    {
+      "path": "../../packages/settings"
+    },
+    {
+      "path": "../../packages/workspace"
     }
   ]
 }

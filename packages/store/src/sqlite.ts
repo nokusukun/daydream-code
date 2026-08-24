@@ -5,6 +5,7 @@ import type BetterSqlite3 from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { defineConfig, field } from "@daydream-code/config";
 import type { Context } from "@daydream-code/kernel";
 import {
   ProjectId,
@@ -18,12 +19,18 @@ import { ProjectStore } from "./index.js";
 import * as schema from "./schema.js";
 import { runMigrations } from "./migrations.js";
 
-const SqliteStoreConfig = z.object({
-  /** Absolute root of the project this app serves. */
-  rootPath: z.string().min(1),
+const { Config, settings } = defineConfig({
+  rootPath: field.string({
+    label: "project root",
+    help: "set when the project is opened. Changing it points the app at a different project's database.",
+    minLength: 1,
+    restart: true,
+  }),
 });
 
-type SqliteStoreConfig = z.infer<typeof SqliteStoreConfig>;
+export { Config, settings };
+
+type SqliteStoreConfig = z.infer<typeof Config>;
 
 /**
  * Default store provider: better-sqlite3 + drizzle at
@@ -32,11 +39,13 @@ type SqliteStoreConfig = z.infer<typeof SqliteStoreConfig>;
  */
 export default class SqliteStore extends ProjectStore {
   static inject: string[] = [];
-  static Config = SqliteStoreConfig;
+  static Config = Config;
+  static settings = settings;
 
   readonly rootPath: string;
   readonly dataDir: string;
-  readonly project: ProjectRecord;
+  /** Mutable in here, `readonly` at the seam: only `updateConfig` replaces it. */
+  project: ProjectRecord;
   readonly db: BetterSQLite3Database<Record<string, unknown>>;
   readonly sqlite: BetterSqlite3.Database;
 
@@ -63,6 +72,21 @@ export default class SqliteStore extends ProjectStore {
     >;
     this.project = this.#ensureProject();
     ctx.effect(() => () => sqlite.close(), "store.close");
+  }
+
+  updateConfig(patch: Partial<ProjectConfig>): ProjectRecord {
+    const config: ProjectConfig = { ...this.project.config, ...patch };
+    const t = schema.projects;
+    this.db
+      .update(t)
+      .set({ configJson: JSON.stringify(config) })
+      .where(eq(t.id, this.project.id))
+      .run();
+    // DB-first, then broadcast: a listener must never see a project whose row
+    // is not durable.
+    this.project = { ...this.project, config };
+    this.ctx.emit("store/project-changed", this.project);
+    return this.project;
   }
 
   #ensureProject(): ProjectRecord {

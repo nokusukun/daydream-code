@@ -18,17 +18,22 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@daydream-code/kernel": "workspace:*",
-    "@daydream-code/shared": "workspace:*",
-    "zod": "^4.0.0",
-    "@daydream-code/store": "workspace:*",
-    "@daydream-code/journal": "workspace:*",
-    "@daydream-code/thread": "workspace:*",
+    "@daydream-code/asks": "workspace:*",
+    "@daydream-code/blobs": "workspace:*",
+    "@daydream-code/compaction": "workspace:*",
     "@daydream-code/driver": "workspace:*",
-    "@daydream-code/tools": "workspace:*",
-    "@daydream-code/summarize": "workspace:*",
-    "@daydream-code/tokens": "workspace:*",
+    "@daydream-code/journal": "workspace:*",
+    "@daydream-code/kernel": "workspace:*",
     "@daydream-code/normalize": "workspace:*",
-    "@daydream-code/compaction": "workspace:*"
+    "@daydream-code/questions": "workspace:*",
+    "@daydream-code/routes": "workspace:*",
+    "@daydream-code/shared": "workspace:*",
+    "@daydream-code/store": "workspace:*",
+    "@daydream-code/summarize": "workspace:*",
+    "@daydream-code/thread": "workspace:*",
+    "@daydream-code/tokens": "workspace:*",
+    "@daydream-code/tools": "workspace:*",
+    "zod": "^4.0.0",
+    "@daydream-code/config": "workspace:*"
   }
 }

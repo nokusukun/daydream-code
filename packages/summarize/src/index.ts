@@ -13,6 +13,16 @@ export interface TurnSummaryInput {
   turnEvents: JournalEvent[];
 }
 
+export interface TitleInput {
+  /**
+   * The instruction the title should describe: the dispatch task, or the
+   * message that just redirected the session.
+   */
+  task: string;
+  /** The session being retitled. Absent at dispatch, before the row exists. */
+  session?: SessionRecord;
+}
+
 export interface SessionSummaryInput {
   session: SessionRecord;
   /** Full journal of the session, oldest first. */
@@ -31,7 +41,13 @@ export abstract class Summarizer extends Service {
     super(ctx, "summarizer");
   }
 
-  /** One line for `session <id> turn end, summary: ...`. */
+  /**
+   * One-line title for what a session is working on now. Called at dispatch
+   * and again whenever a new instruction redirects the session, so it must
+   * stay cheap — and it must never throw, since a session is mid-flight.
+   */
+  abstract title(input: TitleInput): Promise<string>;
+  /** One line for `session <name> turn end, summary: ...`. */
   abstract turnSummary(input: TurnSummaryInput): Promise<string>;
   /** Final write-back: structured summary + tldr. */
   abstract sessionSummary(

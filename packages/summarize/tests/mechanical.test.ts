@@ -18,7 +18,8 @@ function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
     id: sessionId,
     projectId: ProjectId("p_test"),
     threadId: ThreadId("t_test"),
-    title: null,
+    name: "test-session",
+    title: "Refactor the auth token check",
     task: "Refactor the auth token check without changing the public API",
     driver: "claude",
     modelId: null,
@@ -49,6 +50,30 @@ async function makeSummarizer(): Promise<MechanicalSummarizer> {
   await app.settle();
   return ctx.get<MechanicalSummarizer>("summarizer")!;
 }
+
+describe("MechanicalSummarizer.title", () => {
+  it("takes the first sentence and drops trailing punctuation", async () => {
+    const summarizer = await makeSummarizer();
+    expect(
+      await summarizer.title({ task: "Fix the login bug. Then ship it." }),
+    ).toBe("Fix the login bug");
+  });
+
+  it("uses the first non-empty line of a multi-line instruction", async () => {
+    const summarizer = await makeSummarizer();
+    expect(
+      await summarizer.title({ task: "\n\n  update the docs  \nand tests" }),
+    ).toBe("update the docs");
+  });
+
+  it("truncates long instructions and never returns empty", async () => {
+    const summarizer = await makeSummarizer();
+    const long = await summarizer.title({ task: "x".repeat(200) });
+    expect(long.length).toBeLessThanOrEqual(72);
+    expect(long.endsWith("…")).toBe(true);
+    expect(await summarizer.title({ task: "   " })).toBe("untitled session");
+  });
+});
 
 describe("MechanicalSummarizer.turnSummary", () => {
   it("uses the last turn's first sentence plus tool activity, within 200 chars", async () => {

@@ -1,16 +1,25 @@
 import { z } from "zod";
+import { defineConfig, field } from "@daydream-code/config";
 import {
   Codex,
   type Thread,
   type ThreadItem,
   type ThreadOptions,
+  type UserInput,
 } from "@openai/codex-sdk";
 import type { Context } from "@daydream-code/kernel";
-import { addUsage, zeroUsage, type Usage } from "@daydream-code/shared";
-import type {
-  DriverRunInput,
-  DriverSessionResult,
-  SessionDriver,
+import {
+  addUsage,
+  zeroUsage,
+  type ImagePart,
+  type Usage,
+} from "@daydream-code/shared";
+import {
+  DriverModelSchema,
+  type DriverModel,
+  type DriverRunInput,
+  type DriverSessionResult,
+  type SessionDriver,
 } from "./index.js";
 import { signalAborted } from "./abort.js";
 import { renderInitialPrompt } from "./prompt.js";
@@ -39,8 +48,18 @@ function threadOptions(input: DriverRunInput): ThreadOptions {
   }
 }
 
+/** Baked-in catalog (config-replaceable): the current Codex lineup. */
+const CODEX_MODELS: DriverModel[] = [
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", description: "flagship", isDefault: true },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", description: "everyday workhorse" },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", description: "fast and affordable" },
+];
+
 export class CodexDriver implements SessionDriver {
-  constructor(readonly id: string) {}
+  constructor(
+    readonly id: string,
+    readonly models: readonly DriverModel[] = CODEX_MODELS,
+  ) {}
 
   async run(input: DriverRunInput): Promise<DriverSessionResult> {
     const codex = new Codex();
@@ -140,8 +159,37 @@ export class CodexDriver implements SessionDriver {
       }
     };
 
-    const runTurn = async (text: string): Promise<void> => {
-      const { events } = await thread.runStreamed(text, {
+    /**
+     * Codex takes images only as `{ type: "local_image", path }` — there is no
+     * base64 or URL form — so the blob store keeps real files inside the
+     * project, where the sandbox modes can read them.
+     */
+    const turnInput = (
+      text: string,
+      images: readonly ImagePart[] | undefined,
+    ): string | UserInput[] => {
+      if (images === undefined || images.length === 0) return text;
+      const parts: UserInput[] = [{ type: "text", text }];
+      for (const image of images) {
+        try {
+          parts.push({ type: "local_image", path: input.resolveImage(image).path });
+        } catch (error) {
+          input.onEvent({
+            type: "driver_error",
+            payload: {
+              error: `image ${image.blobId} unavailable: ${String(error)}`,
+            },
+          });
+        }
+      }
+      return parts;
+    };
+
+    const runTurn = async (
+      text: string,
+      images?: readonly ImagePart[],
+    ): Promise<void> => {
+      const { events } = await thread.runStreamed(turnInput(text, images), {
         signal: input.signal,
       });
       for await (const event of events) {
@@ -189,7 +237,7 @@ export class CodexDriver implements SessionDriver {
     });
 
     try {
-      await runTurn(renderInitialPrompt(input.context, input.task));
+      await runTurn(renderInitialPrompt(input.context, input.task), input.taskImages);
       // Injection loop: keep running follow-up turns while injections queue up.
       while (!signalAborted(input.signal)) {
         const injections = input.drainInjections();
@@ -200,7 +248,10 @@ export class CodexDriver implements SessionDriver {
             payload: { kind: injection.kind, text: injection.text },
           });
         }
-        await runTurn(injections.map((i) => i.text).join("\n\n"));
+        await runTurn(
+          injections.map((i) => i.text).join("\n\n"),
+          injections.flatMap((i) => i.images ?? []),
+        );
       }
     } catch (error) {
       if (signalAborted(input.signal)) return buildResult();
@@ -218,12 +269,28 @@ export class CodexDriver implements SessionDriver {
 export const name = "driver-codex";
 export const inject = ["drivers"] as const;
 
-export const Config = z
-  .object({ id: z.string().default("codex") })
-  .prefault({});
+export const { Config, settings } = defineConfig({
+  id: field.string({
+    label: "driver id",
+    help: "how sessions name this driver. Changing it orphans sessions that pinned the old name.",
+    default: "codex",
+    advanced: true,
+  }),
+  models: field.list({
+    label: "model catalog",
+    help: "what the model picker offers. Removing one does not stop a session that already pinned it.",
+    item: {
+      id: field.string({ label: "model id", placeholder: "codex_models" }),
+      label: field.string({ label: "shown as" }),
+      description: field.string({ label: "description", optional: true }),
+      isDefault: field.boolean({ label: "preselected", optional: true }),
+    },
+    default: CODEX_MODELS,
+  }),
+});
 
 export function apply(ctx: Context, config: z.infer<typeof Config>): void {
-  ctx.drivers.register(ctx, new CodexDriver(config.id));
+  ctx.drivers.register(ctx, new CodexDriver(config.id, config.models));
 }
 
-export default { name, inject, Config, apply };
+export default { name, inject, Config, settings, apply };
