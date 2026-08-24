@@ -5,8 +5,9 @@
  * renderer speaks HTTP/WS exclusively, so it could point at a remote core.
  */
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // Inside the Electron runtime only CJS require("electron") is reliably
 // intercepted (the ESM specifier can resolve to the npm path-wrapper under
@@ -14,8 +15,17 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 const electron =
   createRequire(import.meta.url)("electron") as typeof import("electron");
-const { BrowserWindow, app: electronApp, dialog, ipcMain, nativeTheme, systemPreferences } =
-  electron;
+const {
+  BrowserWindow,
+  Menu,
+  app: electronApp,
+  clipboard,
+  dialog,
+  ipcMain,
+  nativeTheme,
+  shell,
+  systemPreferences,
+} = electron;
 import { boot, type BootResult } from "@daydream-code/boot";
 import type { HarnessServer } from "@daydream-code/server";
 import {
@@ -50,6 +60,18 @@ export interface ConnectionInfo {
 export type OpenResult =
   | { ok: true; connection: ConnectionInfo }
   | { ok: false; error: string };
+
+type CodeContextMenuAction = "ask-selection" | "open" | "toggle";
+
+type CodeContextMenuRequest =
+  | {
+      kind: "selection";
+      path: string;
+      text: string;
+      lineStart?: number;
+      lineEnd?: number;
+    }
+  | { kind: "file"; path: string; dir: boolean; expanded?: boolean };
 
 interface ActiveProject {
   result: BootResult;
@@ -128,6 +150,103 @@ function openProjectSafe(rootPath: string): Promise<OpenResult> {
   return next;
 }
 
+/** Resolve an untrusted renderer path without letting the menu escape the project. */
+function projectPath(value: unknown): { relative: string; absolute: string } | null {
+  if (active === null || typeof value !== "string" || value.length === 0) return null;
+  if (value.includes("\0")) return null;
+  const root = resolve(active.connection.rootPath);
+  const absolute = resolve(root, value);
+  const fromRoot = relative(root, absolute);
+  if (fromRoot === "" || fromRoot.startsWith("..") || isAbsolute(fromRoot)) return null;
+  return { relative: value.replace(/\\/g, "/"), absolute };
+}
+
+function selectionReference(request: Extract<CodeContextMenuRequest, { kind: "selection" }>): string {
+  const start = request.lineStart;
+  const end = request.lineEnd;
+  if (start === undefined) return request.path;
+  return start === end || end === undefined
+    ? `${request.path}:L${start}`
+    : `${request.path}:L${Math.min(start, end)}-L${Math.max(start, end)}`;
+}
+
+/**
+ * Native code-workspace menu. The main process owns filesystem actions and
+ * clipboard writes; only actions that mutate renderer navigation come back.
+ */
+function showCodeContextMenu(
+  event: Electron.IpcMainInvokeEvent,
+  input: unknown,
+): Promise<CodeContextMenuAction | null> {
+  if (typeof input !== "object" || input === null) return Promise.resolve(null);
+  const request = input as Partial<CodeContextMenuRequest>;
+  const path = projectPath(request.path);
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (path === null || window === null) return Promise.resolve(null);
+
+  let action: CodeContextMenuAction | null = null;
+  let template: Electron.MenuItemConstructorOptions[];
+  if (request.kind === "selection") {
+    if (typeof request.text !== "string" || request.text.trim().length === 0) {
+      return Promise.resolve(null);
+    }
+    // The file reader is clipped, but keep a hard IPC ceiling as well.
+    const text = request.text.slice(0, 500_000);
+    const normalized: Extract<CodeContextMenuRequest, { kind: "selection" }> = {
+      kind: "selection",
+      path: path.relative,
+      text,
+      ...(typeof request.lineStart === "number" ? { lineStart: request.lineStart } : {}),
+      ...(typeof request.lineEnd === "number" ? { lineEnd: request.lineEnd } : {}),
+    };
+    const reference = selectionReference(normalized);
+    template = [
+      {
+        label: "Copy",
+        accelerator: "CommandOrControl+C",
+        click: () => clipboard.writeText(text),
+      },
+      {
+        label: "Copy with File Reference",
+        click: () => clipboard.writeText(`${reference}\n${text}`),
+      },
+      { type: "separator" },
+      { label: "Ask About Selection", click: () => { action = "ask-selection"; } },
+    ];
+  } else if (request.kind === "file" && typeof request.dir === "boolean") {
+    template = [
+      {
+        label: request.dir
+          ? request.expanded === true
+            ? "Collapse Folder"
+            : "Expand Folder"
+          : "Open",
+        click: () => { action = request.dir ? "toggle" : "open"; },
+      },
+      { type: "separator" },
+      {
+        label: "Copy Relative Path",
+        click: () => clipboard.writeText(path.relative),
+      },
+      {
+        label: "Copy Absolute Path",
+        click: () => clipboard.writeText(path.absolute),
+      },
+      { type: "separator" },
+      {
+        label: process.platform === "darwin" ? "Reveal in Finder" : "Show in File Manager",
+        click: () => shell.showItemInFolder(path.absolute),
+      },
+    ];
+  } else {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((done) => {
+    Menu.buildFromTemplate(template).popup({ window, callback: () => done(action) });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Appearance: the renderer paints with the OS accent + theme so the app reads
 // as native rather than as a web page that picked its own blue.
@@ -187,6 +306,8 @@ function watchAppearance(): void {
 function registerIpc(): void {
   ipcMain.handle("daydream:get-appearance", () => readAppearance());
 
+  ipcMain.handle("daydream:code-context-menu", showCodeContextMenu);
+
   ipcMain.handle("daydream:open-settings", () => {
     openSettingsWindow();
   });
@@ -231,6 +352,21 @@ function registerIpc(): void {
 // ---------------------------------------------------------------------------
 // Window / lifecycle
 
+/**
+ * Temporary app mark: the facet the master thread already wears, on the same
+ * tinted-navy ground the window surfaces are mixed from.
+ *
+ * Set at runtime rather than baked into a bundle because there is no packaging
+ * step yet — unpackaged Electron shows its own icon in the Dock otherwise, and
+ * `icon:` on BrowserWindow is a no-op on macOS. `icons/icon.icns` is here for
+ * whenever the build config lands.
+ */
+function applyAppIcon(): void {
+  const png = join(appDir, "icons", "icon.png");
+  if (!existsSync(png)) return;
+  if (IS_MAC) electronApp.dock?.setIcon(png);
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1440,
@@ -248,7 +384,7 @@ function createWindow(): void {
           titleBarStyle: "hiddenInset" as const,
           trafficLightPosition: { x: 19, y: 18 },
         }
-      : { backgroundColor: "#16181d" }),
+      : { backgroundColor: "#16181d", icon: join(appDir, "icons", "icon.png") }),
     webPreferences: {
       preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs"),
       contextIsolation: true,
@@ -299,7 +435,7 @@ function openSettingsWindow(): void {
           titleBarStyle: "hiddenInset" as const,
           trafficLightPosition: { x: 13, y: 15 },
         }
-      : { backgroundColor: "#16181d" }),
+      : { backgroundColor: "#16181d", icon: join(appDir, "icons", "icon.png") }),
     webPreferences: {
       preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs"),
       contextIsolation: true,
@@ -396,6 +532,7 @@ if (smokeRoot !== undefined && smokeRoot.length > 0) {
 } else {
   registerIpc();
   void electronApp.whenReady().then(() => {
+    applyAppIcon();
     createWindow();
     electronApp.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -3,6 +3,8 @@
  * against a base URL + bearer token, so it unit-tests with a fake fetch and
  * could point at a remote core just as well as the local one.
  */
+import type { BlobRef } from "@daydream-code/blobs";
+import type { AttachmentInput } from "@daydream-code/session";
 import type { SettingsView, WriteRequest, WriteResult } from "@daydream-code/settings";
 import type {
   FileContent,
@@ -42,6 +44,13 @@ export interface DispatchInput {
   driver?: string;
   modelId?: string;
   name?: string;
+  attachments?: AttachmentInput[];
+}
+
+/** A stored blob plus its bytes, which is the only way JSON can carry them. */
+export interface BlobContent extends BlobRef {
+  /** Raw base64, no data-URL prefix. */
+  data: string;
 }
 
 export interface DriverModel {
@@ -59,6 +68,8 @@ export interface DriverCatalogEntry {
 export interface JournalQuery {
   sessionId?: string;
   afterId?: number;
+  /** Event types to keep; empty or absent means every type. */
+  types?: string[];
   limit?: number;
   latest?: boolean;
 }
@@ -90,6 +101,21 @@ export interface ApiClientOptions {
   baseUrl: string;
   token?: string;
   fetchImpl?: typeof fetch;
+}
+
+/**
+ * A non-2xx response, carrying the status so a caller can tell "gone" from
+ * "could not reach it". A draft holding an attachment that has been deleted
+ * has to retire the chip; a dropped connection must leave it alone.
+ */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
 }
 
 type Params = Record<string, string | number | boolean | undefined>;
@@ -140,7 +166,10 @@ export class ApiClient {
       } catch {
         // non-JSON error body; status alone will do
       }
-      throw new Error(`${path} failed (${response.status})${detail}`);
+      throw new ApiError(
+        response.status,
+        `${path} failed (${response.status})${detail}`,
+      );
     }
     return (await response.json()) as T;
   }
@@ -176,8 +205,34 @@ export class ApiClient {
     return this.#post("/api/sessions", input);
   }
 
-  message(id: string, message: string): Promise<SessionRecord> {
-    return this.#post(`/api/sessions/${encodeURIComponent(id)}/message`, { message });
+  message(
+    id: string,
+    message: string,
+    attachments?: AttachmentInput[],
+  ): Promise<SessionRecord> {
+    return this.#post(`/api/sessions/${encodeURIComponent(id)}/message`, {
+      message,
+      ...(attachments !== undefined && attachments.length > 0
+        ? { attachments }
+        : {}),
+    });
+  }
+
+  /**
+   * Store an image and get back a reference to it. Composers call this when a
+   * file is pasted or dropped rather than when the message is sent, so the
+   * bytes cross the wire once no matter how the draft is edited afterwards.
+   */
+  uploadBlob(data: string, alt?: string): Promise<BlobRef> {
+    return this.#post("/api/blobs", {
+      data,
+      ...(alt !== undefined ? { alt } : {}),
+    });
+  }
+
+  /** Bytes for a stored blob. Rejects with a 404 once it is gone. */
+  blob(id: string): Promise<BlobContent> {
+    return this.#request(`/api/blobs/${encodeURIComponent(id)}`);
   }
 
   stop(id: string): Promise<{ stopped: boolean }> {
@@ -198,7 +253,11 @@ export class ApiClient {
   }
 
   journal(query: JournalQuery = {}): Promise<JournalEvent[]> {
-    return this.#request("/api/journal", { ...query });
+    const { types, ...rest } = query;
+    return this.#request("/api/journal", {
+      ...rest,
+      ...(types !== undefined && types.length > 0 ? { types: types.join(",") } : {}),
+    });
   }
 
   search(q: string, options: { sessionId?: string; limit?: number } = {}): Promise<SearchHit[]> {

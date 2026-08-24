@@ -40,7 +40,7 @@ export function ActivityMenu(): ReactNode {
   useDismiss(rootRef, open, () => setOpen(false));
 
   const waiting = live.filter((s) => s.status === "waiting");
-  const pending = draftPreview(drafts.get(NEW_SESSION_DRAFT) ?? "");
+  const pending = draftPreview(drafts.get(NEW_SESSION_DRAFT));
   // The last run to finish is what "idle" should report on — an empty bar that
   // says nothing is a worse answer than the outcome you last got.
   const lastDone = sessions

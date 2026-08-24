@@ -25,6 +25,8 @@ import { MessageComposer } from "./Composer.js";
 import { StatusGlyph, fmtDateTime, fmtTime, peek, short } from "../ui.js";
 import { ProviderIcon } from "../provider-icon.js";
 import { Code, Fence, Markdown, Output } from "../prose.js";
+import { Entry as Row } from "./Entry.js";
+import { Attachments, imageParts } from "./Attachments.js";
 import {
   describeTool,
   relativeTo,
@@ -340,6 +342,37 @@ function TranscriptSkeleton(): ReactNode {
  */
 const TOOL_TYPES = new Set(["tool_call", "tool_result", "tool_error"]);
 
+/**
+ * Events that draw nothing.
+ *
+ * Claude journals a `thinking` event for every thinking block whether or not
+ * any text came with it — in this project's store that is 766 of 766 — and an
+ * invisible row still ended the run it sat in. That is how one stretch of tool
+ * traffic came out as six separate "2 tool calls" rows with loose pairs
+ * between them: the grouper was reading the journal, and the reader was
+ * looking at the screen.
+ *
+ * So grouping decides on what will be drawn. The predicate lives here rather
+ * than inside `Event` because both need it and the two must not drift: a rule
+ * that hides a row in one place and splits a group in the other is the bug
+ * this fixes.
+ */
+export function drawsNothing(event: JournalEvent): boolean {
+  const payload = payloadOf(event);
+  const blank = short(payload.text ?? "").trim().length === 0;
+  switch (event.type) {
+    case "turn":
+    case "thinking":
+      return blank;
+    // A captionless screenshot is a message. Only one carrying neither text
+    // nor image is nothing.
+    case "user_injected":
+      return blank && imageParts(payload.images).length === 0;
+    default:
+      return false;
+  }
+}
+
 type Item =
   | { kind: "event"; event: JournalEvent }
   | { kind: "tools"; key: number; events: JournalEvent[] };
@@ -366,6 +399,7 @@ export function groupEvents(events: readonly JournalEvent[]): Item[] {
   };
 
   for (const event of events) {
+    if (drawsNothing(event)) continue;
     if (TOOL_TYPES.has(event.type)) {
       run.push(event);
       continue;
@@ -418,7 +452,7 @@ function ToolGroup(props: {
   const { label, calls, errors } = useMemo(() => summarize(props.events), [props.events]);
 
   return (
-    <div className={`tool-group${open ? " is-open" : ""}`}>
+    <Row kind="tools" className={`tool-group${open ? " is-open" : ""}`}>
       <button
         type="button"
         className="tool-group-head"
@@ -450,7 +484,7 @@ function ToolGroup(props: {
           ))}
         </div>
       )}
-    </div>
+    </Row>
   );
 }
 
@@ -478,6 +512,12 @@ function metaLabel(event: JournalEvent): string | null {
     }
     case "session_ended":
       return `session ended${typeof p.status === "string" ? ` · ${p.status}` : ""}`;
+    case "images_attached": {
+      // The images themselves are drawn on the message above this row; all
+      // this line owes is the fact that they were stored, not their ids.
+      const count = Array.isArray(p.images) ? p.images.length : 0;
+      return `${count} image${count === 1 ? "" : "s"} attached`;
+    }
     default:
       return null;
   }
@@ -489,51 +529,90 @@ function payloadOf(event: JournalEvent): Record<string, unknown> {
     : {};
 }
 
-function Event(props: {
+export function Event(props: {
   event: JournalEvent;
   names: ReadonlyMap<string, string>;
   changed: ReadonlyMap<string, ChangedFile>;
 }): ReactNode {
   const { event } = props;
   const payload = payloadOf(event);
+  const images = imageParts(payload.images);
+
+  // `groupEvents` already drops these so they cannot split a run of tool
+  // calls; this is the same rule at the one place that would otherwise draw a
+  // husk — an entry row collapsed to a hairline.
+  if (drawsNothing(event)) return null;
 
   switch (event.type) {
-    case "turn": {
-      // Models that omit thinking text still journal the event; an empty
-      // bubble is a hairline artifact, so drop it rather than render a husk.
-      const text = short(payload.text ?? "");
-      if (text.trim().length === 0) return null;
+    case "session_started": {
+      const text = short(payload.task ?? "");
       return (
-        <div className="bubble bubble-assistant">
-          <Markdown text={text} />
-          <span className="bubble-time">{fmtTime(event.ts)}</span>
-        </div>
+        <>
+          {(text.trim().length > 0 || images.length > 0) && (
+            <Row kind="you" label="you" time={fmtTime(event.ts)}>
+              {text.trim().length > 0 && (
+                <div className="entry-prose">
+                  <Markdown text={text} />
+                </div>
+              )}
+              <Attachments images={images} />
+            </Row>
+          )}
+          <Tool
+            arrow="·"
+            meta
+            card={{
+              name: metaLabel(event) ?? "session started",
+              preview: fmtTime(event.ts),
+              caption: null,
+              body: { kind: "code", lang: "json", text: short(event.payload) },
+              shell: false,
+            }}
+          />
+        </>
+      );
+    }
+    case "turn": {
+      const text = short(payload.text ?? "");
+      return (
+        <Row kind="reply" label="reply" time={fmtTime(event.ts)}>
+          <div className="entry-prose">
+            <Markdown text={text} />
+          </div>
+        </Row>
       );
     }
     case "user_injected": {
       const text = short(payload.text ?? "");
-      if (text.trim().length === 0) return null;
       return (
-        <div className="bubble bubble-user">
-          <Markdown text={text} />
-          <span className="bubble-time">{fmtTime(event.ts)}</span>
-        </div>
+        <Row kind="you" label="you" time={fmtTime(event.ts)}>
+          {text.trim().length > 0 && (
+            <div className="entry-prose">
+              <Markdown text={text} />
+            </div>
+          )}
+          <Attachments images={images} />
+        </Row>
       );
     }
     case "master_injected":
       return (
-        <div className="bubble bubble-master">
-          <Markdown text={short(payload.text ?? payload)} />
-          <span className="bubble-time">from the master thread · {fmtTime(event.ts)}</span>
-        </div>
+        <Row kind="master" label="master thread" time={fmtTime(event.ts)}>
+          <div className="entry-prose">
+            <Markdown text={short(payload.text ?? payload)} />
+          </div>
+        </Row>
       );
     case "thinking": {
       const text = short(payload.text ?? "");
-      if (text.trim().length === 0) return null;
+      // No timestamp: thinking is the one row that should recede, and the turn
+      // it belongs to is timestamped a few rows down.
       return (
-        <div className="thinking">
-          <Markdown text={text} />
-        </div>
+        <Row kind="thinking" label="thinking">
+          <div className="entry-prose entry-prose-quiet">
+            <Markdown text={text} />
+          </div>
+        </Row>
       );
     }
     // Every driver shapes tool payloads differently; `describeTool` resolves
@@ -553,11 +632,7 @@ function Event(props: {
         <Tool card={describeTool(event.type, event.payload, props.names)} arrow="✗" error />
       );
     case "turn_end":
-      return (
-        <div className="turn-sep">
-          <span>turn end · {fmtTime(event.ts)}</span>
-        </div>
-      );
+      return <Row kind="turn_end" label="turn end" time={fmtTime(event.ts)} />;
     case "question_asked": {
       const questions = (payloadOf(event).questions ?? []) as {
         header: string;
@@ -565,13 +640,15 @@ function Event(props: {
         options: { label: string; description: string }[];
       }[];
       return (
-        <div className="event-line event-question">
-          {questions.map((q) => (
-            <p key={q.question}>
-              <span className="question-chip">{q.header}</span> {q.question}
-            </p>
-          ))}
-        </div>
+        <Row kind="question" label="question" time={fmtTime(event.ts)}>
+          <div className="event-line event-question">
+            {questions.map((q) => (
+              <p key={q.question}>
+                <span className="question-chip">{q.header}</span> {q.question}
+              </p>
+            ))}
+          </div>
+        </Row>
       );
     }
     case "question_settled": {
@@ -587,13 +664,17 @@ function Event(props: {
             : kind === "declined"
               ? "you decide — proceeding on its own recommendation"
               : `cancelled: ${short(payload.reason)}`;
-      return <p className="event-line event-answer">{said}</p>;
+      return (
+        <Row kind="answer" label="answer" time={fmtTime(event.ts)}>
+          <p className="event-line event-answer">{said}</p>
+        </Row>
+      );
     }
     case "driver_error":
       return (
-        <p className="event-line event-error">
-          driver error: {short(payload.error ?? payload, 800)}
-        </p>
+        <Row kind="error" label="driver error" time={fmtTime(event.ts)}>
+          <p className="event-line event-error">{short(payload.error ?? payload, 800)}</p>
+        </Row>
       );
     default: {
       const label = metaLabel(event);
@@ -658,7 +739,8 @@ function Tool(props: {
   const failed = props.error === true || card.caption === "failed" || /^exit /.test(card.caption ?? "");
 
   return (
-    <div
+    <Row
+      kind={failed ? "error" : props.meta === true ? "meta" : "tool"}
       className={
         `tool${open ? " is-open" : ""}` +
         (failed ? " tool-error" : "") +
@@ -692,7 +774,7 @@ function Tool(props: {
           <ToolBodyView body={card.body} />
         </div>
       )}
-    </div>
+    </Row>
   );
 }
 
@@ -713,21 +795,23 @@ function Patch(props: {
   const stat = props.changed.get(relative);
 
   return (
-    <button
-      type="button"
-      className="patch"
-      title={`Open ${relative}`}
-      onClick={() => openFile(relative)}
-    >
-      <span className="patch-path">{relative}</span>
-      <span className="patch-spacer" />
-      {stat !== undefined && !stat.binary && (
-        <span className="patch-stat">
-          <span className="stat-add">+{stat.added}</span>
-          <span className="stat-del">−{stat.removed}</span>
-        </span>
-      )}
-      <span className="patch-open">Open in Code ↗</span>
-    </button>
+    <Row kind="patch" label="wrote">
+      <button
+        type="button"
+        className="patch"
+        title={`Open ${relative}`}
+        onClick={() => openFile(relative)}
+      >
+        <span className="patch-path">{relative}</span>
+        <span className="patch-spacer" />
+        {stat !== undefined && !stat.binary && (
+          <span className="patch-stat">
+            <span className="stat-add">+{stat.added}</span>
+            <span className="stat-del">−{stat.removed}</span>
+          </span>
+        )}
+        <span className="patch-open">Open in Code ↗</span>
+      </button>
+    </Row>
   );
 }

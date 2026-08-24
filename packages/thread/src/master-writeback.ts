@@ -36,9 +36,17 @@ const masterWriteback = {
             ? `session ${session.name} was asked a question by a sibling`
             : kind === "message"
               ? `session ${session.name} received a message from a sibling`
-              : `${kind === "new" ? "new session" : "continue session"} ${
-                  session.name
-                } with msg: ${JSON.stringify(message)}`;
+              : message.trim().length === 0
+                ? // The only thing that sends a message with no text is one
+                  // carrying an attachment — every composer and every route
+                  // requires either words or an image — so `msg: ""` here
+                  // would read as a bug rather than as what happened.
+                  `${kind === "new" ? "new session" : "continue session"} ${
+                    session.name
+                  } with an attachment and no message`
+                : `${kind === "new" ? "new session" : "continue session"} ${
+                    session.name
+                  } with msg: ${JSON.stringify(message)}`;
         ctx.threads.append({
           threadId: master(),
           kind: "session_dispatch",

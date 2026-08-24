@@ -11,17 +11,33 @@
  * it never touches the store or the journal. The consequence is that drafts do
  * not follow you to another machine pointed at the same core.
  *
- * A draft is text today, but both `POST /api/sessions` and `/message` already
- * take `attachments`, so a composer will eventually hold pending images too.
- * That is why the persisted value is an object rather than a bare string, and
- * why unknown fields on it are carried through a load/save untouched: adding
- * `attachments` later is a field, not a migration, and no one loses a draft
- * over it. There is a test pinning that.
+ * A draft is text plus any images attached to it. The images are references —
+ * blob ids the store already holds, uploaded when they were pasted — never
+ * bytes: `localStorage` is a few megabytes for the whole origin, which one
+ * screenshot in base64 would eat. That the persisted value was always an
+ * object is why this arrived as a field rather than a migration, and unknown
+ * fields are still carried through a load/save untouched so the next one is
+ * free too. There are tests pinning both.
  *
  * The store is deliberately storage-agnostic (same shape as `ApiClient`'s
  * injectable fetch) so it unit-tests without a DOM.
  */
 import { useCallback, useSyncExternalStore } from "react";
+import { attachmentSummary, type Attachment } from "./attachments.js";
+
+/** What one composer is holding: unsent text, and images already uploaded. */
+export interface Draft {
+  text: string;
+  attachments: Attachment[];
+}
+
+/** The one empty draft. Shared so "has nothing" is an identity comparison. */
+export const EMPTY_DRAFT: Draft = { text: "", attachments: [] };
+
+/** True when there is nothing worth keeping — no text and no images. */
+export function isEmptyDraft(draft: Draft): boolean {
+  return draft.text.length === 0 && draft.attachments.length === 0;
+}
 
 /** Draft key for the not-yet-dispatched session; every other key is a session id. */
 export const NEW_SESSION_DRAFT = "new";
@@ -51,6 +67,7 @@ export interface DraftStoreOptions {
 
 interface Entry {
   text: string;
+  attachments: Attachment[];
   at: number;
   /** Anything a later version wrote; preserved verbatim on rewrite. */
   rest?: Record<string, unknown>;
@@ -70,21 +87,63 @@ function defaultStorage(): StorageLike | null {
   }
 }
 
+/**
+ * Attachments as they were persisted, minus anything that is not one.
+ *
+ * A stored draft is untrusted input — it outlives the version that wrote it
+ * and is editable by hand — and a malformed entry here would reach an `<img>`
+ * and a dispatch body. A bad element is dropped rather than failing the whole
+ * draft: losing one chip beats losing the paragraph it was attached to.
+ */
+function parseAttachments(value: unknown): Attachment[] {
+  if (!Array.isArray(value)) return [];
+  const kept: Attachment[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    const record = item as Record<string, unknown>;
+    if (typeof record.blobId !== "string" || record.blobId.length === 0) continue;
+    if (typeof record.mediaType !== "string") continue;
+    kept.push({
+      blobId: record.blobId,
+      mediaType: record.mediaType,
+      bytes: typeof record.bytes === "number" ? record.bytes : 0,
+      ...(typeof record.width === "number" ? { width: record.width } : {}),
+      ...(typeof record.height === "number" ? { height: record.height } : {}),
+      ...(typeof record.name === "string" ? { name: record.name } : {}),
+    });
+  }
+  return kept;
+}
+
 function parseEntry(raw: string | null): Entry | null {
   if (raw === null) return null;
   try {
     const value: unknown = JSON.parse(raw);
     if (typeof value !== "object" || value === null) return null;
     if (!("text" in value) || typeof value.text !== "string") return null;
-    const { text, at: rawAt, ...rest } = value as Record<string, unknown> & {
-      text: string;
-    };
+    const {
+      text,
+      at: rawAt,
+      attachments: rawAttachments,
+      ...rest
+    } = value as Record<string, unknown> & { text: string };
     const at = typeof rawAt === "number" ? rawAt : 0;
-    if (text.length === 0) return null;
-    return Object.keys(rest).length === 0 ? { text, at } : { text, at, rest };
+    const attachments = parseAttachments(rawAttachments);
+    // An image with no caption is still a draft; only the empty one is not.
+    if (text.length === 0 && attachments.length === 0) return null;
+    return Object.keys(rest).length === 0
+      ? { text, attachments, at }
+      : { text, attachments, at, rest };
   } catch {
     return null;
   }
+}
+
+/** Attachments are compared by id: a draft never edits one in place. */
+function sameAttachments(a: Attachment[], b: Attachment[]): boolean {
+  return (
+    a.length === b.length && a.every((item, i) => item.blobId === b[i]?.blobId)
+  );
 }
 
 /**
@@ -100,7 +159,7 @@ export class DraftStore {
   readonly #entries = new Map<string, Entry>();
   readonly #dirty = new Set<string>();
   readonly #listeners = new Set<() => void>();
-  #snapshot: ReadonlyMap<string, string> = new Map();
+  #snapshot: ReadonlyMap<string, Draft> = new Map();
   #timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: DraftStoreOptions) {
@@ -116,25 +175,63 @@ export class DraftStore {
     this.#resnapshot();
   }
 
-  /** The draft for a composer, or "" when there is none. */
-  get(key: string): string {
-    return this.#entries.get(key)?.text ?? "";
+  /**
+   * The draft for a composer, or an empty one when there is none.
+   *
+   * Read off the snapshot rather than rebuilt, because this is what
+   * `useSyncExternalStore` calls: a fresh object per call is a value React
+   * compares by identity, and it would re-render on every commit forever.
+   */
+  get(key: string): Draft {
+    return this.#snapshot.get(key) ?? EMPTY_DRAFT;
   }
 
-  /** Blank text clears the entry, so an emptied composer leaves nothing behind. */
-  set(key: string, text: string): void {
-    if (text.length === 0) {
+  /** An empty draft clears the entry, so a cleared composer leaves nothing behind. */
+  set(key: string, draft: Draft): void {
+    if (isEmptyDraft(draft)) {
       this.clear(key);
       return;
     }
     const current = this.#entries.get(key);
-    if (current !== undefined && current.text === text) return;
+    if (
+      current !== undefined &&
+      current.text === draft.text &&
+      sameAttachments(current.attachments, draft.attachments)
+    ) {
+      return;
+    }
     this.#entries.set(key, {
-      text,
+      text: draft.text,
+      attachments: draft.attachments,
       at: this.#now(),
       ...(current?.rest !== undefined ? { rest: current.rest } : {}),
     });
     this.#touch(key);
+  }
+
+  /**
+   * Add an image to a draft, or drop one by id.
+   *
+   * Mutators rather than a read-modify-write at the call site because an
+   * upload finishes on its own schedule: the composer that started it may
+   * already be unmounted (you switched sessions while it was in flight), and
+   * anything holding the old draft in a closure would write back a stale one.
+   * The store is the thing that outlives the view, so the merge belongs here.
+   */
+  attach(key: string, attachment: Attachment): void {
+    const draft = this.get(key);
+    if (draft.attachments.some((a) => a.blobId === attachment.blobId)) return;
+    this.set(key, {
+      text: draft.text,
+      attachments: [...draft.attachments, attachment],
+    });
+  }
+
+  detach(key: string, blobId: string): void {
+    const draft = this.get(key);
+    const attachments = draft.attachments.filter((a) => a.blobId !== blobId);
+    if (attachments.length === draft.attachments.length) return;
+    this.set(key, { text: draft.text, attachments });
   }
 
   clear(key: string): void {
@@ -148,7 +245,7 @@ export class DraftStore {
   }
 
   /** Stable per mutation, so `useSyncExternalStore` can compare by identity. */
-  snapshot(): ReadonlyMap<string, string> {
+  snapshot(): ReadonlyMap<string, Draft> {
     return this.#snapshot;
   }
 
@@ -174,10 +271,16 @@ export class DraftStore {
       try {
         if (entry === undefined) this.#storage.removeItem(this.#prefix + key);
         else {
-          const { rest, ...own } = entry;
+          const { rest, attachments, ...own } = entry;
           this.#storage.setItem(
             this.#prefix + key,
-            JSON.stringify({ ...rest, ...own }),
+            // Omitted when empty, so a text-only draft is written exactly as
+            // the version before this one wrote it.
+            JSON.stringify({
+              ...rest,
+              ...own,
+              ...(attachments.length > 0 ? { attachments } : {}),
+            }),
           );
         }
       } catch {
@@ -204,9 +307,28 @@ export class DraftStore {
     (this.#timer as { unref?: () => void }).unref?.();
   }
 
+  /**
+   * Rebuild the snapshot, keeping the previous object for every draft that did
+   * not actually change. Identity is what every subscriber compares on, so
+   * allocating fresh values here would re-render every rail row on each
+   * keystroke in an unrelated composer.
+   */
   #resnapshot(): void {
-    const next = new Map<string, string>();
-    for (const [key, entry] of this.#entries) next.set(key, entry.text);
+    const previous = this.#snapshot;
+    const next = new Map<string, Draft>();
+    for (const [key, entry] of this.#entries) {
+      const before = previous.get(key);
+      const unchanged =
+        before !== undefined &&
+        before.text === entry.text &&
+        sameAttachments(before.attachments, entry.attachments);
+      next.set(
+        key,
+        unchanged
+          ? before
+          : { text: entry.text, attachments: entry.attachments },
+      );
+    }
     this.#snapshot = next;
   }
 
@@ -253,28 +375,38 @@ export class DraftStore {
 export function useDraft(
   store: DraftStore,
   key: string,
-): [string, (text: string) => void] {
-  const text = useSyncExternalStore(
+): [Draft, (next: Draft) => void] {
+  const draft = useSyncExternalStore(
     useCallback((listener) => store.subscribe(listener), [store]),
     useCallback(() => store.get(key), [store, key]),
   );
-  const setText = useCallback(
-    (next: string) => store.set(key, next),
+  const setDraft = useCallback(
+    (next: Draft) => store.set(key, next),
     [store, key],
   );
-  return [text, setText];
+  return [draft, setDraft];
 }
 
 /** Every draft in the project, for views that mark which sessions have one. */
-export function useDrafts(store: DraftStore): ReadonlyMap<string, string> {
+export function useDrafts(store: DraftStore): ReadonlyMap<string, Draft> {
   return useSyncExternalStore(
     useCallback((listener) => store.subscribe(listener), [store]),
     useCallback(() => store.snapshot(), [store]),
   );
 }
 
-/** First line of a draft, for a one-line preview in the rail. */
-export function draftPreview(text: string, max = 80): string {
-  const line = text.trim().split("\n", 1)[0] ?? "";
+/**
+ * One line for the rail: the first line of the text, or what is attached when
+ * there is no text. An image-only draft is still a draft, and a row that said
+ * nothing about it would look like an empty one.
+ */
+export function draftPreview(draft: Draft | undefined, max = 80): string {
+  if (draft === undefined) return "";
+  const line = draft.text.trim().split("\n", 1)[0] ?? "";
+  if (line.length === 0) {
+    return draft.attachments.length > 0
+      ? attachmentSummary(draft.attachments.length)
+      : "";
+  }
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }

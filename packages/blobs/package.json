@@ -22,7 +22,8 @@
     "@daydream-code/shared": "workspace:*",
     "@daydream-code/store": "workspace:*",
     "zod": "^4.0.0",
-    "@daydream-code/config": "workspace:*"
+    "@daydream-code/config": "workspace:*",
+    "@daydream-code/routes": "workspace:*"
   },
   "devDependencies": {
     "@daydream-code/store": "workspace:*"

@@ -9,13 +9,15 @@ import type { DispatchRequest } from "./index.js";
 import type {} from "./index.js";
 
 /**
- * An attachment arrives either as a path (the desktop app runs on the same
- * machine, and Electron hands a dropped file a real path) or as base64 (a
- * clipboard paste, which has no path).
+ * An attachment arrives as a path (the caller shares this machine's disk), as
+ * base64 (a clipboard paste posted in one shot), or as a blob id from
+ * `POST /api/blobs` — which is the form a composer uses, having uploaded the
+ * bytes when they were pasted rather than when the message was sent.
  */
 const AttachmentBody = z.union([
   z.object({ path: z.string() }),
   z.object({ data: z.string(), alt: z.string().optional() }),
+  z.object({ blobId: z.string(), alt: z.string().optional() }),
 ]);
 
 const DispatchBody = z.object({

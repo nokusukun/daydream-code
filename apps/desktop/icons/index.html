@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>daydream-code — temporary icon candidates</title>
+<style>
+  :root { color-scheme: light dark; --fg:#1a2030; --bg:#f4f6fa; --mut:#6a7284; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#eef2f8; --bg:#14181f; --mut:#8c94a6; } }
+  body { margin:0; padding:44px 48px 72px; background:var(--bg); color:var(--fg);
+         font:14px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  h1 { font-size:19px; font-weight:600; letter-spacing:-0.01em; margin:0 0 4px; }
+  p.sub { margin:0 0 36px; color:var(--mut); font-size:13px; }
+  .row { display:flex; align-items:flex-end; gap:32px; padding:24px 0 26px;
+         border-bottom:1px solid color-mix(in oklab, var(--fg) 12%, transparent); }
+  .row:last-of-type { border-bottom:0; }
+  .id { width:132px; flex:none; }
+  .id b { display:block; font-size:15px; font-weight:600; }
+  .id span { color:var(--mut); font-size:12px; }
+  .sizes { display:flex; align-items:flex-end; gap:26px; }
+  figure { margin:0; text-align:center; }
+  figure img { display:block; border-radius:22%; }
+  figcaption { margin-top:8px; color:var(--mut); font-size:10.5px; font-variant-numeric:tabular-nums; }
+  .strip { margin-left:auto; display:flex; align-items:center; gap:14px; padding:14px 18px;
+           border-radius:12px; background:#e9ecf2; }
+  .strip.dk { background:#20252e; }
+  .strip img { display:block; border-radius:22%; }
+</style>
+<h1>daydream-code — temporary icon candidates</h1>
+<p class="sub">The Dock renders at 128. Finder lists and the tab bar render at 16. Judge the small ones.</p>
+<div id="sheet"></div>
+<script>
+  const icons = [
+    ["1-thread.svg", "1 · thread",  "the timeline gutter, one run forked off it"],
+    ["2-braid.svg",  "2 · braid",   "a thread splits, the summary merges back"],
+    ["3-facet.svg",  "3 · facet",   "the ◈ the master thread already wears"],
+    ["4-strata.svg", "4 · strata",  "the append-only record, older layers receding"],
+  ];
+  document.getElementById("sheet").innerHTML = icons.map(([src, name, note]) => `
+    <div class="row">
+      <div class="id"><b>${name}</b><span>${note}</span></div>
+      <div class="sizes">
+        ${[128, 64, 32, 16].map(s => `
+          <figure><img src="${src}" width="${s}" height="${s}"><figcaption>${s}</figcaption></figure>
+        `).join("")}
+      </div>
+      <div class="strip"><img src="${src}" width="16" height="16">
+        <span style="color:#1a2030;font-size:12px">Finder · light</span></div>
+      <div class="strip dk"><img src="${src}" width="16" height="16">
+        <span style="color:#eef2f8;font-size:12px">Finder · dark</span></div>
+    </div>
+  `).join("");
+</script>

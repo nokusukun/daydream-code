@@ -80,6 +80,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@daydream-code/blobs':
+        specifier: workspace:*
+        version: link:../../packages/blobs
       '@daydream-code/boot':
         specifier: workspace:*
         version: link:../../packages/boot
@@ -186,6 +189,9 @@ importers:
       '@daydream-code/kernel':
         specifier: workspace:*
         version: link:../kernel
+      '@daydream-code/routes':
+        specifier: workspace:*
+        version: link:../routes
       '@daydream-code/shared':
         specifier: workspace:*
         version: link:../shared

@@ -35,6 +35,7 @@ const journalRoutes = {
         path: "/api/journal",
         handle: (req: RouteRequest) => {
           const { query } = req;
+          const types = (query.types ?? "").split(",").filter((t) => t.length > 0);
           const options: JournalReadOptions = {
             ...(query.sessionId !== undefined
               ? { sessionId: resolveSessionId(query.sessionId) }
@@ -45,6 +46,10 @@ const journalRoutes = {
             ...(intParam(query.limit) !== undefined
               ? { limit: intParam(query.limit)! }
               : {}),
+            // Comma-separated, because a rail that wants only what the model
+            // said should not have to download the tool traffic that dwarfs
+            // it and filter client-side.
+            ...(types.length > 0 ? { types } : {}),
             ...(query.latest === "true" ? { latest: true } : {}),
           };
           return ctx.journal.read(options);

@@ -59,6 +59,25 @@ export type OpenResult =
   | { ok: true; connection: ConnectionInfo }
   | { ok: false; error: string };
 
+/** A native menu opened from the read-only code workspace. */
+export type CodeContextMenuRequest =
+  | {
+      kind: "selection";
+      path: string;
+      text: string;
+      lineStart?: number;
+      lineEnd?: number;
+    }
+  | {
+      kind: "file";
+      path: string;
+      dir: boolean;
+      expanded?: boolean;
+    };
+
+/** Actions that need renderer state; copy/reveal actions finish in Electron. */
+export type CodeContextMenuAction = "ask-selection" | "open" | "toggle";
+
 export interface DaydreamBridge {
   getState(): Promise<{ connection: ConnectionInfo | null; recent: RegistryEntry[] }>;
   listProjects(): Promise<ProjectList>;
@@ -69,6 +88,10 @@ export interface DaydreamBridge {
   openSettings(): Promise<void>;
   getAppearance(): Promise<Appearance>;
   onAppearance(callback: (appearance: Appearance) => void): () => void;
+  /** Show the platform context menu for selected code or a file-tree row. */
+  showCodeContextMenu(
+    request: CodeContextMenuRequest,
+  ): Promise<CodeContextMenuAction | null>;
 }
 
 declare global {

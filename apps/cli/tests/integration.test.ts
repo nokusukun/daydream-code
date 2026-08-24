@@ -234,6 +234,92 @@ describe("headless end-to-end (mock driver)", () => {
     expect(estimate).toBe(124);
   });
 
+  it("attaches an image the composer uploaded before the message was sent", async () => {
+    const root = tempProject();
+    const { ctx } = await bootProject(root, [{ turn: "looked at it" }]);
+    // What `POST /api/blobs` does when a screenshot is pasted: the bytes land
+    // in the store immediately, and the composer holds only this id.
+    const ref = ctx.blobs.put(pngBytes(640, 480), "pasted.png");
+
+    const handle = await ctx.sessions.dispatch({
+      task: "what is wrong here?",
+      driver: "mock",
+      attachments: [{ blobId: ref.id, alt: "pasted.png" }],
+    });
+    await handle.done;
+
+    const attached = ctx.journal
+      .read({ sessionId: handle.record.id })
+      .find((e) => e.type === "images_attached");
+    const images = (attached!.payload as { images: Record<string, unknown>[] }).images;
+    // Re-sniffed off disk rather than taken from the client: dimensions price
+    // the turn, so a caller must not be able to assert them.
+    expect(images[0]).toMatchObject({
+      blobId: ref.id,
+      mediaType: "image/png",
+      width: 640,
+      height: 480,
+      alt: "pasted.png",
+    });
+    expect(existsSync(images[0]!["path"] as string)).toBe(true);
+
+    // Uploading is not attaching: the same blob costs one file however many
+    // messages point at it.
+    expect(readdirSync(join(root, ".daydream-code", "blobs"))).toHaveLength(1);
+  });
+
+  it("refuses a blob id the store does not hold, and does not strand the session", async () => {
+    const { ctx } = await bootProject(tempProject(), [{ turn: "ok" }]);
+    await expect(
+      ctx.sessions.dispatch({
+        task: "look",
+        driver: "mock",
+        attachments: [{ blobId: `${"f".repeat(64)}.png` }],
+      }),
+    ).rejects.toThrow(/no such attachment/);
+
+    // The row is inserted before the run starts, so a throw on the way up
+    // would otherwise leave a session reading `running` that no process is
+    // running — visible in the rail and counted as live until the next boot.
+    const [session] = ctx.sessions.list();
+    expect(session?.status).toBe("failed");
+    expect(session?.summary).toMatch(/no such attachment/);
+  });
+
+  it("fails a session whose driver is not registered rather than leaving it running", async () => {
+    const { ctx } = await bootProject(tempProject(), [{ turn: "ok" }]);
+    await expect(
+      ctx.sessions.dispatch({ task: "go", driver: "nonesuch" }),
+    ).rejects.toThrow(/not registered/);
+    expect(ctx.sessions.list()[0]?.status).toBe("failed");
+  });
+
+  it("keeps its title when a message is only an image", async () => {
+    const root = tempProject();
+    const { ctx } = await bootProject(root, [{ turn: "ok" }, { turn: "still ok" }]);
+    const handle = await ctx.sessions.dispatch({
+      task: "fix the failing tests",
+      driver: "mock",
+    });
+    await handle.done;
+
+    const shot = join(root, "shot.png");
+    writeFileSync(shot, pngBytes(20, 20));
+    const continued = await ctx.sessions.continueSession(handle.record.id, "", [
+      { path: shot },
+    ]);
+    await continued.done;
+
+    // `titleFromTask("")` is "untitled session"; pasting a screenshot with no
+    // caption must not cost a session the name of what it is doing.
+    expect(continued.record.title).toBe("fix the failing tests");
+    const dispatches = ctx.threads
+      .entries(ThreadId(ctx.threads.ensureMaster().id))
+      .filter((e) => e.kind === "session_dispatch")
+      .map((e) => String(e.message.content));
+    expect(dispatches.at(-1)).toContain("with an attachment and no message");
+  });
+
   it("rejects a non-image attachment instead of sending it to the model", async () => {
     const root = tempProject();
     const { ctx } = await bootProject(root, [{ turn: "ok" }]);

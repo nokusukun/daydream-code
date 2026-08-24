@@ -56,11 +56,10 @@ export function MasterThread(props: { showAll: boolean }): ReactNode {
           </div>
         )}
 
-        {entries?.map((entry, index) => (
+        {entries?.map((entry) => (
           <Entry
             key={entry.id}
             entry={entry}
-            last={index === entries.length - 1}
             session={
               entry.sessionId !== undefined
                 ? sessions.get(entry.sessionId as string)
@@ -76,7 +75,6 @@ export function MasterThread(props: { showAll: boolean }): ReactNode {
 
 function Entry(props: {
   entry: ThreadEntry;
-  last: boolean;
   session: SessionRecord | undefined;
   onOpen(id: string): void;
 }): ReactNode {
@@ -93,7 +91,6 @@ function Entry(props: {
       kind={kind}
       label={kind}
       time={fmtTime(entry.createdAt)}
-      line={!props.last}
       {...(open ? { className: "is-open" } : {})}
       meta={
         entry.sessionId !== undefined ? (

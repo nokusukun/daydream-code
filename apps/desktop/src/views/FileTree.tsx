@@ -9,6 +9,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useHarness } from "../harness.js";
+import { bridge } from "../bridge.js";
 import { useTree, useWorkspace } from "../workspace.js";
 import type { TreeEntry } from "../api.js";
 
@@ -66,6 +67,20 @@ export function FileTree(): ReactNode {
       return next;
     });
 
+  const openMenu = (entry: TreeEntry, open: boolean): void => {
+    void bridge()
+      ?.showCodeContextMenu({
+        kind: "file",
+        path: entry.path,
+        dir: entry.dir,
+        ...(entry.dir ? { expanded: open } : {}),
+      })
+      .then((action) => {
+        if (action === "toggle" && entry.dir) toggle(entry.path);
+        if (action === "open" && !entry.dir) openFile(entry.path);
+      });
+  };
+
   return (
     <div className="rail">
       <header className="rail-head">
@@ -95,6 +110,11 @@ export function FileTree(): ReactNode {
             style={{ paddingLeft: 8 + depth * 13 }}
             title={entry.path}
             onClick={() => (entry.dir ? toggle(entry.path) : openFile(entry.path))}
+            onContextMenu={(event) => {
+              if (bridge() === undefined) return;
+              event.preventDefault();
+              openMenu(entry, open);
+            }}
           >
             <span className="tree-caret" aria-hidden="true">
               {entry.dir ? (open ? "▾" : "▸") : ""}

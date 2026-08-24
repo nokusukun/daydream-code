@@ -447,6 +447,18 @@ describe("FastifyServer", () => {
     const all = (await (await fetch(`${base}/api/journal`)).json()) as JournalEvent[];
     expect(all.map((e) => e.id)).toEqual([1, 2, 3]);
 
+    // The type filter is what lets the sidebar ask for assistant prose without
+    // dragging down the tool traffic that outnumbers it.
+    const turns = (await (
+      await fetch(`${base}/api/journal?types=turn&latest=true&limit=10`)
+    ).json()) as JournalEvent[];
+    expect(turns.map((e) => e.id)).toEqual([1, 2]);
+
+    const both = (await (
+      await fetch(`${base}/api/journal?types=turn,tool_call`)
+    ).json()) as JournalEvent[];
+    expect(both.map((e) => e.id)).toEqual([1, 2, 3]);
+
     const hits = (await (
       await fetch(`${base}/api/journal/search?q=beta`)
     ).json()) as Array<{ eventId: number }>;

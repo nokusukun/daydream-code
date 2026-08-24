@@ -33,6 +33,14 @@ export abstract class Blobs extends Service {
   abstract put(data: Uint8Array, alt?: string): BlobRef;
   /** Store a file from disk by path. Throws if it is not a supported image. */
   abstract putFile(filePath: string): BlobRef;
+  /**
+   * What is on disk for a blob id, or undefined when nothing is. Re-sniffed
+   * from the bytes rather than remembered, because the store has no index: the
+   * filesystem is the record, and a client handing back an id it was given
+   * earlier must not be able to assert its own dimensions (they price the
+   * turn).
+   */
+  abstract stat(id: string): BlobRef | undefined;
   /** Absolute on-disk path for a blob id. Does not check existence. */
   abstract path(id: string): string;
   abstract read(id: string): Buffer;

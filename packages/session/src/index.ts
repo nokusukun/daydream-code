@@ -48,12 +48,19 @@ declare module "@daydream-code/kernel" {
 }
 
 /**
- * An image on its way in, before it reaches the blob store: either a path on
- * disk (CLI, Electron drag-and-drop) or raw base64 (clipboard paste, HTTP).
+ * An image on its way in: a path on disk (CLI), raw base64 (a clipboard paste
+ * posted straight through), or a blob already in the store.
+ *
+ * The third form is what a UI uses. It uploads on paste, so the bytes cross
+ * the wire once and a failed or retried send costs nothing, and so a draft can
+ * hold an attachment across a reload without carrying megabytes in
+ * `localStorage`. Only the id is trusted — media type and dimensions are
+ * re-sniffed from the stored bytes, because dimensions price the turn.
  */
 export type AttachmentInput =
   | { path: string }
-  | { data: string; alt?: string | undefined };
+  | { data: string; alt?: string | undefined }
+  | { blobId: string; alt?: string | undefined };
 
 export interface DispatchRequest {
   task: string;

@@ -21,6 +21,16 @@ interface ConnectionInfo {
   name: string;
 }
 
+type CodeContextMenuRequest =
+  | {
+      kind: "selection";
+      path: string;
+      text: string;
+      lineStart?: number;
+      lineEnd?: number;
+    }
+  | { kind: "file"; path: string; dir: boolean; expanded?: boolean };
+
 contextBridge.exposeInMainWorld("daydream", {
   getState: () => ipcRenderer.invoke("daydream:get-state"),
   listProjects: () => ipcRenderer.invoke("daydream:list-projects"),
@@ -47,4 +57,6 @@ contextBridge.exposeInMainWorld("daydream", {
       ipcRenderer.removeListener("daydream:appearance", listener);
     };
   },
+  showCodeContextMenu: (request: CodeContextMenuRequest) =>
+    ipcRenderer.invoke("daydream:code-context-menu", request),
 });

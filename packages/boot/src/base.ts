@@ -22,6 +22,7 @@ export function baseBundle(projectRoot: string): Layer {
       { id: "settings", name: "@daydream-code/settings/live" },
       { id: "settings-routes", name: "@daydream-code/settings/routes" },
       { id: "blobs", name: "@daydream-code/blobs/fs" },
+      { id: "blob-routes", name: "@daydream-code/blobs/routes" },
       // Read-only view of the working tree. The UI's Code mode and every
       // "what did this run change" surface reads through here; nothing in the
       // harness writes through it, so it is safe to mount unconditionally.

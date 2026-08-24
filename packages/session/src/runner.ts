@@ -541,6 +541,13 @@ export default class SessionRunner extends Sessions {
           attachment.path.split(/[\\/]/).pop(),
         );
       }
+      if ("blobId" in attachment) {
+        const ref = this.ctx.blobs.stat(attachment.blobId);
+        if (ref === undefined) {
+          throw new Error(`no such attachment: ${attachment.blobId}`);
+        }
+        return imagePart(ref, attachment.alt);
+      }
       const bytes = Buffer.from(attachment.data, "base64");
       return imagePart(this.ctx.blobs.put(bytes, attachment.alt), attachment.alt);
     });
@@ -671,8 +678,14 @@ export default class SessionRunner extends Sessions {
     // the same tick therefore serialise: the first registers the run, the
     // second sees it and queues. An await here would reopen that window and
     // let both start a run on one session.
+    // A message that is only an attachment says nothing in words, so there is
+    // nothing to retitle to: `titleFromTask("")` reads "untitled session",
+    // which would replace a perfectly good title with a worse one for the
+    // crime of pasting a screenshot without a caption.
     const retitled =
-      kind === "continue" ? await this.#retitle(record, message) : record;
+      kind === "continue" && message.trim().length > 0
+        ? await this.#retitle(record, message)
+        : record;
     if (active) {
       // A blocked session gets the message as its answer, not as an injection.
       // Injections are only drained at turn boundaries, and the question is
@@ -820,7 +833,41 @@ export default class SessionRunner extends Sessions {
       .run();
   }
 
+  /**
+   * Start a run, and make sure a session that never got off the ground says so.
+   *
+   * Everything before the loop begins is synchronous and can throw — resolving
+   * the driver, moving attachments into the blob store — and by the time we are
+   * here the row already exists: dispatch inserted it, or a continue revived
+   * it. Left alone, a throw would strand a session reading `running` with no
+   * process running it, which nothing clears until the next boot's repair. The
+   * error still reaches the caller; the record just stops lying in the meantime.
+   */
   #startRun(
+    record: SessionRecord,
+    task: string,
+    request: DispatchRequest,
+  ): SessionHandle {
+    try {
+      return this.#beginRun(record, task, request);
+    } catch (error) {
+      this.ctx.journal.append({
+        sessionId: record.id,
+        type: "driver_error",
+        payload: { error: String(error) },
+      });
+      this.#finish(
+        record,
+        "failed",
+        `session failed to start: ${String(error)}`,
+        "failed to start",
+        { tokensIn: 0, tokensOut: 0, costUsd: 0 },
+      );
+      throw error;
+    }
+  }
+
+  #beginRun(
     record: SessionRecord,
     task: string,
     request: DispatchRequest,

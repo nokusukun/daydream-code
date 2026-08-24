@@ -40,7 +40,7 @@ The raw OS accent is tuned for macOS, not for WCAG (white on the default blue is
 | Token | Use |
 |---|---|
 | `--accent` | Borders, focus rings, small indicators, veils |
-| `--accent-solid` | Filled surfaces that carry text: selected rows, primary buttons, user bubbles |
+| `--accent-solid` | Filled surfaces that carry text: selected rows, primary buttons, the send action |
 | `--accent-ink` | The accent used *as text* on a surface: links, selected labels, checks |
 
 ### Token scales
@@ -118,13 +118,20 @@ renderer gets `.no-vibrancy` and paints opaque surfaces instead.
 
 ## Components
 
-- **Not cards.** The master thread is a timeline with a gutter rule and a kind
-  mark; the session rail is a list of rows. At 200 entries a rule reads and 200
-  boxes do not. Nested cards never appear.
+- **Not cards.** The master thread and a session transcript are the same
+  timeline at two scales — one story per project, one story per run — and share
+  one row shell (`views/Entry.tsx`): a standalone semantic icon, a kind label,
+  a body. The session rail is a list of rows. At 200 entries, small icons and
+  strong labels read where 200 boxes do not. Nested cards never appear.
+- **Which side a message came from is a label, not a bubble.** The transcript
+  says `REPLY` / `YOU` / `MASTER THREAD` against a semantic outline icon rather
+  than alternating filled bubbles. Prose, tool traffic and lifecycle rows keep
+  their rhythm without connector lines competing with dense tool output.
 - **Transcript density is the hardest problem here.** A single turn in this repo
   ran 66 Bash calls, so the transcript has three levels of collapse:
   1. A run of consecutive tool events becomes one row: `29 tool calls ·
-     Bash ×28, Agent`. It opens to the individual calls.
+     Bash ×28, Agent`. It opens into a branch of the same timeline — child rows
+     with their own icons, indented one gutter.
   2. Each call is one dense mono line with a preview, opening to its payload.
   3. Lifecycle events (`session_started`, `context_assembled`,
      `session_ended`) render as a dim line of prose (`· context assembled ·
@@ -132,7 +139,7 @@ renderer gets `.no-vibrancy` and paints opaque surfaces instead.
   A lone call skips level 1: one call is already quiet, and wrapping it would
   add a layer without removing noise.
 - **Events with no text are not rendered.** Models that omit thinking still
-  journal the event; an empty bubble or thinking block is a hairline artifact.
+  journal the event; an empty row is a hairline artifact.
 - **`.transcript > *` and `.thread-feed > *` set `flex: none`.** Flex items
   shrink by default, and in a tall transcript that squeezed single-line rows
   down to their own borders so they rendered as blank hairlines. Any new
@@ -168,9 +175,9 @@ renderer gets `.no-vibrancy` and paints opaque surfaces instead.
   blurs real content. The transcript is masked top and bottom so text dissolves
   into the glass rather than colliding with it.
 - **Specular highlights** mark every raised object: selected rows, status
-  pills, bubbles, tool groups, palette rows, the app mark. The rule is an inset
-  top hairline of white at low alpha, plus a contact shadow tinted by whatever
-  the surface is (accent for selection, neutral for content).
+  pills, palette rows, the app mark. The rule is an inset top hairline of white
+  at low alpha, plus a contact shadow tinted by whatever the surface is (accent
+  for selection, neutral for content).
 
 ### Grid discipline
 

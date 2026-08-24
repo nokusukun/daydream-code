@@ -109,6 +109,35 @@ describe("mock driver", () => {
     });
   });
 
+  it("journals the images that came with an injection, not just its text", async () => {
+    const { driver } = await mountMock({ id: "mock", script: [{ turn: "first" }] });
+    const { input, events, injections } = makeInput({
+      resolveImage: () => ({
+        path: "/tmp/project/.daydream-code/blobs/abc.png",
+        mediaType: "image/png",
+        base64: () => "",
+      }),
+    });
+    const image = {
+      type: "image" as const,
+      blobId: "abc.png",
+      mediaType: "image/png",
+      width: 8,
+      height: 4,
+    };
+    injections.push({ kind: "user", text: "look at this", images: [image] });
+
+    await driver.run(input);
+
+    // The transcript reads these events back. Without the parts, an image sent
+    // mid-run is visible only to the model — the row would say "look at this"
+    // and show nothing.
+    expect(events).toContainEqual({
+      type: "user_injected",
+      payload: { kind: "user", text: "look at this", images: [image] },
+    });
+  });
+
   it("drains queued injections at turn boundaries and answers each", async () => {
     const { driver } = await mountMock({
       id: "mock",

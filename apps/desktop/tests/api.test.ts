@@ -45,10 +45,16 @@ describe("ApiClient", () => {
     expect(calls[0]?.url).toBe(
       "http://127.0.0.1:4870/api/journal?sessionId=s_1&limit=50",
     );
+    await api.journal({ types: ["turn"], latest: true, limit: 200 });
+    expect(calls[1]?.url).toBe(
+      "http://127.0.0.1:4870/api/journal?latest=true&limit=200&types=turn",
+    );
+    await api.journal({ types: [] });
+    expect(calls[2]?.url).toBe("http://127.0.0.1:4870/api/journal");
     await api.master();
-    expect(calls[1]?.url).toBe("http://127.0.0.1:4870/api/master");
+    expect(calls[3]?.url).toBe("http://127.0.0.1:4870/api/master");
     await api.master(true);
-    expect(calls[2]?.url).toBe("http://127.0.0.1:4870/api/master?all=true");
+    expect(calls[4]?.url).toBe("http://127.0.0.1:4870/api/master?all=true");
   });
 
   it("sends the bearer token on requests and the query token on the stream url", async () => {

@@ -21,6 +21,7 @@ import {
   type DriverSessionResult,
   type SessionDriver,
 } from "./index.js";
+import { injectedPayload } from "./index.js";
 import { signalAborted } from "./abort.js";
 import { renderInitialPrompt } from "./prompt.js";
 
@@ -169,7 +170,9 @@ export class CodexDriver implements SessionDriver {
       images: readonly ImagePart[] | undefined,
     ): string | UserInput[] => {
       if (images === undefined || images.length === 0) return text;
-      const parts: UserInput[] = [{ type: "text", text }];
+      // Same rule as the Claude driver: a captionless image is a message, an
+      // empty text part beside it is not.
+      const parts: UserInput[] = text.length > 0 ? [{ type: "text", text }] : [];
       for (const image of images) {
         try {
           parts.push({ type: "local_image", path: input.resolveImage(image).path });
@@ -245,7 +248,7 @@ export class CodexDriver implements SessionDriver {
         for (const injection of injections) {
           input.onEvent({
             type: "user_injected",
-            payload: { kind: injection.kind, text: injection.text },
+            payload: injectedPayload(injection),
           });
         }
         await runTurn(

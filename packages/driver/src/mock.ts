@@ -7,6 +7,7 @@ import type {
   DriverSessionResult,
   SessionDriver,
 } from "./index.js";
+import { injectedPayload } from "./index.js";
 
 /**
  * Scripted driver for tests: deterministically replays a configured script of
@@ -79,7 +80,7 @@ export class MockDriver implements SessionDriver {
       for (const injection of injections) {
         input.onEvent({
           type: "user_injected",
-          payload: { kind: injection.kind, text: injection.text },
+          payload: injectedPayload(injection),
         });
         noteImages(injection.images);
         const reply = `ack: ${injection.text}`;

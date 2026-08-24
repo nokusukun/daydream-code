@@ -15,10 +15,16 @@ import {
   type SessionRecord,
 } from "@daydream-code/shared";
 import { useHarness } from "../harness.js";
-import { useMaster, lede } from "../master.js";
-import { NEW_SESSION_DRAFT, draftPreview, useDrafts } from "../drafts.js";
+import { useMaster, clip, lede } from "../master.js";
+import {
+  NEW_SESSION_DRAFT,
+  draftPreview,
+  useDrafts,
+  type Draft,
+} from "../drafts.js";
 import { StatusGlyph, fmtAgo, fmtTime, messageText } from "../ui.js";
 import { useSessions } from "../sessions.js";
+import { useActivities, type Activity } from "../replies.js";
 
 /** The one-line facts under a run's title: model, then what it has spent. */
 function runFacts(session: SessionRecord, model: string): string[] {
@@ -42,6 +48,9 @@ export function ThreadRail(): ReactNode {
     useHarness();
   const { sessions, loading } = useSessions();
   const { entries } = useMaster();
+  // What each run did most recently: replies, tool calls, questions and other
+  // meaningful journal activity all share this one live map.
+  const activities = useActivities();
   // Unsent text is invisible once you navigate away from it, so the rail is
   // where it has to show up: a row you owe something to should say so.
   const drafts = useDrafts(draftStore);
@@ -69,27 +78,38 @@ export function ThreadRail(): ReactNode {
           session={session}
           current={(session.id as string) === selected}
           model={model.label}
-          draft={drafts.get(session.id as string) ?? ""}
+          draft={drafts.get(session.id as string)}
+          activity={activities.get(session.id as string)}
           onSelect={select}
         />
       );
     },
-    [selected, select, drafts, modelLabel],
+    [selected, select, drafts, activities, modelLabel],
   );
 
   const last = entries?.[entries.length - 1];
-  const pending = draftPreview(drafts.get(NEW_SESSION_DRAFT) ?? "");
+  const pending = draftPreview(drafts.get(NEW_SESSION_DRAFT));
+  const railSummary =
+    waiting.length > 0
+      ? `${waiting.length} waiting on you`
+      : live.length > 0
+        ? `${live.length} running`
+        : `${sessions.length} run${sessions.length === 1 ? "" : "s"}`;
+  const masterTitle =
+    last !== undefined
+      ? lede(messageText(last.message).replace(/\s+/g, " ").trim())
+      : "Nothing on the thread yet.";
+  const masterMeta =
+    entries === null
+      ? "loading…"
+      : `${entries.length} ${entries.length === 1 ? "entry" : "entries"} · ${sessions.length} spawned`;
 
   return (
     <div className="rail">
       <header className="rail-head">
         thread
-        <span className="rail-count">
-          {waiting.length > 0
-            ? `${waiting.length} waiting on you`
-            : live.length > 0
-              ? `${live.length} running`
-              : `${sessions.length} run${sessions.length === 1 ? "" : "s"}`}
+        <span key={railSummary} className="rail-count sidebar-change">
+          {railSummary}
         </span>
         <button
           type="button"
@@ -105,7 +125,6 @@ export function ThreadRail(): ReactNode {
       <button
         type="button"
         className="master-card"
-        aria-current={selected === null && !draft}
         onClick={() => select(null)}
       >
         <span className="master-card-top">
@@ -113,21 +132,20 @@ export function ThreadRail(): ReactNode {
             ◈
           </span>
           <span className="master-card-label">master thread</span>
-          <span className="master-card-time">
+          <span
+            key={last?.createdAt ?? "empty"}
+            className="master-card-time sidebar-change"
+          >
             {last !== undefined ? fmtTime(last.createdAt) : ""}
           </span>
         </span>
         {/* The thread has no subject line of its own, so the newest entry is
             the honest answer to "what is this about now". */}
-        <span className="master-card-title">
-          {last !== undefined
-            ? lede(messageText(last.message).replace(/\s+/g, " ").trim())
-            : "Nothing on the thread yet."}
+        <span key={masterTitle} className="master-card-title sidebar-change">
+          {masterTitle}
         </span>
-        <span className="master-card-meta">
-          {entries === null
-            ? "loading…"
-            : `${entries.length} ${entries.length === 1 ? "entry" : "entries"} · ${sessions.length} spawned`}
+        <span key={masterMeta} className="master-card-meta sidebar-change">
+          {masterMeta}
         </span>
       </button>
 
@@ -159,12 +177,15 @@ export function ThreadRail(): ReactNode {
               aria-current={draft}
               onClick={newSession}
             >
+              {/* The one card that keeps a word beside its mark: a draft has
+                  no status to glyph and nothing to quote back, so "draft" is
+                  the only thing naming it. */}
               <span className="run-card-top">
                 <span className="dot dot-draft" aria-hidden="true" />
                 <span className="run-card-label">draft</span>
                 <span className="run-card-time">—</span>
               </span>
-              <span className="run-card-title">
+              <span className="run-card-said">
                 {pending.length > 0 ? pending : "New session"}
               </span>
               <span className="run-card-facts">not dispatched yet</span>
@@ -172,7 +193,10 @@ export function ThreadRail(): ReactNode {
           )}
           {live.map(row)}
           {live.length > 0 && finished.length > 0 && (
-            <div className="rail-divider" role="presentation" />
+            <div
+              className="rail-divider sidebar-element-in"
+              role="presentation"
+            />
           )}
           {finished.map(row)}
         </div>
@@ -181,17 +205,37 @@ export function ThreadRail(): ReactNode {
   );
 }
 
+/**
+ * Status is the glyph, not a word.
+ *
+ * The word repeated the glyph beside it on every row and then took the line
+ * the title wanted, which is how a list of five runs ended up saying RUNNING
+ * three times and naming nothing. The glyph carries state (it animates while
+ * the run works), the line beside it carries identity, and the line under it
+ * is the latest meaningful activity.
+ */
 function RunCard(props: {
   session: SessionRecord;
   current: boolean;
   model: string;
-  /** Unsent composer text for this session, or "" when there is none. */
-  draft: string;
+  /** Unsent composer contents for this session, if there are any. */
+  draft: Draft | undefined;
+  /** Its latest meaningful journal activity, once one has been seen. */
+  activity: Activity | undefined;
   onSelect(id: string): void;
 }): ReactNode {
   const { session, current, model } = props;
   const id = session.id as string;
   const preview = draftPreview(props.draft);
+  // `tldr` is the write-back at session end, so it stands in for runs that
+  // finished before the bounded activity window. A run that has neither gets
+  // no line at all rather than a husk.
+  const activity = props.activity;
+  const said = clip(activity?.text ?? session.tldr ?? "", 200);
+  const activityLabel = activity?.label ?? (said.length > 0 ? "reply" : "");
+  const title = session.title ?? session.name;
+  const age = fmtAgo(sessionActivityAt(session));
+  const facts = runFacts(session, model);
 
   return (
     <button
@@ -204,11 +248,28 @@ function RunCard(props: {
       onClick={() => props.onSelect(id)}
     >
       <span className="run-card-top">
-        <StatusGlyph status={session.status} />
-        <span className="run-card-label">{session.status}</span>
-        <span className="run-card-time">{fmtAgo(sessionActivityAt(session))}</span>
+        <span
+          key={session.status}
+          className="sidebar-glyph-change sidebar-change"
+        >
+          <StatusGlyph status={session.status} />
+        </span>
+        <span key={title} className="run-card-name sidebar-change">
+          {title}
+        </span>
+        <span key={age} className="run-card-time sidebar-change">
+          {age}
+        </span>
       </span>
-      <span className="run-card-title">{session.title ?? session.name}</span>
+      {said.length > 0 && (
+        <span
+          key={`${activity?.eventId ?? "tldr"}:${activityLabel}:${said}`}
+          className={`run-card-said run-card-activity-${activity?.kind ?? "reply"} sidebar-change`}
+        >
+          <span className="run-card-activity-label">{activityLabel}</span>
+          {said}
+        </span>
+      )}
       {/* Unsent text displaces the facts: a run you owe a message to is not
           asking to be told what it cost. */}
       {preview.length > 0 ? (
@@ -217,9 +278,12 @@ function RunCard(props: {
           {preview}
         </span>
       ) : (
-        <span className="run-card-facts">
-          {runFacts(session, model).map((fact, i) => (
-            <span key={i}>{fact}</span>
+        <span
+          key={facts.join("\u0000")}
+          className="run-card-facts sidebar-change"
+        >
+          {facts.map((fact) => (
+            <span key={fact}>{fact}</span>
           ))}
         </span>
       )}

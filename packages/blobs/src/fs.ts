@@ -8,6 +8,9 @@ import type {} from "@daydream-code/store";
 import { Blobs, type BlobRef } from "./index.js";
 import { extensionFor, sniffImage } from "./sniff.js";
 
+/** Enough of a header for every format's dimension fields. */
+const HEADER_BYTES = 64 * 1024;
+
 const { Config, settings } = defineConfig({
   maxBytes: field.number({
     label: "attachment limit",
@@ -82,6 +85,43 @@ export default class FsBlobs extends Blobs {
       throw new Error(`no such image: ${resolved}`);
     }
     return this.put(fs.readFileSync(resolved), path.basename(resolved));
+  }
+
+  stat(id: string): BlobRef | undefined {
+    let file: string;
+    try {
+      file = this.path(id);
+    } catch {
+      // A malformed id is a miss, not a crash: it arrives from a client.
+      return undefined;
+    }
+    let stats: fs.Stats;
+    let header: Buffer;
+    try {
+      stats = fs.statSync(file);
+      // Only the header is needed, and a 16 MB read per attached image would
+      // be paid on every dispatch. 64 KB clears any real JPEG marker chain;
+      // past that the sniffer degrades to a media type with no dimensions,
+      // which the estimator already has a fallback for.
+      const handle = fs.openSync(file, "r");
+      try {
+        header = Buffer.alloc(Math.min(stats.size, HEADER_BYTES));
+        fs.readSync(handle, header, 0, header.length, 0);
+      } finally {
+        fs.closeSync(handle);
+      }
+    } catch {
+      return undefined;
+    }
+    const sniffed = sniffImage(header);
+    if (sniffed === null) return undefined;
+    return {
+      id,
+      mediaType: sniffed.mediaType,
+      bytes: stats.size,
+      ...(sniffed.width !== undefined ? { width: sniffed.width } : {}),
+      ...(sniffed.height !== undefined ? { height: sniffed.height } : {}),
+    };
   }
 
   path(id: string): string {

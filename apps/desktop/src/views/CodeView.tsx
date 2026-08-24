@@ -12,8 +12,11 @@
  * shows the code and none of the change. Either one on its own makes you open
  * the other.
  */
-import { useMemo, type ReactNode } from "react";
+import { useMemo, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useHarness } from "../harness.js";
+import { bridge, type CodeContextMenuRequest } from "../bridge.js";
+import { selectionDraft } from "../code-context.js";
+import { NEW_SESSION_DRAFT } from "../drafts.js";
 import { mergeDiff, useFile, useWorkspace } from "../workspace.js";
 import { highlightLines, langOfPath, type Token } from "../highlight.js";
 import { Tokens } from "../prose.js";
@@ -81,6 +84,7 @@ export function CodeView(): ReactNode {
 
 function FileBody(props: { path: string }): ReactNode {
   const { path } = props;
+  const { drafts, newSession } = useHarness();
   const { file, loading, error } = useFile(path);
   const { status } = useWorkspace();
 
@@ -107,6 +111,54 @@ function FileBody(props: { path: string }): ReactNode {
 
   const segments = path.split("/");
 
+  const openSelectionMenu = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    const selection = window.getSelection();
+    if (selection === null || selection.isCollapsed || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    const common =
+      range.commonAncestorContainer instanceof Element
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer.parentElement;
+    if (common === null || !event.currentTarget.contains(common)) return;
+    const text = selection.toString();
+    if (text.trim().length === 0) return;
+
+    const rowOf = (node: Node | null): HTMLElement | null => {
+      const element = node instanceof Element ? node : node?.parentElement;
+      const row = element?.closest<HTMLElement>(".code-line") ?? null;
+      return row !== null && event.currentTarget.contains(row) ? row : null;
+    };
+    const numberOf = (node: Node | null): number | undefined => {
+      const raw = rowOf(node)?.dataset.line;
+      if (raw === undefined) return undefined;
+      const parsed = Number(raw);
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+    };
+    const a = numberOf(selection.anchorNode);
+    const b = numberOf(selection.focusNode);
+    const request: Extract<CodeContextMenuRequest, { kind: "selection" }> = {
+      kind: "selection",
+      path,
+      text,
+      ...(a !== undefined || b !== undefined
+        ? { lineStart: Math.min(a ?? b!, b ?? a!), lineEnd: Math.max(a ?? b!, b ?? a!) }
+        : {}),
+    };
+    const appBridge = bridge();
+    if (appBridge === undefined) return;
+    event.preventDefault();
+    void appBridge.showCodeContextMenu(request).then((action) => {
+      if (action !== "ask-selection") return;
+      const current = drafts.get(NEW_SESSION_DRAFT);
+      const prompt = selectionDraft(request, lang);
+      drafts.set(NEW_SESSION_DRAFT, {
+        ...current,
+        text: current.text.length > 0 ? `${current.text}\n\n${prompt}` : prompt,
+      });
+      newSession();
+    });
+  };
+
   return (
     <>
       <div className="crumbs">
@@ -118,7 +170,7 @@ function FileBody(props: { path: string }): ReactNode {
         ))}
       </div>
 
-      <div className="code-scroll">
+      <div className="code-scroll" onContextMenu={openSelectionMenu}>
         {loading && (
           <div aria-busy="true" style={{ padding: 20 }}>
             <div className="skeleton" style={{ height: 14, width: "40%" }} />
@@ -149,7 +201,11 @@ function FileBody(props: { path: string }): ReactNode {
             return lines.map((line, i) => {
               const own = line.n === null ? null : tokens[contextIndex++] ?? [];
               return (
-                <div className={`code-line line-${line.kind}`} key={i}>
+                <div
+                  className={`code-line line-${line.kind}`}
+                  key={i}
+                  {...(line.n === null ? {} : { "data-line": line.n })}
+                >
                   <span className="code-n">{line.n ?? ""}</span>
                   <span className="code-mark" aria-hidden="true">
                     {line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}

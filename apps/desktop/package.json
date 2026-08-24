@@ -30,7 +30,8 @@
     "@daydream-code/questions": "workspace:*",
     "better-sqlite3": "^12.0.0",
     "@daydream-code/routes": "workspace:*",
-    "@daydream-code/settings": "workspace:*"
+    "@daydream-code/settings": "workspace:*",
+    "@daydream-code/blobs": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",

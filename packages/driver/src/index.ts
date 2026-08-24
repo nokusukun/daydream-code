@@ -57,6 +57,25 @@ export interface Injection {
   images?: ImagePart[];
 }
 
+/**
+ * The journal payload for an injection a driver has just fed into a turn.
+ *
+ * Shared by every driver because the transcript reads these events to render
+ * what you sent, and an image dropped here is invisible by construction: the
+ * bytes are in the blob store and the text says nothing about them. Carrying
+ * the parts (which are references, not data) is what lets a UI show the
+ * screenshot you pasted mid-run beside the sentence it went with.
+ */
+export function injectedPayload(injection: Injection): Record<string, unknown> {
+  return {
+    kind: injection.kind,
+    text: injection.text,
+    ...(injection.images !== undefined && injection.images.length > 0
+      ? { images: injection.images }
+      : {}),
+  };
+}
+
 export type PermissionMode = "auto" | "ask" | "readonly";
 
 export interface DriverRunInput {

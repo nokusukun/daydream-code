@@ -17,6 +17,7 @@ import {
   type DriverSessionResult,
   type SessionDriver,
 } from "./index.js";
+import { injectedPayload } from "./index.js";
 import { onAbort, signalAborted, triggerAbort } from "./abort.js";
 import { renderInitialPrompt } from "./prompt.js";
 
@@ -147,10 +148,17 @@ type ContentBlock =
 function userMessage(text: string, blocks: ContentBlock[] = []): SDKUserMessage {
   // Plain string when there is nothing to attach: the SDK is happiest with
   // its simplest form, and this keeps existing transcripts byte-identical.
+  //
+  // An image with no caption is a real message — you paste a screenshot and
+  // press send — but an empty text block beside it is rejected by the API, so
+  // the block is dropped rather than sent blank.
   const content =
     blocks.length === 0
       ? text
-      : ([{ type: "text", text }, ...blocks] as ContentBlock[]);
+      : ([
+          ...(text.length > 0 ? [{ type: "text", text }] : []),
+          ...blocks,
+        ] as ContentBlock[]);
   return {
     type: "user",
     message: {
@@ -377,7 +385,7 @@ export class ClaudeDriver implements SessionDriver {
             for (const injection of injections) {
               input.onEvent({
                 type: "user_injected",
-                payload: { kind: injection.kind, text: injection.text },
+                payload: injectedPayload(injection),
               });
             }
             // Batch into one user message; [master thread update] blocks
