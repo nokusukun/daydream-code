@@ -60,7 +60,7 @@ describe("SqliteStore", () => {
     const root = tempRoot();
     const first = await openStore(root);
     const gitignorePath = path.join(first.store.dataDir, ".gitignore");
-    expect(fs.readFileSync(gitignorePath, "utf8")).toBe("*.sqlite*\n");
+    expect(fs.readFileSync(gitignorePath, "utf8")).toBe("*.sqlite*\n*.db*\n");
     await first.app.dispose(first.app.rootFiber);
 
     fs.writeFileSync(gitignorePath, "# custom\n*.sqlite*\n");

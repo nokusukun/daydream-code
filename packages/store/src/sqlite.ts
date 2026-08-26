@@ -56,7 +56,7 @@ export default class SqliteStore extends ProjectStore {
     fs.mkdirSync(this.dataDir, { recursive: true });
     const gitignorePath = path.join(this.dataDir, ".gitignore");
     if (!fs.existsSync(gitignorePath)) {
-      fs.writeFileSync(gitignorePath, "*.sqlite*\n");
+      fs.writeFileSync(gitignorePath, "*.sqlite*\n*.db*\n");
     }
 
     const sqlite = new Database(path.join(this.dataDir, "store.sqlite"));
