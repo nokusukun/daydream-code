@@ -18,7 +18,8 @@ import {
 import type { SearchHit } from "../api.js";
 import { bridge } from "../bridge.js";
 import { useHarness } from "../harness.js";
-import { useSessions } from "../sessions.js";
+import { runPaletteAction } from "../palette-actions.js";
+import { isArchived, useSessions } from "../sessions.js";
 import { fmtAgo } from "../ui.js";
 
 interface Item {
@@ -35,7 +36,7 @@ const SEARCH_PREFIX = "?";
 export function CommandPalette(props: {
   onSwitchProject?: (() => void) | undefined;
 }): ReactNode {
-  const { select, setOverlay } = useHarness();
+  const { select, setOverlay, sidebar, toggleSidebar } = useHarness();
   const { sessions } = useSessions();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -63,12 +64,18 @@ export function CommandPalette(props: {
     }
 
     const lower = term.toLowerCase();
+    const archivedCount = sessions.filter(isArchived).length;
     const match = (text: string): boolean =>
       lower.length === 0 || text.toLowerCase().includes(lower);
 
     // Sort before the slice: with an empty query this list is the eight most
     // recently active sessions, not eight arbitrary ones.
+    //
+    // An archived run is findable by name but never fills one of those eight
+    // slots unprompted — offering it back the moment you open the palette is
+    // the shelf leaking into the list it was meant to leave.
     const sessionItems: Item[] = sessions
+      .filter((s) => (lower.length === 0 ? !isArchived(s) : true))
       .filter((s) => match(`${s.name ?? ""} ${s.id as string} ${s.task}`))
       .sort(compareSessionRecency)
       .slice(0, 8)
@@ -76,7 +83,7 @@ export function CommandPalette(props: {
         key: `session-${s.id as string}`,
         group: "sessions",
         label: s.name ?? (s.id as string),
-        hint: `${s.status} · ${fmtAgo(sessionActivityAt(s))}`,
+        hint: `${isArchived(s) ? "archived · " : ""}${s.status} · ${fmtAgo(sessionActivityAt(s))}`,
         run: () => select(s.id as string),
       }));
 
@@ -87,6 +94,25 @@ export function CommandPalette(props: {
         label: "Search the journal",
         hint: "?",
         run: () => setQuery(SEARCH_PREFIX),
+      },
+      {
+        key: "cmd-archive",
+        group: "commands",
+        label: "Show archived runs",
+        // Listed even with nothing archived: this is where the gesture is
+        // discoverable, and the window's empty state teaches it.
+        hint: `${archivedCount}`,
+        run: () => setOverlay("archive"),
+      },
+      {
+        // The toolbar no longer has a button for this — that slot is quick
+        // actions now — so the palette is where it stays reachable without
+        // knowing the shortcut.
+        key: "cmd-sidebar",
+        group: "commands",
+        label: sidebar ? "Hide sidebar" : "Show sidebar",
+        hint: "⌘B",
+        run: toggleSidebar,
       },
       {
         key: "cmd-fibers",
@@ -115,14 +141,25 @@ export function CommandPalette(props: {
     ].filter((item) => match(item.label));
 
     return [...sessionItems, ...commands];
-  }, [searching, hits, sessions, term, select, setOverlay, props.onSwitchProject]);
+  }, [
+    searching,
+    hits,
+    sessions,
+    term,
+    select,
+    setOverlay,
+    sidebar,
+    toggleSidebar,
+    props.onSwitchProject,
+  ]);
 
   const choose = useCallback(
     (item: Item | undefined) => {
       if (item === undefined) return;
-      item.run();
-      // Commands that swap the palette's own mode keep it open.
-      if (!item.key.startsWith("cmd-search")) close();
+      runPaletteAction(
+        { keepOpen: item.key.startsWith("cmd-search"), run: item.run },
+        close,
+      );
     },
     [close],
   );

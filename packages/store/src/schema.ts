@@ -77,6 +77,7 @@ export const sessions = sqliteTable(
     endedAt: text("ended_at"),
     summary: text("summary"),
     tldr: text("tldr"),
+    archivedAt: text("archived_at"),
     tokensIn: integer("tokens_in").notNull().default(0),
     tokensOut: integer("tokens_out").notNull().default(0),
     costUsd: real("cost_usd").notNull().default(0),
@@ -84,6 +85,7 @@ export const sessions = sqliteTable(
   (t) => [
     index("sessions_project_started").on(t.projectId, t.startedAt),
     uniqueIndex("sessions_project_name").on(t.projectId, t.name),
+    index("sessions_project_archived").on(t.projectId, t.archivedAt),
   ],
 );
 
@@ -110,3 +112,24 @@ export const settings = sqliteTable("settings", {
   valueJson: text("value_json").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+/**
+ * Quick actions: shell lines the desktop toolbar runs at the project root.
+ * Authored by the person or by a session (`source`), which is why they live
+ * here rather than in the renderer's own storage. See migration v5.
+ */
+export const quickActions = sqliteTable(
+  "quick_actions",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    label: text("label").notNull(),
+    command: text("command").notNull(),
+    source: text("source").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [
+    index("quick_actions_project").on(t.projectId, t.createdAt),
+    uniqueIndex("quick_actions_project_command").on(t.projectId, t.command),
+  ],
+);

@@ -207,6 +207,7 @@ function fakeRecord(id: string, task: string): SessionRecord {
     endedAt: null,
     summary: null,
     tldr: null,
+    archivedAt: null,
     usage: zeroUsage(),
   };
 }
@@ -233,6 +234,25 @@ class FakeSessions extends Sessions {
 
   async stop(id: SessionIdT): Promise<void> {
     this.stops.push(id);
+  }
+
+  /** Set to make the next archive/delete refuse, standing in for a live run. */
+  refuse: string | null = null;
+
+  setArchived(id: SessionIdT, archived: boolean): SessionRecord {
+    const record = this.records.get(id);
+    if (record === undefined) throw new Error(`unknown session: ${id}`);
+    if (this.refuse !== null) throw new Error(this.refuse);
+    const updated = { ...record, archivedAt: archived ? nowIso() : null };
+    this.records.set(id, updated);
+    return updated;
+  }
+
+  remove(id: SessionIdT): SessionRecord {
+    const record = this.records.get(id);
+    if (record === undefined) throw new Error(`unknown session: ${id}`);
+    this.records.delete(id);
+    return record;
   }
 
   get(id: SessionIdT): SessionRecord | undefined {
@@ -432,6 +452,66 @@ describe("FastifyServer", () => {
     });
     expect(await stop.json()).toEqual({ stopped: true });
     expect(sessions.stops).toEqual([record.id]);
+  });
+
+  it("archives and deletes a run through the REST surface", async () => {
+    const { base, sessions } = await makeHarness();
+    const dispatched = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ task: "shelve me" }),
+    });
+    const record = (await dispatched.json()) as SessionRecord;
+
+    const archived = await fetch(`${base}/api/sessions/${record.id}/archive`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    });
+    expect(archived.status).toBe(200);
+    expect(((await archived.json()) as SessionRecord).archivedAt).not.toBeNull();
+
+    const restored = await fetch(`${base}/api/sessions/${record.id}/archive`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived: false }),
+    });
+    expect(((await restored.json()) as SessionRecord).archivedAt).toBeNull();
+
+    const deleted = await fetch(`${base}/api/sessions/${record.id}`, {
+      method: "DELETE",
+    });
+    expect(deleted.status).toBe(200);
+    expect(sessions.get(record.id)).toBeUndefined();
+
+    // Gone means 404 on the next attempt, not a second successful delete.
+    const again = await fetch(`${base}/api/sessions/${record.id}`, {
+      method: "DELETE",
+    });
+    expect(again.status).toBe(404);
+  });
+
+  /**
+   * A seam that refuses becomes a 409, not a 500. The request was well formed;
+   * the run was simply busy, and the client's remedy is to stop it and retry.
+   */
+  it("reports a refused archive as a conflict", async () => {
+    const { base, sessions } = await makeHarness();
+    const dispatched = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ task: "busy" }),
+    });
+    const record = (await dispatched.json()) as SessionRecord;
+    sessions.refuse = "cannot archive busy while it is running; stop it first";
+
+    const res = await fetch(`${base}/api/sessions/${record.id}/archive`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/stop it first/);
   });
 
   it("reads and searches the journal through the REST surface", async () => {

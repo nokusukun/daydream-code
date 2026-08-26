@@ -8,13 +8,21 @@
  * separate runs are one story, and following it back to the run is the move
  * every reader makes.
  */
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { SessionRecord, ThreadEntry } from "@daydream-code/shared";
 import { useHarness } from "../harness.js";
-import { entryKind, lede, useMaster } from "../master.js";
+import { clip, digestChunks, entryKind, lede, useMaster } from "../master.js";
 import { fmtTime, messageText } from "../ui.js";
 import { InlineMarkdown, Markdown } from "../prose.js";
 import { Entry as Row } from "./Entry.js";
+import { openTextContextMenu } from "../text-context.js";
 
 export function MasterThread(props: { showAll: boolean }): ReactNode {
   const { select } = useHarness();
@@ -34,7 +42,12 @@ export function MasterThread(props: { showAll: boolean }): ReactNode {
   }, [entries]);
 
   return (
-    <div className="timeline" ref={feedRef} onScroll={onScroll}>
+    <div
+      className="timeline"
+      ref={feedRef}
+      onScroll={onScroll}
+      onContextMenu={openTextContextMenu}
+    >
       <div className="column">
         {error !== null && <div className="error-bar">{error}</div>}
 
@@ -81,10 +94,14 @@ function Entry(props: {
   const { entry, session } = props;
   const [open, setOpen] = useState(false);
   const text = messageText(entry.message);
-  const flat = text.replace(/\s+/g, " ").trim();
-  const first = lede(flat);
-  const long = first.length < flat.length;
   const kind = entryKind(entry);
+  // A digest's first line is its header, which says exactly what the entry is;
+  // running `lede` over it would instead surface a sentence from whichever
+  // fact happens to be first, which reads as if that fact were the entry.
+  const digest = kind === "compaction";
+  const flat = text.replace(/\s+/g, " ").trim();
+  const first = digest ? clip(text.split("\n", 1)[0] ?? flat) : lede(flat);
+  const long = digest ? text.trimEnd().length > first.length : first.length < flat.length;
 
   return (
     <Row
@@ -111,7 +128,15 @@ function Entry(props: {
           sentence is half a list, and a paragraph wrapper would defeat the
           clamp. */}
       <div className="entry-text">
-        {open ? <Markdown text={text} /> : <InlineMarkdown text={first} />}
+        {open ? (
+          digest ? (
+            <Digest text={text} />
+          ) : (
+            <Markdown text={text} />
+          )
+        ) : (
+          <InlineMarkdown text={first} />
+        )}
       </div>
       {long && (
         <button
@@ -123,5 +148,44 @@ function Entry(props: {
         </button>
       )}
     </Row>
+  );
+}
+
+/**
+ * A compaction digest, revealed a chunk at a time.
+ *
+ * The whole digest is what the model reads, so the bound belongs here rather
+ * than on `summaryChars` in the compactor: shrinking what the model reads to
+ * solve a rendering problem trades the wrong thing. Each chunk is its own
+ * `Markdown` call over its own slice, so the work stays flat as the digest
+ * grows, and a reader who wants all of it still gets all of it.
+ */
+export function Digest(props: { text: string }): ReactNode {
+  const chunks = useMemo(() => digestChunks(props.text), [props.text]);
+  const [shown, setShown] = useState(1);
+  const visible = chunks.slice(0, shown);
+
+  return (
+    <>
+      {visible.map((chunk, i) => (
+        <Markdown key={i} text={chunk} />
+      ))}
+      {shown < chunks.length && (
+        <button
+          type="button"
+          className="entry-more"
+          onClick={(e) => {
+            e.stopPropagation();
+            setShown((n) => n + 1);
+          }}
+        >
+          continue reading the digest ({shown} of {chunks.length})
+        </button>
+      )}
+      <p className="entry-aside">
+        The entries this replaces are superseded, not deleted — switch the bar
+        to full history to read them verbatim.
+      </p>
+    </>
   );
 }

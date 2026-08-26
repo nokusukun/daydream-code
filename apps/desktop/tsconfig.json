@@ -8,6 +8,9 @@
       "path": "./tsconfig.web.json"
     },
     {
+      "path": "../../packages/actions"
+    },
+    {
       "path": "../../packages/routes"
     },
     {

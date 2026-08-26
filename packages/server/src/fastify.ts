@@ -156,7 +156,14 @@ export default class FastifyServer extends HarnessServer {
     // registered afterwards inherits its onRoute hook (fastify-plugin).
     // The server binds to loopback and is bearer-token-gated; UIs load from
     // file:// or a dev origin, so allow any origin rather than none.
-    void app.register(cors, { origin: true });
+    //
+    // `methods` has to be spelled out: @fastify/cors defaults to GET,HEAD,POST,
+    // so a cross-origin DELETE fails preflight while the same request from a
+    // server-side client sails through. That asymmetry is invisible to every
+    // test that calls fetch outside a browser, and the renderer is always
+    // cross-origin — it loads from a dev origin or file:// and talks to a core
+    // on a loopback port. Claim exactly what the catch-all routes.
+    void app.register(cors, { origin: true, methods: [...METHODS, "OPTIONS"] });
     void app.register(websocket);
     void app.register(async (scope) => {
       scope.get("/stream", { websocket: true }, (socket, _req) => {
@@ -255,6 +262,9 @@ export default class FastifyServer extends HarnessServer {
       this.ctx.on("session/updated", forwardSession),
       this.ctx.on("session/ended", forwardSession),
       this.ctx.on("session/dispatched", forwardSession),
+      this.ctx.on("session/deleted", (session: SessionRecord) =>
+        send({ kind: "session-deleted", id: session.id }),
+      ),
     ];
     socket.on("close", () => {
       for (const dispose of disposers) void dispose();

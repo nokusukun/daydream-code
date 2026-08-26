@@ -61,6 +61,7 @@ describe("settings view", () => {
     expect(compaction.fields.map((f) => f.name).sort()).toEqual([
       "budgetTokens",
       "keepTokens",
+      "targetTokens",
     ]);
     const budget = compaction.fields.find((f) => f.name === "budgetTokens")!;
     expect(budget).toMatchObject({

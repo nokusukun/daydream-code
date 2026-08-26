@@ -54,8 +54,55 @@
   --t-base: 220ms;
   --t-slow: 320ms;
 
+  /* One physical treatment for raised controls across every chrome layer. */
+  --glass-control-filter: blur(16px) saturate(180%);
+  --glass-control-shadow: inset 0 1px 0 var(--glass-specular),
+    0 1px 2px -1px var(--glass-shade);
+  --glass-control-shadow-hi: inset 0 1px 0 var(--glass-specular),
+    0 2px 6px -2px var(--glass-shade);
+
   --toolbar-h: 50px;
+  /*
+   * Toolbar controls carry their own backing. `--glass-control` is tuned to sit
+   * *on* a surface — a composer, a rail, the toolbar's old tint — and at dark's
+   * 16% alpha it has no contrast of its own. With nothing painted behind these,
+   * light text over a light wallpaper would be the user's problem. So the fill
+   * the strip used to contribute is folded into the control itself.
+   */
+  --tb-control: color-mix(in oklab, var(--glass-control) 55%, var(--glass-tint));
+  --tb-control-hi: color-mix(
+    in oklab,
+    var(--glass-control-hi) 60%,
+    var(--glass-tint-strong)
+  );
+  /* Every toolbar control is the same pane: one height, one material, one
+     radius. The strip itself paints nothing, so what the eye reads as chrome
+     is the controls floating on the window material rather than a tinted bar
+     with widgets sunk into it. */
+  --tb-control-h: 34px;
+  /*
+   * One inset all round the floating panels. The top is not that number: the
+   * toolbar strip is taller than the controls inside it, and that leftover
+   * slack is already part of the gap the eye sees under them. Subtract it, and
+   * the space below the controls matches the space beside the panels instead of
+   * being it plus eight.
+   */
+  --window-inset: 10px;
+  --panel-inset-top: calc(
+    var(--window-inset) - (var(--toolbar-h) - var(--tb-control-h)) / 2
+  );
   --sidebar-w: 268px;
+  /* Both workspace panels paint the exact same surface. The rail's glass
+     identity comes from its edge, lensing and elevation, not a different fill.
+     The mix is deliberately visible on a large canvas; surface-1 alone reads
+     as flat white in the light theme even though both panels technically match. */
+  --panel-surface: color-mix(
+    in oklab,
+    var(--surface-1) 52%,
+    var(--surface-2)
+  );
+  /* The transcript starts below the header at rest, then scrolls behind it. */
+  --panel-head-clear: 86px;
   /* Room the transcript leaves for the floating composer. */
   --composer-clear: 152px;
   /* The one measure the panel reads on: transcript, file list, ledger and the
@@ -293,9 +340,19 @@ pre {
 }
 
 @supports not (backdrop-filter: blur(1px)) {
+  :root {
+    --glass-control: var(--surface-1);
+    --glass-control-hi: var(--surface-2);
+    --glass-control-filter: none;
+    --tb-control: var(--surface-1);
+    --tb-control-hi: var(--surface-2);
+  }
   .glass,
-  .glass-strong {
+  .glass-strong,
+  .composer-field {
     background: var(--surface-1);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 }
 
@@ -311,6 +368,15 @@ pre {
 
 /* -- toolbar --------------------------------------------------------------- */
 
+/*
+ * The strip is a layout, not a surface. It carried the glass tint and a
+ * closing hairline, which made the top of the window read as one tinted band
+ * — and every control inside it as a widget sunk into that band, since a
+ * control's backdrop-filter can only sample its backdrop root, which was the
+ * band. With nothing painted here the controls blur the window material
+ * itself, and the separation below comes from the panels, which already float
+ * inset from the window edge.
+ */
 .toolbar {
   -webkit-app-region: drag;
   display: flex;
@@ -320,14 +386,9 @@ pre {
   padding: 0 var(--s3) 0 88px;
   position: relative;
   z-index: 30;
-}
-
-.toolbar::after {
-  content: "";
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 1px;
-  background: var(--hairline);
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .no-vibrancy .toolbar {
@@ -373,25 +434,27 @@ pre {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  height: 28px;
+  height: var(--tb-control-h);
   min-width: 220px;
   padding: 0 var(--s2) 0 var(--s3);
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--glass-control);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  box-shadow: inset 0 1px 0 var(--glass-specular);
+  background: var(--tb-control);
+  backdrop-filter: var(--glass-control-filter);
+  -webkit-backdrop-filter: var(--glass-control-filter);
+  box-shadow: var(--glass-control-shadow);
   color: var(--text-3);
   font: inherit;
   font-size: var(--text-sm);
   transition: border-color var(--t-fast) var(--ease-out-quart),
-    background var(--t-fast) var(--ease-out-quart);
+    background var(--t-fast) var(--ease-out-quart),
+    box-shadow var(--t-fast) var(--ease-out-quart);
 }
 
 .titlebar-search:hover {
   border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
-  background: var(--glass-control-hi);
+  background: var(--tb-control-hi);
+  box-shadow: var(--glass-control-shadow-hi);
 }
 
 /*
@@ -403,15 +466,15 @@ pre {
   flex: none;
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: var(--tb-control-h);
+  height: var(--tb-control-h);
   padding: 0;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--glass-control);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  box-shadow: inset 0 1px 0 var(--glass-specular);
+  background: var(--tb-control);
+  backdrop-filter: var(--glass-control-filter);
+  -webkit-backdrop-filter: var(--glass-control-filter);
+  box-shadow: var(--glass-control-shadow);
   color: var(--text-2);
   transition: border-color var(--t-fast) var(--ease-out-quart),
     background var(--t-fast) var(--ease-out-quart),
@@ -421,7 +484,8 @@ pre {
 
 .toolbar-icon:hover {
   border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
-  background: var(--glass-control-hi);
+  background: var(--tb-control-hi);
+  box-shadow: var(--glass-control-shadow-hi);
   color: var(--text-1);
 }
 
@@ -466,9 +530,9 @@ pre {
 .sidebar::after {
   content: "";
   position: absolute;
-  top: 0;
+  top: var(--s3);
   right: 0;
-  bottom: 0;
+  bottom: var(--s3);
   width: 1px;
   background: linear-gradient(
     to bottom,
@@ -490,9 +554,48 @@ pre {
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  background: var(--surface-1);
-  /* Content is opaque and sits above the glass, casting onto it. */
-  box-shadow: -1px 0 0 var(--hairline), var(--shadow-panel);
+}
+
+/* The rail is a floating pane: its own edge, radius and elevation. The agent
+   canvas deliberately is not — it has no fill, so an edge around nothing drew
+   a box around the window rather than around a surface. */
+.sidebar {
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--glass-edge) 72%, var(--border));
+  border-radius: var(--r-xl);
+  box-shadow: inset 0 1px 0 var(--glass-specular),
+    inset 1px 0 0 var(--glass-specular-soft),
+    0 18px 48px -24px var(--glass-shade),
+    0 5px 16px -10px var(--glass-shade);
+}
+
+.panel {
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.sidebar {
+  background: var(--panel-surface);
+}
+
+/*
+ * The canvas paints nothing: its header and composer float over the window
+ * material, and a fill behind them made the panel read as a slab with two
+ * panes stuck to it.
+ *
+ * The cost is that nothing above it can be glass. `backdrop-filter` blurs the
+ * alpha it finds beneath it, and here that is zero — measured in a real
+ * Electron window with this app's options, a translucent field over this
+ * canvas shows the transcript through it at full sharpness rather than
+ * frosted. So the bar and the field below are opaque instead: over a
+ * transparent canvas the honest choice is a solid card, not a blur that
+ * cannot happen. The accessibility fallbacks put this fill back, which is why
+ * they are the one place those two surfaces have something to blur.
+ */
+.panel {
+  background: transparent;
 }
 
 /* Every child shares column 1. Without this, two children claiming row 2
@@ -504,13 +607,31 @@ pre {
 
 .panel > .panel-top {
   grid-row: 1;
+  align-self: start;
+  position: relative;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.panel > .transcript,
+.panel > .timeline,
+.panel > .panel-scroll {
+  grid-row: 1 / 3;
+}
+
+.panel > .empty {
+  grid-row: 2;
+}
+
+.panel > .panel-top > * {
+  pointer-events: auto;
 }
 
 .panel > .transcript,
 .panel > .timeline,
 .panel > .panel-scroll,
 .panel > .empty {
-  grid-row: 2;
+  min-height: 0;
 }
 
 .panel > .composer {
@@ -916,6 +1037,12 @@ pre {
   color: var(--accent-ink);
 }
 
+.entry-aside {
+  margin: var(--s2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
 /* ==========================================================================
    Composers
    ========================================================================== */
@@ -935,17 +1062,18 @@ pre {
 .composer-field {
   border-radius: var(--r-xl);
   border: 1px solid var(--border);
-  background: var(--glass-tint-strong);
-  backdrop-filter: blur(40px) saturate(190%) brightness(1.05);
-  -webkit-backdrop-filter: blur(40px) saturate(190%) brightness(1.05);
+  background: var(--panel-surface);
+  position: relative;
   box-shadow: inset 0 1px 0 var(--glass-specular),
     inset 0 -1px 0 var(--glass-specular-soft),
     0 12px 32px -12px var(--glass-shade), 0 2px 8px -4px var(--glass-shade);
-  transition: border-color var(--t-fast) var(--ease-out-quart),
+  transition: background var(--t-fast) var(--ease-out-quart),
+    border-color var(--t-fast) var(--ease-out-quart),
     box-shadow var(--t-fast) var(--ease-out-quart);
 }
 
 .composer-field:focus-within {
+  background: var(--surface-1);
   border-color: color-mix(in oklab, var(--accent) 70%, var(--border));
   box-shadow: inset 0 1px 0 var(--glass-specular),
     0 0 0 3px var(--accent-veil), 0 14px 36px -12px var(--glass-shade);
@@ -996,7 +1124,7 @@ pre {
   display: flex;
   align-items: center;
   gap: var(--s3);
-  padding: 0 var(--s4) var(--s4);
+  padding: 0 var(--s4) var(--s3);
 }
 
 .composer-hint {
@@ -1031,10 +1159,9 @@ button {
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--glass-control);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  box-shadow: inset 0 1px 0 var(--glass-specular),
-    0 1px 2px -1px var(--glass-shade);
+  backdrop-filter: var(--glass-control-filter);
+  -webkit-backdrop-filter: var(--glass-control-filter);
+  box-shadow: var(--glass-control-shadow);
   color: var(--text-1);
   font-size: var(--text-base);
   font-weight: 500;
@@ -1047,8 +1174,7 @@ button {
 
 .btn:hover:not(:disabled) {
   background: var(--glass-control-hi);
-  box-shadow: inset 0 1px 0 var(--glass-specular),
-    0 2px 6px -2px var(--glass-shade);
+  box-shadow: var(--glass-control-shadow-hi);
 }
 
 .btn:active:not(:disabled) {
@@ -1104,6 +1230,33 @@ button {
   padding: 0;
 }
 
+/*
+ * The composer's send/dispatch action. Square-in-a-pill at the button's own
+ * height, so it reads as a mark you press rather than a label that lost its
+ * text, and the arrow sits a half pixel high because a stroke arrow's optical
+ * centre is below its bounding box.
+ */
+.composer-send svg {
+  transform: translateY(-0.5px);
+}
+
+/* The running meter is accent-coloured everywhere else, which on an accent
+   button would be the button painting itself. In here it takes the button's
+   own ink. */
+.composer-send .glyph-running {
+  color: currentColor;
+}
+
+/*
+ * In flight the button is unclickable, but it is not *unavailable* — it is the
+ * one moment it has something to report. The disabled dim at 0.4 took the
+ * meter down with it, so a send in progress looked like a send you could not
+ * make. Held back enough to read as untouchable, bright enough to read at all.
+ */
+.composer-send[aria-busy="true"]:disabled {
+  opacity: 0.72;
+}
+
 /* ==========================================================================
    Session panel
    ========================================================================== */
@@ -1111,38 +1264,32 @@ button {
 /* Header and error share one grid row above the scroller. */
 .panel-top {
   min-width: 0;
+  padding: 0px var(--s3) var(--s2) 0px;
 }
 
 /*
  * The session strip. One row: identity, then the numbers that move while you
- * watch, then actions. It is glass because it is chrome floating over the
- * transcript, and it carries the same specular top edge as the sidebar.
+ * watch, then actions. A solid card rather than glass — the canvas under it
+ * paints nothing, so there is no backdrop to filter — and it keeps the
+ * sidebar's specular top edge so it still reads as the same family of pane.
  */
 .panel-bar {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  height: 44px;
-  padding: 0 var(--s4) 0 var(--s6);
-  border-bottom: 1px solid var(--hairline);
+  height: 46px;
+  padding: 0 var(--s3) 0 var(--s5);
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--glass-edge) 72%, var(--border));
+  border-radius: var(--r-xl);
+  background: var(--panel-surface);
   min-width: 0;
   position: relative;
   z-index: 4;
-}
-
-/* A specular sheen raking across the top of the strip, the way light catches
-   the leading edge of a real pane. */
-.panel-bar::after {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 50%;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    var(--glass-specular-soft),
-    transparent
-  );
+  box-shadow: inset 0 1px 0 var(--glass-specular),
+    inset 0 -1px 0 var(--glass-specular-soft),
+    0 12px 30px -22px var(--glass-shade),
+    0 4px 10px -7px var(--glass-shade);
 }
 
 .bar-title {
@@ -1260,19 +1407,11 @@ button {
   scrollbar-gutter: stable;
   overflow-x: hidden;
   /* Bottom padding clears the floating composer. */
-  padding: var(--s5) var(--s6) var(--composer-clear);
+  padding: var(--panel-head-clear) var(--s6) var(--composer-clear);
   display: flex;
   flex-direction: column;
   gap: var(--s3);
   user-select: text;
-  /* Content fades out where it passes under the glass, top and bottom. */
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0,
-    #000 18px,
-    #000 calc(100% - var(--composer-clear)),
-    transparent calc(100% - var(--composer-clear) + 40px)
-  );
 }
 
 /*
@@ -1459,6 +1598,38 @@ button {
   color: var(--bad);
 }
 
+/* The call the run is inside right now. `groupEvents` keeps it out of the
+   collapsed group, and this is what says why it is sitting on its own instead
+   of inside the fold with its neighbours. */
+.tool-running .tool-name::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: var(--s2);
+  vertical-align: 1px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tool-running 1.4s ease-in-out infinite;
+}
+
+@keyframes tool-running {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-running .tool-name::after {
+    animation: none;
+    opacity: 0.9;
+  }
+}
+
 .tool-peek {
   color: var(--text-3);
   white-space: nowrap;
@@ -1497,19 +1668,30 @@ button {
   color: var(--bad);
 }
 
-/* Live typing indicator while a turn is streaming. Indented one gutter so it
-   lands on the same line as the rows above it. */
-.transcript .live-hint {
-  padding-left: 18px;
-}
-
+/* Live typing indicator while a turn is streaming. Centred in the reading
+   column rather than indented to the gutter: with the label hidden there is no
+   text for the dots to sit beside, so a left edge would read as a stray mark. */
 .live-hint {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   padding: var(--s1) 0;
   font-size: var(--text-sm);
   color: var(--text-3);
+}
+
+/* Visually hidden, still announced: the polite live region needs text. */
+.live-hint-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .live-hint i {
@@ -1873,16 +2055,18 @@ table.fibers td:first-child {
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--glass-control);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  box-shadow: inset 0 1px 0 var(--glass-specular);
+  backdrop-filter: var(--glass-control-filter);
+  -webkit-backdrop-filter: var(--glass-control-filter);
+  box-shadow: var(--glass-control-shadow);
   color: var(--text-2);
   font-size: var(--text-sm);
-  transition: background var(--t-instant) var(--ease-out-quart);
+  transition: background var(--t-instant) var(--ease-out-quart),
+    box-shadow var(--t-instant) var(--ease-out-quart);
 }
 
 .model-trigger:hover:not(:disabled) {
   background: var(--glass-control-hi);
+  box-shadow: var(--glass-control-shadow-hi);
   color: var(--text-1);
 }
 
@@ -2117,23 +2301,26 @@ table.fibers td:first-child {
 /* Users who ask for opacity get opacity: the layout is identical, the material
    is not. */
 @media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-control: var(--surface-2);
+    --glass-control-hi: var(--surface-3);
+    --glass-control-filter: none;
+    --tb-control: var(--surface-2);
+    --tb-control-hi: var(--surface-3);
+  }
   .glass,
   .glass-strong,
   .palette,
   .sheet,
-  .model-pop {
+  .model-pop,
+  .composer-field {
     background: var(--surface-0);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
-  .sidebar {
-    background: var(--surface-0);
-  }
-  .btn,
-  .toolbar-icon {
-    background: var(--surface-2);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+  .sidebar,
+  .panel {
+    background: var(--panel-surface);
   }
   table.fibers th {
     background: var(--surface-0);
@@ -2146,12 +2333,22 @@ table.fibers td:first-child {
     --hairline: color-mix(in oklab, var(--text-1) 45%, transparent);
     --border: color-mix(in oklab, var(--text-1) 65%, transparent);
     --text-3: var(--text-2);
+    --glass-control: var(--surface-0);
+    --glass-control-hi: var(--surface-2);
+    --glass-control-filter: none;
+    --tb-control: var(--surface-0);
+    --tb-control-hi: var(--surface-2);
   }
   .glass,
-  .glass-strong {
+  .glass-strong,
+  .composer-field {
     background: var(--surface-0);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+  .sidebar,
+  .panel {
+    background: var(--panel-surface);
   }
 }
 
@@ -3156,6 +3353,19 @@ table.fibers td:first-child {
   white-space: nowrap;
 }
 
+/* The scope picker lives in the title bar, so it uses the same raised control
+   material as the workspace toolbar rather than the flat content-field form. */
+.settings-bar .set-input {
+  border-radius: 999px;
+  backdrop-filter: var(--glass-control-filter);
+  -webkit-backdrop-filter: var(--glass-control-filter);
+  box-shadow: var(--glass-control-shadow);
+}
+
+.settings-bar .set-input:hover:not(:disabled) {
+  box-shadow: var(--glass-control-shadow-hi);
+}
+
 /* Source list, the way a Mac app does settings since Ventura. */
 .settings-rail {
   grid-area: rail;
@@ -3738,24 +3948,33 @@ table.fibers td:first-child {
   align-items: center;
   gap: var(--s2);
   min-width: 0;
-  height: 32px;
+  height: var(--tb-control-h);
   /* Pulled back by its own padding so the title sits where it always did. */
   margin-left: calc(var(--s2) * -1);
   padding: 0 var(--s2);
-  border-radius: var(--r-md);
-  border: 1px solid transparent;
-  background: transparent;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  /* The full control material, not a diluted one. It was thinned to keep from
+     stacking a second frosted surface on the toolbar's; the toolbar has no
+     surface now, so the dilution only made this chip the one element that did
+     not match the others. */
+  background: var(--tb-control);
+  backdrop-filter: var(--glass-control-filter);
+  -webkit-backdrop-filter: var(--glass-control-filter);
+  box-shadow: var(--glass-control-shadow);
   color: inherit;
   font: inherit;
   text-align: left;
   transition: background var(--t-fast) var(--ease-out-quart),
-    border-color var(--t-fast) var(--ease-out-quart);
+    border-color var(--t-fast) var(--ease-out-quart),
+    box-shadow var(--t-fast) var(--ease-out-quart);
 }
 
 .title-trigger:hover,
 .title-trigger[aria-expanded="true"] {
-  background: var(--glass-control);
-  border-color: var(--border);
+  background: var(--tb-control-hi);
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+  box-shadow: var(--glass-control-shadow-hi);
 }
 
 /* The project's initial, in the accent. A window that can hold any repo needs
@@ -3764,9 +3983,9 @@ table.fibers td:first-child {
   flex: none;
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
   background: var(--accent-solid);
   color: var(--accent-text);
   font-family: var(--mono);
@@ -3777,8 +3996,13 @@ table.fibers td:first-child {
 .title-text {
   display: flex;
   flex-direction: column;
+  gap: 1px;
   min-width: 0;
-  line-height: 1.18;
+}
+
+.title-trigger .title-name,
+.title-trigger .title-sub {
+  line-height: 1.1;
 }
 
 .title-sub {
@@ -3802,24 +4026,37 @@ table.fibers td:first-child {
 /* -- segmented control ----------------------------------------------------- */
 
 /*
- * One pressed segment, drawn as a raised chip inside a sunken track. The
+ * One pressed segment, drawn as a raised chip inside a glass track. The
  * pressed state is a *surface*, not a colour: at three segments a coloured
  * one reads as "this one is special" rather than "you are here".
  */
 .segmented {
   flex: none;
   display: flex;
+  align-items: center;
   gap: 2px;
-  padding: 2px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--hairline);
-  background: color-mix(in oklab, var(--text-3) 10%, transparent);
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--glass-control);
+  backdrop-filter: var(--glass-control-filter);
+  -webkit-backdrop-filter: var(--glass-control-filter);
+  box-shadow: var(--glass-control-shadow);
+}
+
+.segmented-mode {
+  height: var(--tb-control-h);
+  background: var(--tb-control);
+}
+
+.segmented-mode button {
+  height: 100%;
 }
 
 .segmented button {
   padding: 3px 12px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 999px;
   background: transparent;
   color: var(--text-2);
   font-size: var(--text-sm);
@@ -3833,12 +4070,16 @@ table.fibers td:first-child {
   color: var(--text-1);
 }
 
+.segmented button:hover:not([aria-selected="true"]):not([aria-pressed="true"]) {
+  background: color-mix(in oklab, var(--text-1) 7%, transparent);
+}
+
 .segmented button[aria-selected="true"],
 .segmented button[aria-pressed="true"] {
-  background: var(--surface-1);
+  background: var(--glass-control-hi);
   color: var(--text-1);
   font-weight: 590;
-  box-shadow: 0 1px 2px var(--glass-shade), inset 0 1px 0 var(--glass-specular);
+  box-shadow: var(--glass-control-shadow);
 }
 
 .segmented-sm button {
@@ -3859,23 +4100,25 @@ table.fibers td:first-child {
   align-items: center;
   gap: var(--s2);
   width: 100%;
-  height: 28px;
+  height: var(--tb-control-h);
   padding: 0 var(--s2) 0 var(--s3);
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--glass-control);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  box-shadow: inset 0 1px 0 var(--glass-specular);
+  background: var(--tb-control);
+  backdrop-filter: var(--glass-control-filter);
+  -webkit-backdrop-filter: var(--glass-control-filter);
+  box-shadow: var(--glass-control-shadow);
   color: var(--text-2);
   transition: border-color var(--t-fast) var(--ease-out-quart),
-    background var(--t-fast) var(--ease-out-quart);
+    background var(--t-fast) var(--ease-out-quart),
+    box-shadow var(--t-fast) var(--ease-out-quart);
 }
 
 .activity-trigger:hover,
 .activity-trigger[aria-expanded="true"] {
   border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
-  background: var(--glass-control-hi);
+  background: var(--tb-control-hi);
+  box-shadow: var(--glass-control-shadow-hi);
 }
 
 .activity-text {
@@ -3914,10 +4157,11 @@ table.fibers td:first-child {
   content: "";
   position: absolute;
   inset: 0 auto 0 0;
-  width: 8px;
+  --sweep-w: 40;
+  width: calc(var(--sweep-w) * 1%);
   border-radius: 3px;
   background: var(--accent-ink);
-  animation: sweep 1.6s var(--ease-out-quart) infinite;
+  animation: sweep 1.6s linear infinite;
 }
 
 .mini-waiting::after {
@@ -3926,12 +4170,30 @@ table.fibers td:first-child {
   width: 100%;
 }
 
+/*
+ * The highlight crosses the whole track, once, at a constant pace.
+ *
+ * Both of those were wrong, and they were wrong in ways that read as the
+ * animation giving up partway. `translateX` percentages are relative to the
+ * *highlight*, not the track, so one hardcoded end value cannot suit two
+ * highlights of different widths: measured, the toolbar bar left the track a
+ * third of the way in and stayed blank for the rest of the cycle, while the
+ * menu's wider bar never reached the right edge at all. `10000% / w` is the
+ * track expressed in the highlight's own widths — exact for any width, and it
+ * stays exact when one changes, because the same number sets both.
+ *
+ * The pace was the other half. An ease-out on a loop decelerates to a
+ * standstill: the menu bar covered 86% of its travel in the first half of the
+ * cycle and the remaining 6% in the second, so it parked near the end and
+ * snapped back. Indeterminate means "still working", and constant velocity is
+ * the only pace that says that for the whole cycle.
+ */
 @keyframes sweep {
-  0% {
+  from {
     transform: translateX(-100%);
   }
-  100% {
-    transform: translateX(320%);
+  to {
+    transform: translateX(calc(10000% / var(--sweep-w)));
   }
 }
 
@@ -4095,16 +4357,124 @@ table.fibers td:first-child {
 .sweep i {
   position: absolute;
   inset: 0 auto 0 0;
-  width: 22%;
+  --sweep-w: 22;
+  width: calc(var(--sweep-w) * 1%);
   border-radius: 3px;
   background: var(--accent-ink);
-  animation: sweep 1.6s var(--ease-out-quart) infinite;
+  animation: sweep 1.6s linear infinite;
 }
 
 .sweep-waiting i {
   width: 100%;
   background: var(--warn);
   animation: none;
+}
+
+/* A quiet project still gets a track, so the row reads as "nothing running"
+   rather than as a row that failed to draw its meter. */
+.sweep-idle i {
+  width: 0;
+  animation: none;
+}
+
+/*
+ * A project that has not answered yet is not a project doing nothing, and it
+ * is certainly not one that is working — but with no rule of its own it fell
+ * through to the base sweep and drew the accent bar, so an unasked project
+ * animated exactly like a running one while its label read "checking…".
+ *
+ * The track wears the skeleton instead: this is content that has not loaded,
+ * which is what a skeleton is for here, and a neutral shimmer on the rail
+ * cannot be mistaken for the accent bar crossing it.
+ */
+.sweep-unknown {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--text-1) 7%, transparent) 25%,
+    color-mix(in oklab, var(--text-1) 13%, transparent) 37%,
+    color-mix(in oklab, var(--text-1) 7%, transparent) 63%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.sweep-unknown i {
+  width: 0;
+  animation: none;
+}
+
+/* -- activity: one group per loaded project -------------------------------- */
+
+/*
+ * Switching projects leaves their agents running, so the menu is grouped by
+ * project and every retained core gets a header — including the quiet ones,
+ * whose absence would otherwise be indistinguishable from "not open".
+ */
+.pop-project {
+  padding: var(--s1) var(--s1) var(--s2);
+}
+
+.pop-project + .pop-project {
+  border-top: 1px solid var(--hairline);
+}
+
+.pop-project-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  padding: var(--s1) var(--s2);
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  text-align: left;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+.pop-project-head:not(:disabled):hover {
+  background: var(--accent-veil);
+}
+
+.pop-project-head:disabled {
+  cursor: default;
+}
+
+.pop-project-name {
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 620;
+  letter-spacing: 0.02em;
+  color: var(--text-1);
+}
+
+.pop-project-here {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  background: var(--accent-veil);
+  color: var(--accent-ink);
+}
+
+/* The header's meter is a summary, not the run's own bar: cap it so the
+   counts beside it keep their place as projects come and go. */
+.pop-project-head .sweep {
+  max-width: 88px;
+}
+
+.pop-project-quiet {
+  margin: 0;
+  padding: 0 var(--s2) var(--s1) var(--s3);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pop-stop {
@@ -4199,7 +4569,7 @@ table.fibers td:first-child {
   padding: var(--s3);
   border-radius: var(--r-lg);
   border: 1px solid transparent;
-  background: color-mix(in oklab, var(--text-3) 6%, transparent);
+  background: transparent;
   text-align: left;
   transition: background var(--t-fast) var(--ease-out-quart);
 }
@@ -4535,7 +4905,7 @@ table.fibers td:first-child {
 .panel-scroll {
   overflow-y: auto;
   overflow-x: hidden;
-  padding: var(--s5) var(--s6) var(--composer-clear);
+  padding: var(--panel-head-clear) var(--s6) var(--composer-clear);
   user-select: text;
 }
 
@@ -4571,15 +4941,8 @@ table.fibers td:first-child {
   overflow-y: scroll;
   scrollbar-gutter: stable;
   overflow-x: hidden;
-  padding: var(--s5) var(--s6) var(--composer-clear);
+  padding: var(--panel-head-clear) var(--s6) var(--composer-clear);
   user-select: text;
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0,
-    #000 18px,
-    #000 calc(100% - var(--composer-clear)),
-    transparent calc(100% - var(--composer-clear) + 40px)
-  );
 }
 
 .timeline-skeleton {
@@ -5029,6 +5392,14 @@ table.fibers td:first-child {
   grid-row: 3;
 }
 
+/* Tabs, breadcrumbs and status are structural chrome rather than raised
+   controls. They keep the glass tint, with only the pane's specular edge. */
+.tabs,
+.crumbs,
+.statusbar {
+  box-shadow: inset 0 1px 0 var(--glass-specular-soft);
+}
+
 .tabs {
   display: flex;
   align-items: stretch;
@@ -5284,6 +5655,14 @@ table.fibers td:first-child {
    vibrancy behind the window, reduced transparency, and reduced motion.
    ========================================================================== */
 
+.no-vibrancy {
+  --glass-control: var(--surface-2);
+  --glass-control-hi: var(--surface-3);
+  --glass-control-filter: none;
+  --tb-control: var(--surface-2);
+  --tb-control-hi: var(--surface-3);
+}
+
 .no-vibrancy .pop,
 .no-vibrancy .tabs,
 .no-vibrancy .crumbs,
@@ -5291,14 +5670,6 @@ table.fibers td:first-child {
   background: var(--surface-2);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .activity-trigger {
-    background: var(--surface-2);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5311,6 +5682,18 @@ table.fibers td:first-child {
     animation: none;
     width: 100%;
     opacity: 0.55;
+  }
+
+  /* Except the quiet ones: a full bar here would say a project with nothing
+     running had finished everything. The same goes for one still being asked,
+     whose track also stops shimmering. */
+  .sweep-idle i,
+  .sweep-unknown i {
+    width: 0;
+  }
+
+  .sweep-unknown {
+    animation: none;
   }
 }
 
@@ -5354,6 +5737,24 @@ table.fibers td:first-child {
 .split-fixed-second > .split-second,
 .split-fixed-first > .split-first {
   flex: none;
+}
+
+/* The leading rail is a floating piece of structural glass, not a sheet
+   fused to the window edge. The wrapper owns the reveal so the sidebar keeps
+   filling its pane and the resize handle remains outside the rounded shell. */
+.body.split-fixed-first > .split-first {
+  padding: 0px 4px var(--window-inset) var(--window-inset);
+}
+
+/* The canvas is not a floating pane, so it takes no inset: it runs to the
+   window edge and its glass header and composer float over it. Only the
+   leading gutter stays, to keep the rail's shell off the sheet's edge. */
+.body.split-fixed-first > .split-second {
+  padding: 0;
+}
+
+.body:not(.split) > .panel {
+  margin: 0;
 }
 
 .split-handle {
@@ -5407,7 +5808,6 @@ table.fibers td:first-child {
   background: var(--accent);
 }
 
-.split-second > .panel,
 .split-second > .editor {
   box-shadow: var(--shadow-panel);
 }
@@ -5623,5 +6023,364 @@ table.fibers td:first-child {
   .sidebar-element-in,
   .sidebar-change {
     animation: none;
+  }
+}
+
+/* ==========================================================================
+   Pending user messages
+   ========================================================================== */
+
+/* Accepted by the harness, not yet taken by the running agent. The ordinary
+   You row stays intact so pending reads as a delivery state, not a new event
+   type or a disabled message. */
+.entry-pending .entry-mark {
+  opacity: 0.58;
+}
+
+.entry-pending-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-3);
+  font-weight: 520;
+  letter-spacing: 0.01em;
+}
+
+.entry-pending-state::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+/* ==========================================================================
+   Sidebar: paging the run list, and the archive shelf
+   ========================================================================== */
+
+/*
+ * "Show 50 more" and "Archived" are the same object: a quiet full-width row
+ * that continues the list rather than sitting on top of it. Deliberately not a
+ * `.btn` — a pill here would read as an action of equal weight to opening a
+ * run, and this is closer to the last line of a page than to a control.
+ */
+.rail-more {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-align: left;
+  transition: background var(--t-instant) var(--ease-out-quart),
+    color var(--t-instant) var(--ease-out-quart);
+}
+
+.rail-more:hover {
+  background: color-mix(in oklab, var(--text-3) 10%, transparent);
+  color: var(--text-1);
+}
+
+.rail-more:active {
+  transform: scale(0.99);
+}
+
+/* The count is the reason to click, so it keeps mono digits and sits at the
+   end of the row where every other rail number already lives. */
+.rail-more-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* An archive or delete that did not happen. Persistent, not a toast: it is
+   about work the person asked for and did not get. */
+.rail-error {
+  margin: var(--s2) var(--s4) var(--s3);
+  font-size: var(--text-sm);
+  color: var(--bad);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-more:active {
+    transform: none;
+  }
+}
+
+/* ==========================================================================
+   Archived runs window
+   ========================================================================== */
+
+/*
+ * Narrower than the fibers sheet: that one is a four-column table, this is a
+ * list of runs, and a list stretched to 860px makes every row a journey from
+ * the title to the buttons that act on it.
+ */
+.archive-sheet {
+  width: min(560px, 92vw);
+  /*
+   * `.scrim` is a flex row, so a sheet inherits `align-items: stretch` and
+   * grows to its own max-height regardless of content — four archived runs
+   * came out as a 630px window with 440px of nothing under them. Hug the
+   * content; the max-height still caps a long shelf, and the body scrolls.
+   */
+  align-self: flex-start;
+}
+
+.archive-empty {
+  margin: var(--s3) var(--s2) var(--s4);
+  max-width: 46ch;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.archive-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s1) var(--s1) var(--s1) 0;
+  border-radius: var(--r-md);
+}
+
+.archive-row + .archive-row {
+  border-top: 1px solid var(--hairline);
+}
+
+.archive-row:hover {
+  background: color-mix(in oklab, var(--text-3) 8%, transparent);
+}
+
+.archive-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--s2) var(--s3);
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.archive-row-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.archive-row-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
+  letter-spacing: -0.006em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.archive-row-time {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.archive-row-said {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The address, then the model: mono because the name is what you type to
+   reach this run from anywhere else. */
+.archive-row-facts {
+  display: flex;
+  gap: var(--s2);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/*
+ * The actions stay hidden until the row is under the pointer or something in
+ * it has focus. Two buttons on every row, one of them destructive, turns a
+ * quiet list into a wall of red; revealing them on approach keeps the window
+ * readable while leaving the keyboard path intact.
+ */
+.archive-row-actions {
+  display: flex;
+  gap: var(--s2);
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease-out-quart);
+}
+
+.archive-row:hover .archive-row-actions,
+.archive-row:focus-within .archive-row-actions {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .archive-row-actions {
+    opacity: 1;
+  }
+}
+
+/* -- quick actions ---------------------------------------------------------
+ *
+ * The toolbar's other popover. It reuses `.pop` and its rows wholesale rather
+ * than growing a second menu vocabulary — the only things here are the pieces
+ * that menu does not have: a row with a destructive trailing control, the
+ * add-an-action form, and the line that reports what a run actually did.
+ */
+
+.quick-actions {
+  position: relative;
+  flex: none;
+}
+
+.quick-pop {
+  right: 0;
+  width: 320px;
+}
+
+/* A row that is a button plus a button. The remove control is revealed by
+   hover *and* focus-within, so it is reachable from the keyboard — an action
+   you can run but not delete without a mouse is a trap. */
+.quick-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  border-radius: var(--r-md);
+}
+
+.quick-row:hover {
+  background: var(--accent-veil);
+}
+
+.quick-row-main {
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.quick-row-main:hover {
+  background: transparent;
+}
+
+.quick-row-main .pop-row-meta {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-row-act {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 10px;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease-out-quart);
+}
+
+.quick-row-act:last-child {
+  margin-right: var(--s2);
+}
+
+/* Revealed together: two hover targets that appear one at a time would make
+   the row jump under the pointer. */
+.quick-row:hover .quick-row-act,
+.quick-row:focus-within .quick-row-act {
+  opacity: 1;
+}
+
+.quick-row-act:hover {
+  background: var(--accent-veil);
+  color: var(--text-1);
+}
+
+.quick-row-act.is-remove:hover {
+  background: color-mix(in oklab, var(--bad) 16%, transparent);
+  color: var(--bad);
+}
+
+.quick-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3) var(--s3);
+}
+
+/* The same field as the settings window, at menu scale. */
+.quick-input {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  background: var(--glass-control);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 4px var(--s2);
+}
+
+.quick-input.mono {
+  font-family: var(--mono);
+}
+
+.quick-input:focus-visible {
+  outline: none;
+  border-color: color-mix(in oklab, var(--accent) 70%, var(--border));
+  box-shadow: 0 0 0 3px var(--accent-veil);
+}
+
+.quick-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+}
+
+.quick-outcome {
+  margin: var(--s1) 0 0;
+  padding: var(--s2) var(--s3);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.quick-outcome.is-error {
+  color: var(--bad);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-row-act {
+    opacity: 1;
   }
 }

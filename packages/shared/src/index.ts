@@ -194,6 +194,7 @@ export type JournalEventType =
   | "ask_requested"
   | "ask_received"
   | "ask_settled"
+  | "user_message_queued"
   | "user_injected"
   | "master_injected"
   | "context_assembled"
@@ -299,6 +300,16 @@ export interface SessionRecord {
   endedAt: string | null;
   summary: string | null;
   tldr: string | null;
+  /**
+   * When the person shelved this run, or null while it is on the list.
+   *
+   * Display-only: archiving hides a finished run from the rail, and changes
+   * nothing about what the session was, what it wrote, or what the recall
+   * tools can still find. It is cleared again the moment the run becomes live,
+   * because a shelf that can hide working sessions is a place work goes
+   * missing.
+   */
+  archivedAt: string | null;
   usage: Usage;
 }
 

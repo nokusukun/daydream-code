@@ -186,6 +186,24 @@ describe("summarizeProjects", () => {
     expect(summaries[1]?.stats?.sessions).toBe(1);
   });
 
+  it("trusts live counts for retained background cores without marking them active", () => {
+    const open = seedProject([
+      { status: "running", startedAt: "2026-08-09T12:00:00.000Z", endedAt: null },
+    ]);
+    const background = seedProject([
+      { status: "waiting", startedAt: "2026-08-09T13:00:00.000Z", endedAt: null },
+    ]);
+
+    const summaries = summarizeProjects(
+      [entry(open, "open"), entry(background, "background")],
+      open,
+      new Set([open, background]),
+    );
+
+    expect(summaries[0]).toMatchObject({ active: true, stats: { live: 1 } });
+    expect(summaries[1]).toMatchObject({ active: false, stats: { live: 1 } });
+  });
+
   it("flags a project whose folder is gone and does not try to read it", () => {
     const gone = join(tmpdir(), "daydream-stats-does-not-exist-4a7f");
     const summaries = summarizeProjects([entry(gone, "gone")], null);

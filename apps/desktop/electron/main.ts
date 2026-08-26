@@ -4,6 +4,7 @@
  * a random bearer token), and hands the renderer only `{ url, token }` — the
  * renderer speaks HTTP/WS exclusively, so it could point at a remote core.
  */
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -36,6 +37,10 @@ import {
   type RegistryEntry,
 } from "./registry.js";
 import { summarizeProjects, type ProjectSummary } from "./stats.js";
+import {
+  runQuickAction,
+  type QuickActionResult,
+} from "./quick-actions.js";
 
 /**
  * `home` travels with the list so the renderer can print `~/projects` the way
@@ -49,6 +54,11 @@ export interface ProjectList {
 
 /** apps/desktop — bare plugin specifiers resolve from this package's deps. */
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+const APP_NAME = "Daydream Code";
+
+// Native menu roles use Electron's internal name for labels such as Hide and
+// About. The top-level macOS application label is installed explicitly below.
+electronApp.setName(APP_NAME);
 
 export interface ConnectionInfo {
   url: string;
@@ -73,14 +83,41 @@ type CodeContextMenuRequest =
     }
   | { kind: "file"; path: string; dir: boolean; expanded?: boolean };
 
+type SessionMenuAction = "open" | "archive" | "unarchive" | "delete";
+
+interface SessionMenuRequest {
+  id: string;
+  name: string;
+  /** Already shelved, so the menu offers the way back rather than the way in. */
+  archived: boolean;
+  /** Running or waiting: both destructive items are unavailable. */
+  live: boolean;
+  /** Already the open run, so "Open" would be a no-op. */
+  current: boolean;
+}
+
 interface ActiveProject {
   result: BootResult;
   connection: ConnectionInfo;
 }
 
-let active: ActiveProject | null = null;
-/** Serializes open/dispose so two boots never race on one process. */
+/**
+ * Every project opened during this app lifetime keeps its own core. Switching
+ * changes which connection the workspace renders; it does not tear down work
+ * that is still running in another project.
+ */
+const projects = new Map<string, ActiveProject>();
+let activeRootPath: string | null = null;
+/** Serializes boots so two opens never race on one process. */
 let chain: Promise<unknown> = Promise.resolve();
+
+function activeProject(): ActiveProject | null {
+  return activeRootPath === null ? null : (projects.get(activeRootPath) ?? null);
+}
+
+function projectConnections(): ConnectionInfo[] {
+  return [...projects.values()].map((project) => project.connection);
+}
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -88,21 +125,33 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
-async function disposeActive(): Promise<void> {
-  if (active === null) return;
-  const prev = active;
-  active = null;
-  const { app } = prev.result;
-  await app.dispose(app.rootFiber).catch((error: unknown) => {
-    console.error("[desktop] dispose failed:", error);
-  });
+async function disposeProjects(): Promise<void> {
+  const open = [...projects.values()];
+  projects.clear();
+  activeRootPath = null;
+  await Promise.all(
+    open.map(async ({ result, connection }) => {
+      const { app } = result;
+      await app.dispose(app.rootFiber).catch((error: unknown) => {
+        console.error(`[desktop] dispose failed for ${connection.rootPath}:`, error);
+      });
+    }),
+  );
 }
 
 async function openProject(rootPath: string): Promise<ConnectionInfo> {
-  await disposeActive();
+  const normalizedRoot = resolve(rootPath);
+  const retained = projects.get(normalizedRoot);
+  if (retained !== undefined) {
+    activeRootPath = normalizedRoot;
+    touchRegistry(retained.connection);
+    broadcast("daydream:connection", retained.connection);
+    return retained.connection;
+  }
+
   const token = randomBytes(16).toString("hex");
   const result = await boot({
-    projectRoot: rootPath,
+    projectRoot: normalizedRoot,
     resolutionPaths: [appDir],
     overrides: [
       { id: "server", disabled: false, config: { port: 0, token } },
@@ -123,19 +172,41 @@ async function openProject(rootPath: string): Promise<ConnectionInfo> {
     await result.app.dispose(result.app.rootFiber).catch(() => undefined);
     throw new Error(`server plugin did not come up (${dump || "no fiber info"})`);
   }
-  await server.ready;
-
-  const name = basename(rootPath) || rootPath;
-  const connection: ConnectionInfo = { url: server.url, token, rootPath, name };
-  active = { result, connection };
-
-  if (process.env.DAYDREAM_SMOKE === undefined) {
-    const registryFile = defaultRegistryPath();
-    writeRegistry(registryFile, touchProject(readRegistry(registryFile), rootPath, name));
+  try {
+    await server.ready;
+  } catch (error) {
+    await result.app.dispose(result.app.rootFiber).catch(() => undefined);
+    throw error;
   }
 
+  const name = basename(normalizedRoot) || normalizedRoot;
+  const connection: ConnectionInfo = {
+    url: server.url,
+    token,
+    rootPath: normalizedRoot,
+    name,
+  };
+  projects.set(normalizedRoot, { result, connection });
+  activeRootPath = normalizedRoot;
+
+  touchRegistry(connection);
+
+  broadcast("daydream:project-cores", projectConnections());
   broadcast("daydream:connection", connection);
   return connection;
+}
+
+function touchRegistry(connection: ConnectionInfo): void {
+  if (process.env.DAYDREAM_SMOKE !== undefined) return;
+  const registryFile = defaultRegistryPath();
+  writeRegistry(
+    registryFile,
+    touchProject(
+      readRegistry(registryFile),
+      connection.rootPath,
+      connection.name,
+    ),
+  );
 }
 
 function openProjectSafe(rootPath: string): Promise<OpenResult> {
@@ -152,6 +223,7 @@ function openProjectSafe(rootPath: string): Promise<OpenResult> {
 
 /** Resolve an untrusted renderer path without letting the menu escape the project. */
 function projectPath(value: unknown): { relative: string; absolute: string } | null {
+  const active = activeProject();
   if (active === null || typeof value !== "string" || value.length === 0) return null;
   if (value.includes("\0")) return null;
   const root = resolve(active.connection.rootPath);
@@ -247,6 +319,125 @@ function showCodeContextMenu(
   });
 }
 
+/**
+ * Native menu for a run in the sidebar.
+ *
+ * Delete confirms here rather than in the renderer: it is the only
+ * irreversible thing the sidebar can do, and a native modal is both the
+ * platform answer and the one dialog that cannot be dismissed by a re-render
+ * happening underneath it. Everything the person needs to decide is in the
+ * request, so main never reaches back into renderer state.
+ */
+function showSessionContextMenu(
+  event: Electron.IpcMainInvokeEvent,
+  input: unknown,
+): Promise<SessionMenuAction | null> {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (window === null || typeof input !== "object" || input === null) {
+    return Promise.resolve(null);
+  }
+  const request = input as Partial<SessionMenuRequest>;
+  const id = typeof request.id === "string" ? request.id : "";
+  const name = typeof request.name === "string" ? request.name : id;
+  if (id.length === 0) return Promise.resolve(null);
+  const live = request.live === true;
+  const archived = request.archived === true;
+
+  let action: SessionMenuAction | null = null;
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: "Open",
+      enabled: request.current !== true,
+      click: () => { action = "open"; },
+    },
+    { label: "Copy Name", click: () => clipboard.writeText(name) },
+    { type: "separator" },
+    {
+      label: archived ? "Move to Sessions" : "Archive",
+      // A live run is refused by the seam anyway; greying it out here explains
+      // why instead of letting the click return a 409 the person never sees.
+      enabled: !live,
+      click: () => { action = archived ? "unarchive" : "archive"; },
+    },
+    {
+      label: "Delete…",
+      enabled: !live,
+      click: () => { action = "delete"; },
+    },
+  ];
+
+  return new Promise((done) => {
+    Menu.buildFromTemplate(template).popup({
+      window,
+      callback: () => {
+        if (action !== "delete") {
+          done(action);
+          return;
+        }
+        void dialog
+          .showMessageBox(window, {
+            type: "warning",
+            buttons: ["Delete", "Cancel"],
+            defaultId: 1,
+            cancelId: 1,
+            message: `Delete ${name}?`,
+            detail:
+              "Its transcript and journal are erased for good. Entries the master thread already wrote about it stay.",
+          })
+          .then((result) => done(result.response === 0 ? "delete" : null))
+          .catch(() => done(null));
+      },
+    });
+  });
+}
+
+/** Native Copy menu for selected prose in the agent and master timelines. */
+function showTextContextMenu(
+  event: Electron.IpcMainInvokeEvent,
+  input: unknown,
+): Promise<void> {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (window === null || typeof input !== "string" || input.trim().length === 0) {
+    return Promise.resolve();
+  }
+  const text = input.slice(0, 500_000);
+  return new Promise((done) => {
+    Menu.buildFromTemplate([
+      {
+        label: "Copy",
+        accelerator: "CommandOrControl+C",
+        click: () => clipboard.writeText(text),
+      },
+    ]).popup({ window, callback: done });
+  });
+}
+
+/**
+ * Electron has no automatic browser context menu. Install the native editing
+ * roles once per window so every textarea and text input gets the same
+ * platform behavior without renderer-specific handlers.
+ */
+function installEditableContextMenu(window: Electron.BrowserWindow): void {
+  window.webContents.on("context-menu", (_event, params) => {
+    if (!params.isEditable) return;
+    const { editFlags } = params;
+    Menu.buildFromTemplate([
+      { role: "undo", enabled: editFlags.canUndo },
+      { role: "redo", enabled: editFlags.canRedo },
+      { type: "separator" },
+      { role: "cut", enabled: editFlags.canCut },
+      { role: "copy", enabled: editFlags.canCopy },
+      { role: "paste", enabled: editFlags.canPaste },
+      { type: "separator" },
+      { role: "selectAll", enabled: editFlags.canSelectAll },
+    ]).popup({ window });
+  });
+}
+
+electronApp.on("browser-window-created", (_event, window) => {
+  installEditableContextMenu(window);
+});
+
 // ---------------------------------------------------------------------------
 // Appearance: the renderer paints with the OS accent + theme so the app reads
 // as native rather than as a web page that picked its own blue.
@@ -263,6 +454,19 @@ export interface Appearance {
   platform: NodeJS.Platform;
   /** Whether the window is backed by a real vibrancy material. */
   vibrancy: boolean;
+}
+
+/**
+ * The window's vibrancy material takes its tone from the window's native
+ * appearance, which follows `nativeTheme` — not from anything the renderer
+ * writes into the document. So an in-app theme override has to be told to the
+ * OS as well, or the CSS goes dark while the material behind it stays light
+ * and the two disagree wherever the renderer is translucent.
+ */
+function setThemeSource(choice: unknown): void {
+  if (choice === "light" || choice === "dark" || choice === "system") {
+    nativeTheme.themeSource = choice;
+  }
 }
 
 function readAppearance(): Appearance {
@@ -305,29 +509,61 @@ function watchAppearance(): void {
 
 function registerIpc(): void {
   ipcMain.handle("daydream:get-appearance", () => readAppearance());
+  ipcMain.handle("daydream:set-theme-source", (_event, choice: unknown) => {
+    setThemeSource(choice);
+  });
 
   ipcMain.handle("daydream:code-context-menu", showCodeContextMenu);
+  ipcMain.handle("daydream:text-context-menu", showTextContextMenu);
+  ipcMain.handle("daydream:session-context-menu", showSessionContextMenu);
+
+  /**
+   * Quick actions run against the *open* project, and the request never says
+   * which one: main owns that fact, so a renderer cannot ask for a folder it
+   * is not looking at.
+   */
+  ipcMain.handle(
+    "daydream:quick-action",
+    async (_event, input: unknown): Promise<QuickActionResult> => {
+      const active = activeProject();
+      if (active === null) return { ok: false, error: "no project is open" };
+      return runQuickAction(input, active.connection.rootPath, {
+        platform: process.platform,
+        env: process.env,
+        spawn,
+        openPath: (path: string) => shell.openPath(path),
+      });
+    },
+  );
 
   ipcMain.handle("daydream:open-settings", () => {
     openSettingsWindow();
   });
 
   ipcMain.handle("daydream:get-state", () => ({
-    connection: active?.connection ?? null,
+    connection: activeProject()?.connection ?? null,
     recent: readRegistry(defaultRegistryPath()) satisfies RegistryEntry[],
   }));
+
+  /** Connections whose cores are alive in this process, for global activity. */
+  ipcMain.handle("daydream:get-project-cores", () => projectConnections());
 
   /**
    * The switcher's data. Read on demand rather than cached: the numbers move
    * while the app is open, and reading a handful of small sqlite files costs
-   * about a millisecond each. `active` is passed in so that only the project
-   * whose core is running here reports live state (see stats.ts).
+   * about a millisecond each. Every retained core may report live state;
+   * `active` still marks only the project currently rendered in the workspace
+   * (see stats.ts).
    */
   ipcMain.handle("daydream:list-projects", (): ProjectList => {
     const entries = readRegistry(defaultRegistryPath());
     return {
       home: homedir(),
-      projects: summarizeProjects(entries, active?.connection.rootPath ?? null),
+      projects: summarizeProjects(
+        entries,
+        activeRootPath,
+        new Set(projects.keys()),
+      ),
     };
   });
 
@@ -367,8 +603,40 @@ function applyAppIcon(): void {
   if (IS_MAC) electronApp.dock?.setIcon(png);
 }
 
+/**
+ * In development macOS takes the first menu-bar label from Electron.app's
+ * bundle metadata, so `app.setName()` alone still renders "Electron". Own the
+ * application menu and keep the platform-standard role menus intact.
+ */
+function installApplicationMenu(): void {
+  if (!IS_MAC) return;
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: APP_NAME,
+        submenu: [
+          { role: "about" },
+          { type: "separator" },
+          { role: "services" },
+          { type: "separator" },
+          { role: "hide" },
+          { role: "hideOthers" },
+          { role: "unhide" },
+          { type: "separator" },
+          { role: "quit" },
+        ],
+      },
+      { role: "fileMenu" },
+      { role: "editMenu" },
+      { role: "viewMenu" },
+      { role: "windowMenu" },
+    ]),
+  );
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
+    title: APP_NAME,
     width: 1440,
     height: 900,
     minWidth: 880,
@@ -476,7 +744,7 @@ async function runSmoke(rootPath: string): Promise<never> {
     if (process.env.DAYDREAM_SMOKE_UI === "1") {
       failures += await smokeRenderer();
     }
-    await disposeActive();
+    await disposeProjects();
     electronApp.exit(failures === 0 ? 0 : 1);
   } catch (error) {
     console.error("[smoke] FAILED:", error);
@@ -532,6 +800,7 @@ if (smokeRoot !== undefined && smokeRoot.length > 0) {
 } else {
   registerIpc();
   void electronApp.whenReady().then(() => {
+    installApplicationMenu();
     applyAppIcon();
     createWindow();
     electronApp.on("activate", () => {
@@ -546,8 +815,8 @@ electronApp.on("window-all-closed", () => {
 
 let quitting = false;
 electronApp.on("will-quit", (event) => {
-  if (quitting || active === null) return;
+  if (quitting || projects.size === 0) return;
   event.preventDefault();
   quitting = true;
-  void disposeActive().finally(() => electronApp.exit(0));
+  void disposeProjects().finally(() => electronApp.exit(0));
 });

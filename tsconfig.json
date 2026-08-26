@@ -11,6 +11,9 @@
       "path": "./packages/asks"
     },
     {
+      "path": "./packages/actions"
+    },
+    {
       "path": "./packages/blobs"
     },
     {

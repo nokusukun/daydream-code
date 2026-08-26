@@ -42,7 +42,7 @@ export function PanelHead(props: {
   children?: ReactNode;
 }): ReactNode {
   return (
-    <header className="panel-bar glass">
+    <header className="panel-bar">
       <h2 className="bar-title">{props.title}</h2>
       {props.sub !== undefined && <span className="bar-sub">{props.sub}</span>}
       <span className="bar-spacer" />

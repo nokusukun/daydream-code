@@ -15,6 +15,7 @@ import { useSettings, type SettingsStore } from "../settings-store.js";
 import { SettingField, SettingRow, isUserSet, layerName } from "./SettingsField.js";
 import type { Appearance } from "../bridge.js";
 import { bridge } from "../bridge.js";
+import { titleCaseSettingName } from "../title-case.js";
 
 interface Section {
   id: string;
@@ -113,7 +114,7 @@ export function SettingsWindow(): ReactNode {
   return (
     <div className="settings">
       <header className="settings-bar glass">
-        <h1>{active.label}</h1>
+        <h1>{titleCaseSettingName(active.label)}</h1>
         <div className="settings-bar-right">
           <label className="settings-scope" title="which config layer edits are written to">
             <span>writing to</span>
@@ -141,7 +142,7 @@ export function SettingsWindow(): ReactNode {
                 aria-current={candidate.id === section ? "page" : undefined}
                 onClick={() => setSection(candidate.id)}
               >
-                {candidate.label}
+                {titleCaseSettingName(candidate.label)}
               </button>
             </li>
           ))}
@@ -320,7 +321,7 @@ function GeneralSection(props: { view: SettingsView; store: SettingsStore }): Re
         }
       />
 
-      <h2 className="settings-group">this project</h2>
+      <h2 className="settings-group">This Project</h2>
       <Fact label="name" value={view.project.name} />
       <Fact label="root" value={view.project.rootPath} mono />
       <Fact label="project settings" value={view.layerFiles.project} mono />
@@ -334,7 +335,7 @@ function Fact(props: { label: string; value: string; mono?: boolean }): ReactNod
   return (
     <div className="set-row set-row-fact">
       <div className="set-label">
-        <span>{props.label}</span>
+        <span>{titleCaseSettingName(props.label)}</span>
       </div>
       <div className="set-control">
         <span
@@ -374,7 +375,7 @@ function AppearanceSection(): ReactNode {
     <>
       <div className="set-row">
         <div className="set-label">
-          <span>accent</span>
+          <span>Accent</span>
           <p className="set-help">from System Settings. Every selection and focus ring uses it.</p>
         </div>
         <div className="set-control">

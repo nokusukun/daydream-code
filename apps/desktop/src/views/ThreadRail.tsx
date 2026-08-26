@@ -8,13 +8,10 @@
  * runs sort above finished ones for the same reason the old rail did: work
  * blocked on you outranks work that is proceeding fine.
  */
-import { useCallback, useMemo, type ReactNode } from "react";
-import {
-  compareSessionRecency,
-  sessionActivityAt,
-  type SessionRecord,
-} from "@daydream-code/shared";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { sessionActivityAt, type SessionRecord } from "@daydream-code/shared";
 import { useHarness } from "../harness.js";
+import { bridge } from "../bridge.js";
 import { useMaster, clip, lede } from "../master.js";
 import {
   NEW_SESSION_DRAFT,
@@ -23,7 +20,14 @@ import {
   type Draft,
 } from "../drafts.js";
 import { StatusGlyph, fmtAgo, fmtTime, messageText } from "../ui.js";
-import { useSessions } from "../sessions.js";
+import {
+  RAIL_PAGE,
+  isArchived,
+  isLive,
+  railSessions,
+  useSessionActions,
+  useSessions,
+} from "../sessions.js";
 import { useActivities, type Activity } from "../replies.js";
 
 /** The one-line facts under a run's title: model, then what it has spent. */
@@ -44,8 +48,15 @@ export function compact(n: number): string {
 }
 
 export function ThreadRail(): ReactNode {
-  const { selected, select, draft, newSession, drafts: draftStore, modelLabel } =
-    useHarness();
+  const {
+    selected,
+    select,
+    draft,
+    newSession,
+    drafts: draftStore,
+    modelLabel,
+    setOverlay,
+  } = useHarness();
   const { sessions, loading } = useSessions();
   const { entries } = useMaster();
   // What each run did most recently: replies, tool calls, questions and other
@@ -55,19 +66,50 @@ export function ThreadRail(): ReactNode {
   // where it has to show up: a row you owe something to should say so.
   const drafts = useDrafts(draftStore);
 
-  const [live, finished, waiting] = useMemo(() => {
-    const byRecency = [...sessions].sort(compareSessionRecency);
-    const isLive = (s: SessionRecord) =>
-      s.status === "running" || s.status === "waiting";
-    return [
-      [
-        ...byRecency.filter((s) => s.status === "waiting"),
-        ...byRecency.filter((s) => s.status === "running"),
-      ],
-      byRecency.filter((s) => !isLive(s)),
-      byRecency.filter((s) => s.status === "waiting"),
-    ];
-  }, [sessions]);
+  // How far down the finished runs the person has asked to see. Reset is
+  // deliberate on project switch only — paging back up every time a session
+  // finishes would undo the reading position while they are still in it.
+  const [shown, setShown] = useState(RAIL_PAGE);
+  // A rail line rather than a toast: a message about work that did not happen
+  // should not time out before it is read.
+  const { setArchived, remove, failure } = useSessionActions();
+
+  const { live, finished, more, archived } = useMemo(
+    () => railSessions(sessions, { shown }),
+    [sessions, shown],
+  );
+  const waiting = live.filter((s) => s.status === "waiting");
+
+  /**
+   * The platform menu for one run, and whatever it chose.
+   *
+   * Archiving and deleting go straight to the server rather than updating a
+   * local copy first: both come back as stream frames, and an optimistic
+   * removal that the server then refused would leave the rail disagreeing with
+   * the project about which runs exist.
+   */
+  const openMenu = useCallback(
+    async (session: SessionRecord) => {
+      const app = bridge();
+      if (app === undefined) return;
+      const id = session.id as string;
+      const action = await app.showSessionContextMenu({
+        id,
+        name: session.name,
+        archived: isArchived(session),
+        live: isLive(session),
+        current: id === selected,
+      });
+      if (action === null) return;
+      if (action === "open") {
+        select(id);
+        return;
+      }
+      if (action === "delete") await remove(session);
+      else await setArchived(session, action === "archive");
+    },
+    [selected, select, remove, setArchived],
+  );
 
   const row = useCallback(
     (session: SessionRecord) => {
@@ -81,10 +123,11 @@ export function ThreadRail(): ReactNode {
           draft={drafts.get(session.id as string)}
           activity={activities.get(session.id as string)}
           onSelect={select}
+          onMenu={openMenu}
         />
       );
     },
-    [selected, select, drafts, activities, modelLabel],
+    [selected, select, drafts, activities, modelLabel, openMenu],
   );
 
   const last = entries?.[entries.length - 1];
@@ -107,7 +150,7 @@ export function ThreadRail(): ReactNode {
   return (
     <div className="rail">
       <header className="rail-head">
-        thread
+        threads
         <span key={railSummary} className="rail-count sidebar-change">
           {railSummary}
         </span>
@@ -149,7 +192,7 @@ export function ThreadRail(): ReactNode {
         </span>
       </button>
 
-      <div className="rail-label">spawned runs</div>
+      <div className="rail-label">Active Threads</div>
 
       {loading && (
         <div className="runs" aria-busy="true">
@@ -165,7 +208,6 @@ export function ThreadRail(): ReactNode {
           thread at its current state.
         </p>
       )}
-
       {!loading && (sessions.length > 0 || draft || pending.length > 0) && (
         <div className="runs">
           {/* The row outlives the view: an undispatched task you clicked away
@@ -199,7 +241,43 @@ export function ThreadRail(): ReactNode {
             />
           )}
           {finished.map(row)}
+
+          {/* Counted, not just offered: "Show 62 more" says how long the list
+              actually is, which is the fact that decides whether you want it. */}
+          {more > 0 && (
+            <button
+              type="button"
+              className="rail-more"
+              onClick={() => setShown((n) => n + RAIL_PAGE)}
+            >
+              Show {Math.min(more, RAIL_PAGE)} more
+              <span className="rail-more-count">{more} older</span>
+            </button>
+          )}
+
+          {/* A door, not a drawer. An archived run has been taken off this
+              list on purpose, and expanding it back into place here would
+              undo the only thing archiving does. */}
+          {archived.length > 0 && (
+            <>
+              <div className="rail-divider" role="presentation" />
+              <button
+                type="button"
+                className="rail-more"
+                onClick={() => setOverlay("archive")}
+              >
+                Archived…
+                <span className="rail-more-count">{archived.length}</span>
+              </button>
+            </>
+          )}
         </div>
+      )}
+
+      {failure !== null && (
+        <p className="rail-error" role="alert">
+          {failure}
+        </p>
       )}
     </div>
   );
@@ -223,6 +301,7 @@ function RunCard(props: {
   /** Its latest meaningful journal activity, once one has been seen. */
   activity: Activity | undefined;
   onSelect(id: string): void;
+  onMenu(session: SessionRecord): void;
 }): ReactNode {
   const { session, current, model } = props;
   const id = session.id as string;
@@ -237,15 +316,24 @@ function RunCard(props: {
   const age = fmtAgo(sessionActivityAt(session));
   const facts = runFacts(session, model);
 
+  const archived = isArchived(session);
+
   return (
     <button
       type="button"
-      className={`run-card run-${session.status}`}
+      className={`run-card run-${session.status}${archived ? " run-card-archived" : ""}`}
       aria-current={current}
       title={`${session.name} · ${session.status} · ${session.driver}${
-        preview.length > 0 ? `\nunsent draft: ${preview}` : ""
-      }`}
+        archived ? " · archived" : ""
+      }${preview.length > 0 ? `\nunsent draft: ${preview}` : ""}`}
       onClick={() => props.onSelect(id)}
+      onContextMenu={(event) => {
+        // Without a bridge (the browser dev server) let the default menu
+        // through rather than swallowing the event for a menu that cannot open.
+        if (bridge() === undefined) return;
+        event.preventDefault();
+        props.onMenu(session);
+      }}
     >
       <span className="run-card-top">
         <span

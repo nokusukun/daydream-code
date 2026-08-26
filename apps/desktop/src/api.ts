@@ -3,6 +3,7 @@
  * against a base URL + bearer token, so it unit-tests with a fake fetch and
  * could point at a remote core just as well as the local one.
  */
+import type { QuickActionRecord } from "@daydream-code/actions";
 import type { BlobRef } from "@daydream-code/blobs";
 import type { AttachmentInput } from "@daydream-code/session";
 import type { SettingsView, WriteRequest, WriteResult } from "@daydream-code/settings";
@@ -20,6 +21,7 @@ import type {
   ThreadEntry,
 } from "@daydream-code/shared";
 
+export type { QuickActionRecord } from "@daydream-code/actions";
 export type { SettingsView, EntryView, SettingDescriptor, WriteResult } from "@daydream-code/settings";
 export type {
   ChangedFile,
@@ -112,6 +114,12 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /**
+     * The server's own sentence, without the request path in front of it.
+     * `message` is for a log, where knowing which call failed is the point;
+     * this is for a person, who is looking at the thing that failed already.
+     */
+    readonly detail?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -159,16 +167,17 @@ export class ApiClient {
     };
     const response = await this.#fetch(this.#url(path, params), { ...init, headers });
     if (!response.ok) {
-      let detail = "";
+      let detail: string | undefined;
       try {
         const body = (await response.json()) as { error?: string };
-        if (typeof body.error === "string") detail = `: ${body.error}`;
+        if (typeof body.error === "string") detail = body.error;
       } catch {
         // non-JSON error body; status alone will do
       }
       throw new ApiError(
         response.status,
-        `${path} failed (${response.status})${detail}`,
+        `${path} failed (${response.status})${detail !== undefined ? `: ${detail}` : ""}`,
+        detail,
       );
     }
     return (await response.json()) as T;
@@ -240,6 +249,26 @@ export class ApiClient {
   }
 
   /**
+   * Shelve a finished run, or put it back. Rejects with a 409 while the run is
+   * live — the rail refuses to hide work that is still going.
+   */
+  archive(id: string, archived: boolean): Promise<SessionRecord> {
+    return this.#post(`/api/sessions/${encodeURIComponent(id)}/archive`, {
+      archived,
+    });
+  }
+
+  /**
+   * Erase a run and its journal. Returns the record as it last was, so a
+   * caller can name what it just destroyed. 409 while the run is live.
+   */
+  remove(id: string): Promise<SessionRecord> {
+    return this.#request(`/api/sessions/${encodeURIComponent(id)}`, undefined, {
+      method: "DELETE",
+    });
+  }
+
+  /**
    * Settle a blocking question. `answers` maps question id (the question text)
    * to the chosen label; `decline` hands the decision back to the model.
    * Rejects with a 409 when the request is already gone — the shape a late
@@ -299,6 +328,35 @@ export class ApiClient {
   /** Reconcile what is mounted against the layer files, without writing. */
   applySettings(): Promise<WriteResult> {
     return this.#post("/api/settings/apply", {});
+  }
+
+  /**
+   * The project's saved quick actions, oldest first. Read rather than
+   * subscribed: a session can add one at any time, so the toolbar asks when it
+   * opens instead of trusting a copy it fetched at launch.
+   */
+  actions(): Promise<QuickActionRecord[]> {
+    return this.#request("/api/actions");
+  }
+
+  addAction(input: { command: string; label?: string }): Promise<QuickActionRecord> {
+    return this.#post("/api/actions", input);
+  }
+
+  updateAction(
+    id: string,
+    patch: { command?: string; label?: string },
+  ): Promise<QuickActionRecord> {
+    return this.#request(`/api/actions/${encodeURIComponent(id)}`, undefined, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  }
+
+  removeAction(id: string): Promise<{ ok: true }> {
+    return this.#request(`/api/actions/${encodeURIComponent(id)}`, undefined, {
+      method: "DELETE",
+    });
   }
 
   /** Project-row settings; these live in the database, not in a config layer. */

@@ -1,5 +1,6 @@
 {
   "name": "@daydream-code/desktop",
+  "productName": "Daydream Code",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -31,7 +32,8 @@
     "better-sqlite3": "^12.0.0",
     "@daydream-code/routes": "workspace:*",
     "@daydream-code/settings": "workspace:*",
-    "@daydream-code/blobs": "workspace:*"
+    "@daydream-code/blobs": "workspace:*",
+    "@daydream-code/actions": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",

@@ -34,6 +34,7 @@ import { NEW_SESSION_DRAFT, useDraft } from "../drafts.js";
 import { ModelSelector, loadChoice, type ModelChoice } from "../model-selector.js";
 import { compact } from "./ThreadRail.js";
 import { BlobImage } from "./BlobImage.js";
+import { SendIcon, StatusGlyph } from "../ui.js";
 
 /** An upload still in flight, drawn from the local file rather than the store. */
 interface Pending {
@@ -347,7 +348,7 @@ export function DispatchComposer(props: {
   return (
     <Box
       value={draft.text}
-      placeholder="Describe a task — it forks the master thread…"
+      placeholder="Describe a task"
       disabled={false}
       autoFocus={props.autoFocus}
       attachments={draft.attachments}
@@ -363,17 +364,52 @@ export function DispatchComposer(props: {
           <span className="composer-hint">
             <kbd>⌘</kbd> <kbd>return</kbd>
           </span>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={busy || draft.text.trim().length === 0}
+          <SendButton
+            busy={busy}
+            disabled={draft.text.trim().length === 0}
+            label="Dispatch"
+            busyLabel="Dispatching"
             onClick={dispatch}
-          >
-            {busy ? "dispatching" : "dispatch"}
-          </button>
+          />
         </>
       }
     />
+  );
+}
+
+/**
+ * The composer's action, as a mark rather than a word.
+ *
+ * The verb it used to print is the one thing about this button nobody has to
+ * be told: it sits at the end of the box you just typed into, with the ⌘⏎ hint
+ * beside it. What the word was carrying is the *distinction* — dispatching
+ * starts a run, sending steers one — and that survives in the accessible name
+ * and the tooltip, where it is available on demand instead of taking a third
+ * of the footer to say something the placeholder already said.
+ *
+ * In flight it wears the running meter, the same glyph a live run wears
+ * everywhere else in the window, rather than a spinner this app does not
+ * otherwise own.
+ */
+export function SendButton(props: {
+  busy: boolean;
+  disabled: boolean;
+  label: string;
+  busyLabel: string;
+  onClick(): void;
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      className="btn btn-primary btn-icon composer-send"
+      disabled={props.busy || props.disabled}
+      aria-label={props.busy ? `${props.busyLabel}…` : props.label}
+      aria-busy={props.busy}
+      title={props.busy ? `${props.busyLabel}…` : `${props.label} (⌘⏎)`}
+      onClick={props.onClick}
+    >
+      {props.busy ? <StatusGlyph status="running" /> : <SendIcon />}
+    </button>
   );
 }
 
@@ -448,14 +484,13 @@ export function MessageComposer(props: {
           <span className="composer-hint">
             <kbd>⌘</kbd> <kbd>return</kbd>
           </span>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={busy || !sendable}
+          <SendButton
+            busy={busy}
+            disabled={!sendable}
+            label="Send"
+            busyLabel="Sending"
             onClick={send}
-          >
-            {busy ? "sending" : "send"}
-          </button>
+          />
         </>
       }
     />

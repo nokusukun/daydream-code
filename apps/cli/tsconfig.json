@@ -42,6 +42,9 @@
       "path": "../../packages/driver"
     },
     {
+      "path": "../../packages/actions"
+    },
+    {
       "path": "../../packages/tools"
     },
     {

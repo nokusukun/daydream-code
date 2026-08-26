@@ -80,8 +80,8 @@ export function projectFacts(project: ProjectSummary): string[] {
   const stats = project.stats;
   if (stats === null) return [];
   const facts = [stats.sessions === 1 ? "1 session" : `${stats.sessions} sessions`];
-  // `live` is null for every project but the open one, by construction: a
-  // closed project's `running` rows may be a crashed process's residue.
+  // `live` is null unless a core for the project is retained by this app: an
+  // unopened project's `running` rows may be a crashed process's residue.
   if (stats.live !== null && stats.live > 0) facts.push(`${stats.live} live`);
   return facts;
 }

@@ -105,7 +105,9 @@ describe("groupEvents", () => {
     expect(items.map((i) => i.kind)).toEqual(["event", "event", "event", "event", "event"]);
   });
 
-  it("a trailing open run still groups (live streaming)", () => {
+  it("a trailing open run groups once the session is no longer live", () => {
+    // A session that died mid-call leaves a dangling call behind, and that
+    // call is not running: it folds like any other.
     const items = groupEvents([
       ev("tool_call", { name: "bash" }),
       ev("tool_result", { name: "bash" }),
@@ -113,6 +115,118 @@ describe("groupEvents", () => {
     ]);
     expect(items.length).toBe(1);
     expect(items[0]!.kind).toBe("tools");
+  });
+
+  it("keeps the call a live run is inside out of the fold", () => {
+    const open = ev("tool_call", { name: "grep", id: "t3" });
+    const items = groupEvents(
+      [
+        ev("tool_call", { name: "bash", id: "t1" }),
+        ev("tool_result", { toolCallId: "t1" }),
+        ev("tool_call", { name: "write", id: "t2" }),
+        ev("tool_result", { toolCallId: "t2" }),
+        open,
+      ],
+      { live: true },
+    );
+    expect(items.map((i) => i.kind)).toEqual(["tools", "event"]);
+    const group = items[0]!;
+    expect(group.kind === "tools" && group.events.length).toBe(4);
+    expect(items[1]).toEqual({ kind: "event", event: open, running: true });
+  });
+
+  it("a live run whose calls have all returned folds whole", () => {
+    const items = groupEvents(
+      [
+        ev("tool_call", { name: "bash", id: "t1" }),
+        ev("tool_result", { toolCallId: "t1" }),
+        ev("tool_call", { name: "bash", id: "t2" }),
+        ev("tool_result", { toolCallId: "t2" }),
+      ],
+      { live: true },
+    );
+    expect(items.map((i) => i.kind)).toEqual(["tools"]);
+  });
+
+  /*
+   * A parallel batch is journaled call, call, call and then answered in
+   * whatever order the calls finish, so "the one running" is a set, and
+   * results arrive out of order.
+   */
+  it("unfolds every call still in flight, matching results by id", () => {
+    const first = ev("tool_call", { name: "a", id: "t1" });
+    const third = ev("tool_call", { name: "c", id: "t3" });
+    const items = groupEvents(
+      [
+        ev("tool_call", { name: "x", id: "t0" }),
+        ev("tool_result", { toolCallId: "t0" }),
+        first,
+        ev("tool_call", { name: "b", id: "t2" }),
+        third,
+        ev("tool_result", { toolCallId: "t2" }),
+      ],
+      { live: true },
+    );
+    expect(items.map((i) => i.kind)).toEqual(["tools", "event", "event"]);
+    expect(items[1]).toEqual({ kind: "event", event: first, running: true });
+    expect(items[2]).toEqual({ kind: "event", event: third, running: true });
+  });
+
+  /*
+   * Some drivers journal a bare result with no id. Pairing only by id would
+   * report every one of their calls as still running.
+   */
+  it("pairs id-less results with the oldest open call", () => {
+    const items = groupEvents(
+      [
+        ev("tool_call", { name: "a" }),
+        ev("tool_result", { name: "a" }),
+        ev("tool_call", { name: "b" }),
+        ev("tool_result", { name: "b" }),
+      ],
+      { live: true },
+    );
+    expect(items.map((i) => i.kind)).toEqual(["tools"]);
+  });
+
+  it("only the run at the end of the feed can hold a running call", () => {
+    const items = groupEvents(
+      [
+        ev("tool_call", { name: "a", id: "t1" }),
+        ev("tool_call", { name: "b", id: "t2" }),
+        ev("tool_result", { toolCallId: "t2" }),
+        // A reply proves t1 returned, whatever the journal shows.
+        ev("turn", { text: "done" }),
+      ],
+      { live: true },
+    );
+    expect(items.map((i) => i.kind)).toEqual(["tools", "event"]);
+  });
+
+  it("a lone call in flight stays inline rather than becoming a group of one", () => {
+    const open = ev("tool_call", { name: "bash", id: "t1" });
+    expect(groupEvents([open], { live: true })).toEqual([
+      { kind: "event", event: open, running: true },
+    ]);
+  });
+
+  it("keeps an accepted user message visible until the driver takes it", () => {
+    const queued = ev("user_message_queued", {
+      deliveryId: "msg_1",
+      text: "also check the retry path",
+    });
+    expect(groupEvents([queued])).toEqual([{ kind: "event", event: queued }]);
+
+    const injected = ev("user_injected", {
+      deliveryId: "msg_1",
+      kind: "user",
+      text: "also check the retry path",
+    });
+    // Acceptance bookkeeping is replaced by the normal durable You row,
+    // rather than rendering the same message twice.
+    expect(groupEvents([queued, injected])).toEqual([
+      { kind: "event", event: injected },
+    ]);
   });
 
   it("tool_error joins the run", () => {
@@ -128,6 +242,46 @@ describe("groupEvents", () => {
 });
 
 describe("Event", () => {
+  it("labels an accepted message as pending", () => {
+    const html = renderToStaticMarkup(
+      createElement(Event, {
+        event: ev("user_message_queued", {
+          deliveryId: "msg_1",
+          text: "one more thing",
+        }),
+        names: new Map<string, string>(),
+        changed: new Map(),
+      }),
+    );
+
+    expect(html).toContain("entry-pending");
+    expect(html).toContain("entry-mark-you");
+    expect(html).toContain("pending");
+    expect(html).toContain("one more thing");
+  });
+
+  it("marks a call still in flight", () => {
+    const call = ev("tool_call", { name: "Bash", args: { command: "pnpm test" } });
+    const live = renderToStaticMarkup(
+      createElement(Event, {
+        event: call,
+        names: new Map<string, string>(),
+        changed: new Map(),
+        running: true,
+      }),
+    );
+    const settled = renderToStaticMarkup(
+      createElement(Event, {
+        event: call,
+        names: new Map<string, string>(),
+        changed: new Map(),
+      }),
+    );
+
+    expect(live).toContain("tool-running");
+    expect(settled).not.toContain("tool-running");
+  });
+
   it("renders the opening task as a You message before session metadata", () => {
     const html = renderToStaticMarkup(
       createElement(Event, {

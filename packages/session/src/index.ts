@@ -44,6 +44,13 @@ declare module "@daydream-code/kernel" {
     ): void;
     /** @mode emit — session reached a terminal status, after final write-back row update. */
     "session/ended"(session: SessionRecord): void;
+    /**
+     * @mode emit — a session and its journal were purged, after the rows are
+     * gone. Carries the record as it last existed, because by the time this
+     * fires there is nothing left to look up: a listener that only got an id
+     * could not name the thing that vanished.
+     */
+    "session/deleted"(session: SessionRecord): void;
   }
 }
 
@@ -130,6 +137,23 @@ export abstract class Sessions extends Service {
     options?: { kind?: Injection["kind"] },
   ): Promise<DeliveryOutcome>;
   abstract stop(id: SessionId): Promise<void>;
+  /**
+   * Shelve a finished run, or put it back.
+   *
+   * Live sessions are refused rather than silently allowed: the rail exists so
+   * that work in flight is visible, and a shelf that can swallow a running run
+   * is how a session ends up forgotten while it is still spending money.
+   */
+  abstract setArchived(id: SessionId, archived: boolean): SessionRecord;
+  /**
+   * Erase a session: its row, its thread, and its journal events.
+   *
+   * Deliberately a purge rather than an unlink. A session whose transcript
+   * survived in the journal would still answer `search_journal` while
+   * `read_session` 404s on it, which is a worse state than either keeping it
+   * or removing it. Refuses a live session — stop it first.
+   */
+  abstract remove(id: SessionId): SessionRecord;
   abstract get(id: SessionId): SessionRecord | undefined;
   /**
    * Look a session up by id or by human-readable name. Every entry point that

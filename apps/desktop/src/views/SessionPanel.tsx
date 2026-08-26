@@ -38,6 +38,7 @@ import {
 } from "../tool-view.js";
 import { useWorkspace } from "../workspace.js";
 import type { ChangedFile } from "../api.js";
+import { openTextContextMenu } from "../text-context.js";
 
 export function SessionPanel(props: { id: string }): ReactNode {
   const { id } = props;
@@ -99,7 +100,13 @@ export function SessionPanel(props: { id: string }): ReactNode {
     if (feed !== null && pinned.current) feed.scrollTop = feed.scrollHeight;
   }, [events, view]);
 
-  const grouped = useMemo(() => groupEvents(events ?? []), [events]);
+  const running = session?.status === "running";
+  // The fold takes `running` because it treats the call in flight differently,
+  // and only a live session has one.
+  const grouped = useMemo(
+    () => groupEvents(events ?? [], { live: running }),
+    [events, running],
+  );
   // Claude's tool results carry the call id and no name, so the name has to
   // come from the call that opened it.
   const names = useMemo(() => toolNames(events ?? []), [events]);
@@ -120,7 +127,6 @@ export function SessionPanel(props: { id: string }): ReactNode {
     }
     return null;
   }, [events]);
-  const running = session?.status === "running";
   // Derived from the transcript, not from a flag: the journal is already
   // streamed here, so a client that reconnects mid-block rebuilds the prompt
   // from what it just loaded. A `cancelled` settle retires it, which is how a
@@ -160,7 +166,12 @@ export function SessionPanel(props: { id: string }): ReactNode {
       </div>
 
       {view === "thread" && (
-        <div className="transcript" ref={feedRef} onScroll={onScroll}>
+        <div
+          className="transcript"
+          ref={feedRef}
+          onScroll={onScroll}
+          onContextMenu={openTextContextMenu}
+        >
           <div className="column">
             {events === null && <TranscriptSkeleton />}
             {events !== null && events.length === 0 && (
@@ -179,6 +190,7 @@ export function SessionPanel(props: { id: string }): ReactNode {
                   event={item.event}
                   names={names}
                   changed={changed}
+                  running={item.running === true}
                 />
               ) : (
                 <ToolGroup
@@ -191,7 +203,12 @@ export function SessionPanel(props: { id: string }): ReactNode {
             )}
             {running && (
               <p className="live-hint" aria-live="polite">
-                <i /> <i /> <i /> working
+                <i />
+                <i />
+                <i />
+                {/* The label is for screen readers only: the dots carry the
+                    meaning visually, and the word next to them read as noise. */}
+                <span className="live-hint-label">working</span>
               </p>
             )}
           </div>
@@ -366,6 +383,7 @@ export function drawsNothing(event: JournalEvent): boolean {
       return blank;
     // A captionless screenshot is a message. Only one carrying neither text
     // nor image is nothing.
+    case "user_message_queued":
     case "user_injected":
       return blank && imageParts(payload.images).length === 0;
     default:
@@ -374,8 +392,37 @@ export function drawsNothing(event: JournalEvent): boolean {
 }
 
 type Item =
-  | { kind: "event"; event: JournalEvent }
+  | { kind: "event"; event: JournalEvent; running?: true }
   | { kind: "tools"; key: number; events: JournalEvent[] };
+
+/** The id a call and its result agree on, or null when the driver ships none. */
+function callIdOf(event: JournalEvent): string | null {
+  const payload = payloadOf(event);
+  const id = payload.toolCallId ?? payload.id;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+/**
+ * The calls a run has opened and not closed yet, in journal order.
+ *
+ * Pairing is by id where there is one — Claude's result blocks carry the call
+ * id and nothing else — and FIFO otherwise, because some drivers journal a
+ * bare result with no id at all. Both paths are needed: matching only by id
+ * would leave every call of an id-less driver looking unfinished forever.
+ */
+function openCalls(run: readonly JournalEvent[]): JournalEvent[] {
+  const open: JournalEvent[] = [];
+  for (const event of run) {
+    if (event.type === "tool_call") {
+      open.push(event);
+      continue;
+    }
+    const id = callIdOf(event);
+    const at = id === null ? 0 : open.findIndex((call) => callIdOf(call) === id);
+    if (at >= 0) open.splice(at, 1);
+  }
+  return open;
+}
 
 /**
  * Consecutive tool traffic collapses into one row; anything else breaks the
@@ -385,29 +432,57 @@ type Item =
  * The count decides here rather than in the renderer so that "what groups" is
  * one pure function with tests, instead of a rule the feed re-derives while
  * drawing.
+ *
+ * `live` exempts the calls the session is *inside right now* from the fold.
+ * Watching a running session is the one case where the collapsed row answers
+ * the wrong question: it says what already happened, and folding away the call
+ * in flight hides the only line that says what is happening. It takes a flag
+ * rather than inferring liveness from a dangling call, because a session that
+ * died mid-call leaves one behind and that call is not running.
  */
-export function groupEvents(events: readonly JournalEvent[]): Item[] {
+export function groupEvents(
+  events: readonly JournalEvent[],
+  options: { live?: boolean } = {},
+): Item[] {
   const out: Item[] = [];
   let run: JournalEvent[] = [];
+  const delivered = new Set(
+    events
+      .filter((event) => event.type === "user_injected")
+      .map((event) => payloadOf(event).deliveryId)
+      .filter((id): id is string => typeof id === "string"),
+  );
 
-  const flush = (): void => {
+  // `tail` is the run at the end of the feed — the only one that can still
+  // have a call in flight, since anything drawn after it proves the call
+  // returned.
+  const flush = (tail: boolean): void => {
     if (run.length === 0) return;
-    const calls = run.filter((event) => event.type === "tool_call").length;
-    if (calls >= 2) out.push({ kind: "tools", key: run[0]!.id, events: run });
-    else for (const event of run) out.push({ kind: "event", event });
+    const inFlight = tail && options.live === true ? openCalls(run) : [];
+    const settled = inFlight.length === 0 ? run : run.filter((e) => !inFlight.includes(e));
+    const calls = settled.filter((event) => event.type === "tool_call").length;
+    if (calls >= 2) out.push({ kind: "tools", key: settled[0]!.id, events: settled });
+    else for (const event of settled) out.push({ kind: "event", event });
+    for (const event of inFlight) out.push({ kind: "event", event, running: true });
     run = [];
   };
 
   for (const event of events) {
+    if (
+      event.type === "user_message_queued" &&
+      delivered.has(String(payloadOf(event).deliveryId ?? ""))
+    ) {
+      continue;
+    }
     if (drawsNothing(event)) continue;
     if (TOOL_TYPES.has(event.type)) {
       run.push(event);
       continue;
     }
-    flush();
+    flush(false);
     out.push({ kind: "event", event });
   }
-  flush();
+  flush(true);
   return out;
 }
 
@@ -533,6 +608,8 @@ export function Event(props: {
   event: JournalEvent;
   names: ReadonlyMap<string, string>;
   changed: ReadonlyMap<string, ChangedFile>;
+  /** This call is the one the run is inside right now. */
+  running?: boolean;
 }): ReactNode {
   const { event } = props;
   const payload = payloadOf(event);
@@ -582,6 +659,25 @@ export function Event(props: {
         </Row>
       );
     }
+    case "user_message_queued": {
+      const text = short(payload.text ?? "");
+      return (
+        <Row
+          kind="you"
+          label="you"
+          time={fmtTime(event.ts)}
+          meta={<span className="entry-pending-state">pending</span>}
+          className="entry-pending"
+        >
+          {text.trim().length > 0 && (
+            <div className="entry-prose">
+              <Markdown text={text} />
+            </div>
+          )}
+          <Attachments images={images} />
+        </Row>
+      );
+    }
     case "user_injected": {
       const text = short(payload.text ?? "");
       return (
@@ -623,7 +719,13 @@ export function Event(props: {
     case "tool_call": {
       const wrote = writtenPath(event);
       if (wrote !== null) return <Patch path={wrote} changed={props.changed} />;
-      return <Tool card={describeTool(event.type, event.payload, props.names)} arrow="→" />;
+      return (
+        <Tool
+          card={describeTool(event.type, event.payload, props.names)}
+          arrow="→"
+          running={props.running === true}
+        />
+      );
     }
     case "tool_result":
       return <Tool card={describeTool(event.type, event.payload, props.names)} arrow="←" />;
@@ -732,6 +834,7 @@ function Tool(props: {
   arrow: string;
   error?: boolean;
   meta?: boolean;
+  running?: boolean;
 }): ReactNode {
   const [open, setOpen] = useState(false);
   const { card } = props;
@@ -745,6 +848,7 @@ function Tool(props: {
         `tool${open ? " is-open" : ""}` +
         (failed ? " tool-error" : "") +
         (props.meta === true ? " tool-meta" : "") +
+        (props.running === true ? " tool-running" : "") +
         (card.shell ? " tool-shell" : "")
       }
     >

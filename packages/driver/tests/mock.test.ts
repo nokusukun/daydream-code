@@ -125,7 +125,12 @@ describe("mock driver", () => {
       width: 8,
       height: 4,
     };
-    injections.push({ kind: "user", text: "look at this", images: [image] });
+    injections.push({
+      kind: "user",
+      text: "look at this",
+      deliveryId: "msg_accepted",
+      images: [image],
+    });
 
     await driver.run(input);
 
@@ -134,7 +139,12 @@ describe("mock driver", () => {
     // and show nothing.
     expect(events).toContainEqual({
       type: "user_injected",
-      payload: { kind: "user", text: "look at this", images: [image] },
+      payload: {
+        kind: "user",
+        text: "look at this",
+        deliveryId: "msg_accepted",
+        images: [image],
+      },
     });
   });
 

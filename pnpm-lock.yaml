@@ -23,6 +23,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@daydream-code/actions':
+        specifier: workspace:*
+        version: link:../../packages/actions
       '@daydream-code/boot':
         specifier: workspace:*
         version: link:../../packages/boot
@@ -80,6 +83,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@daydream-code/actions':
+        specifier: workspace:*
+        version: link:../../packages/actions
       '@daydream-code/blobs':
         specifier: workspace:*
         version: link:../../packages/blobs
@@ -165,6 +171,27 @@ importers:
       vite:
         specifier: ^6.3.0
         version: 6.4.3(@types/node@24.13.3)(yaml@2.9.0)
+
+  packages/actions:
+    dependencies:
+      '@daydream-code/kernel':
+        specifier: workspace:*
+        version: link:../kernel
+      '@daydream-code/routes':
+        specifier: workspace:*
+        version: link:../routes
+      '@daydream-code/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@daydream-code/store':
+        specifier: workspace:*
+        version: link:../store
+      '@daydream-code/tools':
+        specifier: workspace:*
+        version: link:../tools
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
 
   packages/asks:
     dependencies:

@@ -62,6 +62,7 @@ function rowToRecord(row: SessionRow): SessionRecord {
     endedAt: row.endedAt,
     summary: row.summary,
     tldr: row.tldr,
+    archivedAt: row.archivedAt,
     usage: {
       tokensIn: row.tokensIn,
       tokensOut: row.tokensOut,
@@ -711,17 +712,36 @@ export default class SessionRunner extends Sessions {
         return { record: retitled, done: active.done };
       }
       const images = this.#ingest(attachments);
-      active.injections.push({
+      const deliveryId = newId("msg");
+      const injection: Injection = {
         kind: "user",
         text: message,
+        deliveryId,
         ...(images.length > 0 ? { images } : {}),
+      };
+      // Acceptance and consumption are different moments. A live driver only
+      // reads this at its next injection boundary, which can be minutes away;
+      // journal the accepted message now so every client can render it as
+      // pending (and keep doing so through a reload).
+      this.ctx.journal.append({
+        sessionId: record.id,
+        type: "user_message_queued",
+        payload: {
+          deliveryId,
+          text: message,
+          ...(images.length > 0 ? { images } : {}),
+        },
       });
+      active.injections.push(injection);
       this.ctx.emit("session/dispatched", retitled, kind, message);
       return { record: retitled, done: active.done };
     }
     this.ctx.store.db
       .update(schema.sessions)
-      .set({ status: "running", endedAt: null })
+      // Reviving un-shelves. A run that was archived and is now working again
+      // has to be back on the rail: the alternative is a session spending
+      // tokens somewhere the person cannot see it.
+      .set({ status: "running", endedAt: null, archivedAt: null })
       .where(eq(schema.sessions.id, id))
       .run();
     const revived = this.get(id)!;
@@ -803,6 +823,77 @@ export default class SessionRunner extends Sessions {
     // interfaces when an ambient Bun types package leaks into the program.
     (active.abort as unknown as { abort(): void }).abort();
     await active.done.catch(() => undefined);
+  }
+
+  setArchived(id: SessionId, archived: boolean): SessionRecord {
+    const record = this.#requireIdle(
+      id,
+      archived ? "archive" : "unarchive",
+    );
+    const archivedAt = archived ? nowIso() : null;
+    this.ctx.store.db
+      .update(schema.sessions)
+      .set({ archivedAt })
+      .where(eq(schema.sessions.id, id))
+      .run();
+    const updated: SessionRecord = { ...record, archivedAt };
+    // Row first, then broadcast: nothing may observe the shelf state before it
+    // is durable.
+    this.ctx.emit("session/updated", updated);
+    return updated;
+  }
+
+  /**
+   * Purge a session: journal events, thread, thread entries, row.
+   *
+   * The order is load-bearing. Migration v4 scopes `journal_no_delete` to
+   * journal rows whose session still exists, so the `sessions` row has to go
+   * first or every event delete aborts. One transaction, so a failure part-way
+   * cannot leave a session whose transcript is half gone.
+   */
+  remove(id: SessionId): SessionRecord {
+    const record = this.#requireIdle(id, "delete");
+    this.ctx.store.db.transaction((tx) => {
+      tx.delete(schema.sessions).where(eq(schema.sessions.id, id)).run();
+      tx
+        .delete(schema.journalEvents)
+        .where(eq(schema.journalEvents.sessionId, id))
+        .run();
+      // The run's own forked thread. Master-thread entries *about* the session
+      // are not touched: they are the project's memory, every later fork was
+      // cut from that history, and rewriting it is the thing compaction is
+      // copy-on-write to avoid.
+      tx
+        .delete(schema.threadEntries)
+        .where(eq(schema.threadEntries.threadId, record.threadId))
+        .run();
+      tx.delete(schema.threads).where(eq(schema.threads.id, record.threadId)).run();
+      tx
+        .delete(schema.settings)
+        .where(eq(schema.settings.key, this.#resumeKey(id)))
+        .run();
+    });
+    this.ctx.emit("session/deleted", record);
+    return record;
+  }
+
+  /**
+   * The record, or a throw naming why this session cannot be shelved or erased.
+   *
+   * Both callers refuse live sessions for the same reason: a running driver
+   * holds this row and will write to it again. Archiving one hides work that is
+   * still spending; deleting one races a process that is about to re-insert
+   * journal events under an id that no longer exists.
+   */
+  #requireIdle(id: SessionId, verb: string): SessionRecord {
+    const record = this.get(id);
+    if (record === undefined) throw new Error(`unknown session: ${id}`);
+    if (LIVE_STATUSES.includes(record.status) || this.#active.has(id)) {
+      throw new Error(
+        `cannot ${verb} ${record.name} while it is ${record.status}; stop it first`,
+      );
+    }
+    return record;
   }
 
   #resumeKey(id: string): string {

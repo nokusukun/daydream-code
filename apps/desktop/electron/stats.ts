@@ -6,13 +6,12 @@
  * `<root>/.daydream-code/store.sqlite`, so this opens each one read-only and
  * asks it two questions.
  *
- * One rule governs what comes back: **a closed project may not report live
- * state.** Boot repair (`session/runner.ts`) only runs when a project's core
- * starts, so a project nobody has opened since a crash can hold sessions still
- * marked `running` forever. Counting them would put a number on screen that is
- * false and unfalsifiable. `live` is therefore `null` for every project except
- * the one whose core is actually running, and the renderer has nothing to
- * render rather than a stale number to hedge.
+ * One rule governs what comes back: **a project without a retained core may not
+ * report live state.** Boot repair (`session/runner.ts`) only runs when a
+ * project's core starts, so a project nobody has opened since a crash can hold
+ * sessions still marked `running` forever. Counting them would put a number on
+ * screen that is false and unfalsifiable. `live` is therefore `null` unless a
+ * core for that project is alive in this Electron process.
  *
  * Total sessions and last activity are durable facts: they cannot go stale,
  * because nothing about them depends on a process being alive.
@@ -80,7 +79,7 @@ export interface ProjectStats {
  * Read one project's stats, or null if the store cannot be read at all.
  *
  * `live` is populated only when `trustLive` is set, which the caller may do
- * only for the project whose core it is currently running.
+ * only for a project whose core it is currently retaining.
  */
 export function readProjectStats(
   rootPath: string,
@@ -155,7 +154,7 @@ function asCount(value: unknown): number {
 export interface ProjectSummary extends RegistryEntry {
   /** False when the folder is gone: the row still lists, but cannot be opened. */
   exists: boolean;
-  /** True for the project whose core is running in this process. */
+  /** True for the project currently shown in the workspace. */
   active: boolean;
   /** Null when the store is absent or unreadable. */
   stats: ProjectStats | null;
@@ -168,6 +167,9 @@ export interface ProjectSummary extends RegistryEntry {
 export function summarizeProjects(
   entries: readonly RegistryEntry[],
   activeRootPath: string | null,
+  liveRootPaths: ReadonlySet<string> = new Set(
+    activeRootPath === null ? [] : [activeRootPath],
+  ),
 ): ProjectSummary[] {
   return entries.map((entry) => {
     const active = entry.rootPath === activeRootPath;
@@ -176,7 +178,9 @@ export function summarizeProjects(
       ...entry,
       exists,
       active,
-      stats: exists ? readProjectStats(entry.rootPath, active) : null,
+      stats: exists
+        ? readProjectStats(entry.rootPath, liveRootPaths.has(entry.rootPath))
+        : null,
     };
   });
 }

@@ -8,6 +8,10 @@
  * System is what a fresh install gets. Accent and vibrancy have no override:
  * they are the OS's to decide, and there is nothing to gain by disagreeing.
  *
+ * The choice is pushed back to the main process as well as written to the
+ * document: the window's vibrancy material is native, and it follows the
+ * window's appearance rather than anything CSS says.
+ *
  * Outside Electron there is no bridge, so we leave `data-theme` unset and let
  * the `prefers-color-scheme` fallback in styles.css take over.
  */
@@ -106,6 +110,16 @@ export function useAppearance(): ThemeState {
   useEffect(() => {
     document.documentElement.dataset.theme = resolved;
   }, [resolved]);
+
+  // The document is only half the window. The vibrancy material behind it is
+  // drawn by the window server from the window's native appearance, so a theme
+  // the renderer keeps to itself leaves a light material under dark CSS —
+  // invisible while every surface was opaque, and the whole page once they are
+  // not. `choice`, not `resolved`: "system" has to stay a live subscription
+  // rather than being frozen to whatever the OS happened to be at the time.
+  useEffect(() => {
+    void bridge()?.setThemeSource?.(choice);
+  }, [choice]);
 
   const set = useCallback((next: ThemeChoice) => {
     setChoice(next);

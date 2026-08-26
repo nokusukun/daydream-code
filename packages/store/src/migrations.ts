@@ -231,6 +231,70 @@ export const migrations: readonly Migration[] = [
         ON sessions (project_id, name);
     `);
   },
+
+  // v4 — archiving, and the narrow exemption that lets a run be deleted.
+  //
+  // `archived_at` is a shelf: a finished run the person is done looking at
+  // leaves the rail without leaving the project. Nullable, so every existing
+  // row backfills to "not archived" without a rebuild.
+  //
+  // The trigger change is the part worth reading. `journal_no_delete` used to
+  // abort unconditionally, which made "delete this run" unimplementable at the
+  // storage layer — and a Delete that could only unlink the `sessions` row
+  // would leave the transcript in `journal.search` and break `read_session`,
+  // so the harness would keep serving a run the person had deleted.
+  //
+  // What the append-only rule protects is history being *rewritten* underneath
+  // a reader: an event edited, or a prefix trimmed, while something downstream
+  // still points at it. Reaping the events of a session that no longer exists
+  // is a different act. So immutability is now scoped to exactly that claim —
+  // a journal row is untouchable for as long as its session row exists — and a
+  // purge deletes the `sessions` row first, inside one transaction. UPDATE
+  // stays absolutely forbidden: there is no such thing as a legitimate edit.
+  `
+  ALTER TABLE sessions ADD COLUMN archived_at TEXT;
+  CREATE INDEX IF NOT EXISTS sessions_project_archived
+    ON sessions (project_id, archived_at);
+
+  DROP TRIGGER IF EXISTS journal_no_delete;
+  CREATE TRIGGER journal_no_delete
+  BEFORE DELETE ON journal_events
+  WHEN EXISTS (SELECT 1 FROM sessions WHERE id = OLD.session_id)
+  BEGIN
+    SELECT RAISE(ABORT, 'journal is append-only');
+  END;
+  `,
+
+  // v5 — quick actions: the named shell lines the desktop toolbar runs at the
+  // project root.
+  //
+  // These started in the renderer's localStorage, which was right while a
+  // person was the only author. A session is one now — the agent can offer
+  // "run the dev server" as a row you click rather than a command you copy —
+  // and a harness tool runs in the core, which has no window and no
+  // localStorage to write to. Shared authorship is what moves them into the
+  // store.
+  //
+  // Per project, because that is the scope the table has: an action worth
+  // saving names this repo's dev server, not every repo's. `source` records
+  // who added it, so a row the agent wrote can say so rather than appearing in
+  // the person's own list indistinguishable from one they typed. The unique
+  // index makes "add the same command twice" a no-op at the storage layer
+  // instead of a rule each caller remembers.
+  `
+  CREATE TABLE IF NOT EXISTS quick_actions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    command TEXT NOT NULL,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS quick_actions_project
+    ON quick_actions (project_id, created_at);
+  CREATE UNIQUE INDEX IF NOT EXISTS quick_actions_project_command
+    ON quick_actions (project_id, command);
+  `,
 ];
 
 /** Bring the database up to the current schema version. Safe to call on every open. */

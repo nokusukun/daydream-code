@@ -87,6 +87,18 @@ describe("JournalSqlite", () => {
   it("rejects UPDATE and DELETE via the append-only triggers", async () => {
     const { journal, store } = await makeJournal();
     journal.append({ sessionId: s1, type: "turn", payload: "x" });
+    // The DELETE trigger is scoped to events whose session still exists, so
+    // the session row has to be here for this to test anything. Every event a
+    // real run writes has one; the only rows without are orphans left by a
+    // purge, which is the case migration v4 deliberately allows.
+    store.sqlite
+      .prepare(
+        `INSERT INTO sessions (id, project_id, thread_id, name, title, task,
+           driver, status, started_at)
+         VALUES (?, 'proj_1', 'thr_1', 'run-a', 'Run A', 'run a', 'mock',
+           'running', '2026-01-01')`,
+      )
+      .run(s1);
 
     expect(() =>
       store.sqlite.prepare("UPDATE journal_events SET type = 'edited'").run(),

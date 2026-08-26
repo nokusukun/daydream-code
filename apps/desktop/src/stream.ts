@@ -9,7 +9,8 @@ export type StreamFrame =
   | { kind: "hello"; lastEventId: number }
   | { kind: "journal"; event: JournalEvent }
   | { kind: "thread"; entry: ThreadEntry }
-  | { kind: "session"; session: SessionRecord };
+  | { kind: "session"; session: SessionRecord }
+  | { kind: "session-deleted"; id: string };
 
 export type StreamStatus = "connecting" | "open" | "closed";
 

@@ -53,6 +53,11 @@ export interface ResolvedImage {
 export interface Injection {
   kind: "user" | "master_update" | "ask" | "message";
   text: string;
+  /**
+   * Correlates a user message accepted mid-run with the point where a driver
+   * actually takes it. Harness-authored injections do not need one.
+   */
+  deliveryId?: string;
   /** Images attached to this message, resolved through `ctx.blobs`. */
   images?: ImagePart[];
 }
@@ -70,6 +75,9 @@ export function injectedPayload(injection: Injection): Record<string, unknown> {
   return {
     kind: injection.kind,
     text: injection.text,
+    ...(injection.deliveryId !== undefined
+      ? { deliveryId: injection.deliveryId }
+      : {}),
     ...(injection.images !== undefined && injection.images.length > 0
       ? { images: injection.images }
       : {}),

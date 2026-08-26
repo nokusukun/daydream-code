@@ -19,11 +19,12 @@ import {
 } from "react";
 import { ApiClient, type DriverCatalogEntry } from "./api.js";
 import { DraftStore } from "./drafts.js";
+import { QuickActionStore } from "./quick-actions.js";
 import { labelForModel, type ModelLabel } from "./model-label.js";
 import { connectStream, type StreamFrame, type StreamStatus } from "./stream.js";
 import type { ConnectionInfo } from "./bridge.js";
 
-export type Overlay = null | "palette" | "fibers";
+export type Overlay = null | "palette" | "fibers" | "archive";
 
 /**
  * Which half of the window you are in. `agent` is the harness — threads,
@@ -49,6 +50,12 @@ export interface Harness {
    * it. Scoped to the open project and written through to localStorage.
    */
   drafts: DraftStore;
+  /**
+   * Custom toolbar actions. Not scoped to the project, unlike drafts: these
+   * are habits about how you work, and they run against whichever project is
+   * open, so one list serves all of them.
+   */
+  quickActions: QuickActionStore;
   /** Bumps on every `hello` frame — views refetch their lists on change. */
   resyncTick: number;
   wsStatus: StreamStatus;
@@ -106,6 +113,8 @@ export function useHarness(): Harness {
 
 export function HarnessProvider(props: {
   connection: ConnectionInfo;
+  /** Session selected by a cross-project activity-menu jump. */
+  initialSelected?: string | null;
   children: ReactNode;
 }): ReactNode {
   const { connection } = props;
@@ -131,10 +140,16 @@ export function HarnessProvider(props: {
     };
   }, [drafts]);
 
+  // One store per connection: the list is the project's now, so switching
+  // projects has to switch lists rather than carry one across.
+  const quickActions = useMemo(() => new QuickActionStore(api), [api]);
+
   const listeners = useRef(new Set<(frame: StreamFrame) => void>());
   const [resyncTick, setResyncTick] = useState(0);
   const [wsStatus, setWsStatus] = useState<StreamStatus>("connecting");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(
+    props.initialSelected ?? null,
+  );
   const [mode, setMode] = useState<Mode>("agent");
   const [view, setView] = useState<PanelView>("thread");
   const [sidebar, setSidebar] = useState(true);
@@ -164,7 +179,7 @@ export function HarnessProvider(props: {
   );
 
   useEffect(() => {
-    setSelected(null);
+    setSelected(props.initialSelected ?? null);
     setDraft(false);
     setOverlay(null);
     // A new connection is a new project: its paths mean nothing here.
@@ -178,7 +193,7 @@ export function HarnessProvider(props: {
       },
       onStatus: setWsStatus,
     });
-  }, [api]);
+  }, [api, props.initialSelected]);
 
   const subscribe = useCallback((listener: (frame: StreamFrame) => void) => {
     listeners.current.add(listener);
@@ -234,6 +249,7 @@ export function HarnessProvider(props: {
       api,
       connection,
       drafts,
+      quickActions,
       subscribe,
       resyncTick,
       wsStatus,
@@ -260,6 +276,7 @@ export function HarnessProvider(props: {
       api,
       connection,
       drafts,
+      quickActions,
       subscribe,
       resyncTick,
       wsStatus,

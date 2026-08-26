@@ -9,7 +9,7 @@
  * next to a 250px run list next to a transcript is three columns none of which
  * is wide enough to read.
  */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { bridge, connectionFromQuery, type ConnectionInfo } from "./bridge.js";
 import { useAppearance, type ThemeState } from "./appearance.js";
 import { HarnessProvider, useHarness, type Mode } from "./harness.js";
@@ -23,12 +23,22 @@ import { MasterPanel } from "./views/MasterPanel.js";
 import { SessionPanel } from "./views/SessionPanel.js";
 import { CodeView } from "./views/CodeView.js";
 import { ActivityMenu } from "./views/ActivityMenu.js";
+import { ProjectFanoutProvider } from "./project-fanout.js";
 import { AppMenu } from "./views/AppMenu.js";
 import { CommandPalette } from "./views/CommandPalette.js";
+import { QuickActions } from "./views/QuickActions.js";
 import { FibersSheet } from "./views/FibersSheet.js";
+import { ArchiveSheet } from "./views/ArchiveSheet.js";
 
 export function App(): ReactNode {
-  const [connection, setConnection] = useState<ConnectionInfo | null>(null);
+  const [opened, setOpened] = useState<{
+    connection: ConnectionInfo;
+    initialSelected: string | null;
+  } | null>(null);
+  const pendingSelection = useRef<{
+    rootPath: string;
+    sessionId: string;
+  } | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const hasBridge = bridge() !== undefined;
@@ -38,40 +48,63 @@ export function App(): ReactNode {
   useEffect(() => {
     const remote = connectionFromQuery();
     if (remote !== null) {
-      setConnection(remote);
+      setOpened({ connection: remote, initialSelected: null });
       return;
     }
     const b = bridge();
     if (b === undefined) return;
-    void b.getState().then((state) => setConnection(state.connection));
+    let receivedConnection = false;
+    void b.getState().then((state) => {
+      // A project may finish opening while this initial request is in flight.
+      // Never let the older snapshot switch the workspace back underneath it.
+      if (receivedConnection) return;
+      setOpened(
+        state.connection === null
+          ? null
+          : { connection: state.connection, initialSelected: null },
+      );
+    });
     return b.onConnection((info) => {
-      setConnection(info);
+      receivedConnection = true;
+      const pending = pendingSelection.current;
+      const opensPendingSession = pending?.rootPath === info.rootPath;
+      if (opensPendingSession) pendingSelection.current = null;
+      setOpened({
+        connection: info,
+        initialSelected: opensPendingSession ? pending.sessionId : null,
+      });
       setOpening(null);
       setError(null);
     });
   }, []);
 
-  const openProject = useCallback((rootPath: string) => {
+  const openProject = useCallback((rootPath: string, sessionId?: string) => {
     const b = bridge();
     if (b === undefined) return;
+    pendingSelection.current =
+      sessionId === undefined ? null : { rootPath, sessionId };
     setOpening(rootPath);
     setError(null);
     void b.openProject(rootPath).then((result) => {
       setOpening(null);
-      if (!result.ok) setError(result.error);
+      if (!result.ok) {
+        pendingSelection.current = null;
+        setError(result.error);
+      }
     });
   }, []);
 
   const pickProject = useCallback(() => {
     const b = bridge();
     if (b === undefined) return;
+    pendingSelection.current = null;
     setError(null);
     void b.pickProject().then((result) => {
       if (result !== null && !result.ok) setError(result.error);
     });
   }, []);
 
-  if (connection === null) {
+  if (opened === null) {
     return (
       <ProjectPicker
         opening={opening}
@@ -84,21 +117,33 @@ export function App(): ReactNode {
   }
 
   return (
-    <HarnessProvider
-      key={`${connection.url}|${connection.token}`}
-      connection={connection}
-    >
-      <WorkspaceProvider>
-        <Workspace
-          theme={theme}
-          switcher={
-            hasBridge
-              ? { opening, error, onOpen: openProject, onPick: pickProject }
-              : undefined
-          }
-        />
-      </WorkspaceProvider>
-    </HarnessProvider>
+    // The fan-out sits outside the key on purpose: the toolbar reports on
+    // every loaded project, so its streams and snapshots have to survive the
+    // switch that replaces the workspace under it.
+    <ProjectFanoutProvider connection={opened.connection}>
+      <HarnessProvider
+        key={`${opened.connection.url}|${opened.connection.token}`}
+        connection={opened.connection}
+        initialSelected={opened.initialSelected}
+      >
+        <WorkspaceProvider>
+          <Workspace
+            theme={theme}
+            switcher={
+              hasBridge
+                ? {
+                    opening,
+                    error,
+                    onOpen: openProject,
+                    onOpenSession: openProject,
+                    onPick: pickProject,
+                  }
+                : undefined
+            }
+          />
+        </WorkspaceProvider>
+      </HarnessProvider>
+    </ProjectFanoutProvider>
   );
 }
 
@@ -107,6 +152,7 @@ interface SwitcherProps {
   opening: string | null;
   error: string | null;
   onOpen(rootPath: string): void;
+  onOpenSession(rootPath: string, sessionId: string): void;
   onPick(): void;
 }
 
@@ -183,7 +229,7 @@ function Workspace(props: {
 
   return (
     <div className="app">
-      <header className="toolbar glass">
+      <header className="toolbar">
         {/* The traffic lights sit in this strip under `hiddenInset`; the
             leading gap is theirs, not padding. */}
         <span className="traffic-gap" aria-hidden="true" />
@@ -222,7 +268,10 @@ function Workspace(props: {
         </div>
 
         <span className="toolbar-spacer" />
-        <ActivityMenu />
+        <ActivityMenu
+          onOpenProject={props.switcher?.onOpen}
+          onOpenProjectSession={props.switcher?.onOpenSession}
+        />
         <span className="toolbar-spacer" />
 
         <button
@@ -242,16 +291,7 @@ function Workspace(props: {
         >
           {props.theme.resolved === "dark" ? "☀" : "☾"}
         </button>
-        <button
-          type="button"
-          className="toolbar-icon"
-          aria-pressed={sidebar}
-          aria-label="Toggle sidebar"
-          title="Toggle sidebar (⌘B)"
-          onClick={toggleSidebar}
-        >
-          ▤
-        </button>
+        <QuickActions />
         <AppMenu theme={props.theme} />
       </header>
 
@@ -283,6 +323,7 @@ function Workspace(props: {
         />
       )}
       {overlay === "fibers" && <FibersSheet />}
+      {overlay === "archive" && <ArchiveSheet />}
     </div>
   );
 }

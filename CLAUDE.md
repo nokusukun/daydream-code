@@ -153,6 +153,7 @@ a subpath (`@daydream-code/journal/sqlite`).
 | `ctx.store` | exclusive | `@daydream-code/store` | `store/sqlite` |
 | `ctx.settings` | exclusive | `@daydream-code/settings` | `settings/live` |
 | `ctx.blobs` | exclusive | `@daydream-code/blobs` | `blobs/fs` |
+| `ctx.actions` | exclusive | `@daydream-code/actions` | `actions/sqlite` |
 | `ctx.tokens` | exclusive | `@daydream-code/tokens` | `tokens/estimate` |
 | `ctx.normalizer` | exclusive + waterfalls | `@daydream-code/normalize` | `normalize/service` |
 | `ctx.journal` | exclusive | `@daydream-code/journal` | `journal/sqlite` |

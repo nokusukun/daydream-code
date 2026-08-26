@@ -2,10 +2,12 @@
  * Switching projects: a popover under the toolbar title, and the row component
  * the first-run picker renders too.
  *
- * The app holds exactly one project at a time, so switching sits a level above
- * the workspace rather than inside it. A popover is the Mac answer to that
- * (Xcode's scheme menu, Finder's path control): it drops from the thing it
- * describes and never covers the three panes, which a full screen would.
+ * The workspace shows one project at a time, so switching sits a level above
+ * it rather than inside it. Background project cores may remain alive for the
+ * global activity menu. A popover is the Mac answer to choosing the visible
+ * workspace (Xcode's scheme menu, Finder's path control): it drops from the
+ * thing it describes and never covers the three panes, which a full screen
+ * would.
  *
  * The list is a switcher, not a dashboard. It ranks by recency, filters as you
  * type, and moves on Enter. The facts on each row are there to help you
@@ -180,9 +182,8 @@ export function ProjectSwitcher(props: {
     (project: ProjectSummary | undefined) => {
       if (project === undefined || !project.exists) return;
       onOpenChange(false);
-      // Choosing the project already open is a no-op, not a reboot of the
-      // harness: disposing and re-booting the core would drop every websocket
-      // and lose nothing but time.
+      // Choosing the project already open is a no-op. Its retained core and
+      // renderer connection are already the ones we want.
       if (!project.active) props.onOpen(project.rootPath);
     },
     [onOpenChange, props],

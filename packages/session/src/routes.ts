@@ -34,6 +34,13 @@ const MessageBody = z.object({
 });
 
 /**
+ * Shelve or restore. Explicit rather than a toggle: a client that retried a
+ * toggle would flip the run back, and the caller always knows which state it
+ * wants.
+ */
+const ArchiveBody = z.object({ archived: z.boolean() });
+
+/**
  * An answer to a blocking question. `answers` maps question id (which is the
  * question text) to the chosen label, or labels for a multi-select. `decline`
  * hands the decision back to the model instead — the explicit alternative to
@@ -47,7 +54,7 @@ const AnswerBody = z.object({
 
 /**
  * Consumer plugin: the session lifecycle's HTTP surface — list, read,
- * dispatch, continue, stop, answer.
+ * dispatch, continue, stop, archive, delete, answer.
  *
  * Answering a question lands here rather than on the questions package's own
  * routes because it has to resolve `:id` through the sessions seam first, and
@@ -127,6 +134,34 @@ const sessionRoutes = {
         handle: async (req: RouteRequest) => {
           await ctx.sessions.stop(resolve(req).id);
           return { stopped: true };
+        },
+      },
+      {
+        method: "POST",
+        path: "/api/sessions/:id/archive",
+        handle: (req: RouteRequest) => {
+          const session = resolve(req);
+          const body = ArchiveBody.parse(req.body);
+          // A live session is refused by the seam, not here. 409 rather than
+          // 400: the request is well formed, the run is simply busy, and the
+          // caller's remedy is to stop it and retry.
+          try {
+            return ctx.sessions.setArchived(session.id, body.archived);
+          } catch (error) {
+            throw new HttpError(409, String((error as Error).message ?? error));
+          }
+        },
+      },
+      {
+        method: "DELETE",
+        path: "/api/sessions/:id",
+        handle: (req: RouteRequest) => {
+          const session = resolve(req);
+          try {
+            return ctx.sessions.remove(session.id);
+          } catch (error) {
+            throw new HttpError(409, String((error as Error).message ?? error));
+          }
         },
       },
       {

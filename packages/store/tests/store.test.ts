@@ -127,6 +127,7 @@ describe("SqliteStore", () => {
       endedAt: null,
       summary: null,
       tldr: null,
+      archivedAt: null,
       tokensIn: 1,
       tokensOut: 2,
       costUsd: 0.5,
@@ -358,5 +359,93 @@ describe("migrations", () => {
     const before = sqlite.pragma("user_version", { simple: true });
     runMigrations(sqlite);
     expect(sqlite.pragma("user_version", { simple: true })).toBe(before);
+  });
+
+  it("backfills an existing store to unarchived rather than rebuilding it", () => {
+    const sqlite = openV1();
+    insertV1Session(sqlite, "ses_a", "proj_1", "deploy the thing", "2026-01-01");
+    runMigrations(sqlite);
+
+    const rows = sqlite
+      .prepare(`SELECT id, archived_at FROM sessions`)
+      .all() as { id: string; archived_at: string | null }[];
+    expect(rows).toEqual([{ id: "ses_a", archived_at: null }]);
+  });
+});
+
+/**
+ * v4 narrowed `journal_no_delete` so a session can actually be erased. These
+ * pin both halves of that: what it still forbids, and the one thing it now
+ * allows. The carve-out is the only way history can ever leave this table, so
+ * a change that widened it further should fail here first.
+ */
+describe("journal immutability", () => {
+  function openCurrent(): InstanceType<typeof Database> {
+    const file = path.join(tempRoot(), "journal.sqlite");
+    const sqlite = new Database(file);
+    cleanups.push(() => sqlite.close());
+    runMigrations(sqlite);
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (id, project_id, thread_id, name, title, task,
+           driver, status, started_at)
+         VALUES ('ses_a', 'proj_1', 'thr_1', 'run-a', 'Run A', 'run a',
+           'mock', 'completed', '2026-01-01')`,
+      )
+      .run();
+    sqlite
+      .prepare(
+        `INSERT INTO journal_events (session_id, ts, type, payload_json)
+         VALUES ('ses_a', '2026-01-01', 'turn', '{"text":"hello"}')`,
+      )
+      .run();
+    return sqlite;
+  }
+
+  it("refuses an update, always", () => {
+    const sqlite = openCurrent();
+    expect(() =>
+      sqlite.prepare(`UPDATE journal_events SET type = 'edited'`).run(),
+    ).toThrow(/append-only/);
+  });
+
+  it("refuses a delete while the session still exists", () => {
+    const sqlite = openCurrent();
+    expect(() =>
+      sqlite.prepare(`DELETE FROM journal_events WHERE session_id = 'ses_a'`).run(),
+    ).toThrow(/append-only/);
+  });
+
+  it("allows a delete once the session row is gone", () => {
+    const sqlite = openCurrent();
+    sqlite.prepare(`DELETE FROM sessions WHERE id = 'ses_a'`).run();
+    sqlite.prepare(`DELETE FROM journal_events WHERE session_id = 'ses_a'`).run();
+    expect(
+      sqlite.prepare(`SELECT count(*) AS n FROM journal_events`).get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it("still protects a session that was not the one deleted", () => {
+    const sqlite = openCurrent();
+    sqlite
+      .prepare(
+        `INSERT INTO sessions (id, project_id, thread_id, name, title, task,
+           driver, status, started_at)
+         VALUES ('ses_b', 'proj_1', 'thr_2', 'run-b', 'Run B', 'run b',
+           'mock', 'completed', '2026-01-02')`,
+      )
+      .run();
+    sqlite
+      .prepare(
+        `INSERT INTO journal_events (session_id, ts, type, payload_json)
+         VALUES ('ses_b', '2026-01-02', 'turn', '{"text":"keep"}')`,
+      )
+      .run();
+    sqlite.prepare(`DELETE FROM sessions WHERE id = 'ses_a'`).run();
+
+    // A blanket delete must still abort on the surviving session's rows.
+    expect(() => sqlite.prepare(`DELETE FROM journal_events`).run()).toThrow(
+      /append-only/,
+    );
   });
 });

@@ -35,6 +35,7 @@ export const ACTIVITY_TYPES = [
   "ask_received",
   "ask_settled",
   "message_received",
+  "user_message_queued",
   "user_injected",
   "master_injected",
   "context_assembled",
@@ -195,6 +196,14 @@ export function activityOf(event: JournalEvent): Activity | null {
         typeof payload.from === "string" ? `from ${payload.from}` : "message",
         payload.message,
       );
+    case "user_message_queued": {
+      const count = imageCount(payload.images);
+      return make(
+        "you",
+        "you · pending",
+        textOf(payload.text) || (count > 0 ? imageLabel(count) : ""),
+      );
+    }
     case "user_injected": {
       const kind = textOf(payload.kind);
       const count = imageCount(payload.images);

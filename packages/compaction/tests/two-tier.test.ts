@@ -21,7 +21,7 @@ const est = (text: string) => Math.ceil(text.length / 4) + 4;
 const s1 = SessionId("s1");
 const s2 = SessionId("s2");
 
-async function setup(config: { budgetTokens: number; keepTokens: number }) {
+async function setup(config: Record<string, number>) {
   const app = new App();
   const errors: unknown[] = [];
   app.onError = (e) => errors.push(e);
@@ -285,5 +285,121 @@ describe("TwoTierCompactor", () => {
 
     await expect(compaction.maybeCompact(ThreadId("t_1"))).resolves.toEqual([]);
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Convergence. These pin the property the budget exists for: a thread whose
+ * summaries are long enough that copying them verbatim costs as much as the
+ * entries they replace. Measured on this project's real master thread, where
+ * 67 session summaries carried 19.5k of the 38.3k live tokens, an unbudgeted
+ * digest reproduced its input almost exactly and compaction never terminated.
+ */
+describe("TwoTierCompactor convergence", () => {
+  /** A thread of completed sessions whose summaries are the bulk of the cost. */
+  function seedFat(threads: FakeThreads, sessions: number): ThreadId {
+    const t = threads.ensureMaster().id;
+    for (let i = 0; i < sessions; i++) {
+      const id = SessionId(`fat${i}`);
+      threads.append({ threadId: t, kind: "session_dispatch", sessionId: id, message: msg(`new session fat${i} with msg: "task ${i}"`) });
+      threads.append({ threadId: t, kind: "session_turn_end", sessionId: id, message: msg(`session fat${i} turn end, summary: worked on ${i}`) });
+      // A realistically long summary: ~1000 chars, the shape this repo writes.
+      threads.append({
+        threadId: t,
+        kind: "session_summary",
+        sessionId: id,
+        message: msg(`session fat${i} summary: ${`detail ${i} `.repeat(120)}`),
+      });
+    }
+    return t;
+  }
+
+  it("brings the live context down to targetTokens in a single pass", async () => {
+    const { threads, compaction, tokens } = await setup({
+      budgetTokens: 50_000,
+      targetTokens: 30_000,
+      keepTokens: 10_000,
+    });
+    const t = seedFat(threads, 260);
+    const before = tokens.estimateEntries(threads.liveContext(t));
+    expect(before).toBeGreaterThan(50_000);
+
+    const results = await compaction.maybeCompact(t);
+    expect(results).toHaveLength(1);
+
+    const after = tokens.estimateEntries(threads.liveContext(t));
+    expect(after).toBeLessThanOrEqual(30_000);
+    // ...and not by annihilating the thread: the verbatim tail survives.
+    expect(after).toBeGreaterThan(10_000);
+    expect(threads.liveContext(t).length).toBeGreaterThan(1);
+  });
+
+  /**
+   * The regression that matters. Before the digest had a budget, a thread past
+   * its budget appended a new same-size compaction row on EVERY turn-end,
+   * forever: `liveContext` never moved and stored rows grew without bound.
+   */
+  it("never re-fires without making progress", async () => {
+    const { threads, compaction, tokens } = await setup({
+      budgetTokens: 20_000,
+      targetTokens: 15_000,
+      keepTokens: 10_000,
+    });
+    const t = seedFat(threads, 200);
+    expect(tokens.estimateEntries(threads.liveContext(t))).toBeGreaterThan(20_000);
+
+    await compaction.maybeCompact(t);
+    const settledLive = tokens.estimateEntries(threads.liveContext(t));
+    const settledRows = threads.entries(t).length;
+
+    // Ten more turn-ends with nothing new appended must be ten no-ops.
+    for (let i = 0; i < 10; i++) {
+      expect(await compaction.maybeCompact(t)).toEqual([]);
+    }
+    expect(tokens.estimateEntries(threads.liveContext(t))).toBe(settledLive);
+    expect(threads.entries(t).length).toBe(settledRows); // no runaway rows
+  });
+
+  it("bounds the digest by targetTokens - keepTokens", async () => {
+    const { threads, compaction, tokens } = await setup({
+      budgetTokens: 40_000,
+      targetTokens: 24_000,
+      keepTokens: 8_000,
+    });
+    const t = seedFat(threads, 220);
+    await compaction.maybeCompact(t);
+
+    const digest = threads.entries(t).find((e) => e.kind === "compaction")!;
+    expect(tokens.estimateMessage(digest.message)).toBeLessThanOrEqual(16_000);
+  });
+
+  it("elides rather than starving: keepTokens cannot claim the whole target", async () => {
+    // keep == target would leave the digest nothing, rendering a whole prefix
+    // as a bare marker. The share clamp is what stops that.
+    const { threads, compaction } = await setup({
+      budgetTokens: 50_000,
+      targetTokens: 30_000,
+      keepTokens: 30_000,
+    });
+    expect(compaction.budget().keepTokens).toBe(22_500);
+    expect(compaction.budget().digestTokens).toBe(7_500);
+
+    const t = seedFat(threads, 260);
+    await compaction.maybeCompact(t);
+    const digest = threads.entries(t).find((e) => e.kind === "compaction")!;
+    // It carries real facts, not just the header and an elision marker.
+    expect((digest.message.content as string).length).toBeGreaterThan(5_000);
+  });
+
+  it("clamps a target set above the budget instead of failing the fiber", async () => {
+    const { compaction } = await setup({
+      budgetTokens: 10_000,
+      targetTokens: 90_000,
+      keepTokens: 80_000,
+    });
+    const b = compaction.budget();
+    expect(b.targetTokens).toBe(10_000);
+    expect(b.keepTokens).toBe(7_500);
+    expect(b.digestTokens).toBe(2_500);
   });
 });

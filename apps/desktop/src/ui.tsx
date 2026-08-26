@@ -27,6 +27,55 @@ export function GearIcon(): ReactNode {
 }
 
 /**
+ * Quick actions. A bolt at the same optical weight as the gear beside it —
+ * the two toolbar popovers should read as one family, not as two icon sets.
+ */
+export function BoltIcon(): ReactNode {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={15}
+      height={15}
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M8.9 1.8 3.4 9.1h3.9l-.9 5.1 5.5-7.3H8z" />
+    </svg>
+  );
+}
+
+/**
+ * The send action. An arrow, not a paper plane: the button both starts a run
+ * and steers one, and a plane reads as "mail" — one-way, gone, no reply. It is
+ * drawn at the same optical weight as the gear and the bolt so the three
+ * chrome icons stay one family.
+ */
+export function SendIcon(): ReactNode {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={15}
+      height={15}
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M8 13.2V3.4" />
+      <path d="M3.9 7.5 8 3.4l4.1 4.1" />
+    </svg>
+  );
+}
+
+/**
  * Status as a drawn glyph rather than a coloured dot.
  *
  * A pulsing dot is the default "live" indicator everywhere, and it says

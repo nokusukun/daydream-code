@@ -29,6 +29,7 @@ function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
     endedAt: null,
     summary: null,
     tldr: null,
+    archivedAt: null,
     usage: zeroUsage(),
     ...overrides,
   };

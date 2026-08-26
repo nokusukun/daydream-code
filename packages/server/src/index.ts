@@ -23,7 +23,14 @@ export type StreamMessage =
   | { kind: "hello"; lastEventId: number }
   | { kind: "journal"; event: JournalEvent }
   | { kind: "thread"; entry: ThreadEntry }
-  | { kind: "session"; session: SessionRecord };
+  | { kind: "session"; session: SessionRecord }
+  /**
+   * A session was deleted. Its own frame rather than a `session` frame with a
+   * tombstone field, because every client merges `session` frames by upsert —
+   * a removal that arrived on that channel would be quietly re-added to the
+   * list it was meant to leave.
+   */
+  | { kind: "session-deleted"; id: string };
 
 // ---------------------------------------------------------------------------
 // Seam

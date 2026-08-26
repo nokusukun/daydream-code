@@ -31,8 +31,31 @@ type CodeContextMenuRequest =
     }
   | { kind: "file"; path: string; dir: boolean; expanded?: boolean };
 
+interface SessionMenuRequest {
+  id: string;
+  name: string;
+  archived: boolean;
+  live: boolean;
+  current: boolean;
+}
+
+type QuickActionRequest =
+  | { kind: "reveal" }
+  | { kind: "terminal" }
+  | { kind: "command"; command: string };
+
 contextBridge.exposeInMainWorld("daydream", {
   getState: () => ipcRenderer.invoke("daydream:get-state"),
+  getProjectCores: () => ipcRenderer.invoke("daydream:get-project-cores"),
+  onProjectCores: (callback: (connections: ConnectionInfo[]) => void) => {
+    const listener = (_event: unknown, connections: ConnectionInfo[]): void => {
+      callback(connections);
+    };
+    ipcRenderer.on("daydream:project-cores", listener);
+    return () => {
+      ipcRenderer.removeListener("daydream:project-cores", listener);
+    };
+  },
   listProjects: () => ipcRenderer.invoke("daydream:list-projects"),
   openProject: (rootPath: string) =>
     ipcRenderer.invoke("daydream:open-project", rootPath),
@@ -48,6 +71,8 @@ contextBridge.exposeInMainWorld("daydream", {
   },
   openSettings: () => ipcRenderer.invoke("daydream:open-settings"),
   getAppearance: () => ipcRenderer.invoke("daydream:get-appearance"),
+  setThemeSource: (choice: "system" | "light" | "dark") =>
+    ipcRenderer.invoke("daydream:set-theme-source", choice),
   onAppearance: (callback: (appearance: Appearance) => void) => {
     const listener = (_event: unknown, appearance: Appearance): void => {
       callback(appearance);
@@ -59,4 +84,10 @@ contextBridge.exposeInMainWorld("daydream", {
   },
   showCodeContextMenu: (request: CodeContextMenuRequest) =>
     ipcRenderer.invoke("daydream:code-context-menu", request),
+  showTextContextMenu: (text: string) =>
+    ipcRenderer.invoke("daydream:text-context-menu", text),
+  showSessionContextMenu: (request: SessionMenuRequest) =>
+    ipcRenderer.invoke("daydream:session-context-menu", request),
+  runQuickAction: (request: QuickActionRequest) =>
+    ipcRenderer.invoke("daydream:quick-action", request),
 });

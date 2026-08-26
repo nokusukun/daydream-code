@@ -8,6 +8,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { SettingDescriptor } from "../api.js";
 import type { RowStatus } from "../settings-store.js";
+import { titleCaseSettingName } from "../title-case.js";
 
 export interface FieldProps {
   descriptor: SettingDescriptor;
@@ -64,7 +65,7 @@ export function SettingRow(props: {
   return (
     <div className="set-row">
       <div className="set-label">
-        <label htmlFor={props.htmlFor}>{props.label}</label>
+        <label htmlFor={props.htmlFor}>{titleCaseSettingName(props.label)}</label>
         {props.help !== undefined && <p className="set-help">{props.help}</p>}
         <FieldNote status={status} />
       </div>
