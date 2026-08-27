@@ -24,7 +24,8 @@ import { labelForModel, type ModelLabel } from "./model-label.js";
 import { connectStream, type StreamFrame, type StreamStatus } from "./stream.js";
 import type { ConnectionInfo } from "./bridge.js";
 
-export type Overlay = null | "palette" | "fibers" | "archive";
+/** Overlay ids are contributed by desktop modules. */
+export type Overlay = string | null;
 
 /**
  * Which half of the window you are in. `agent` is the harness — threads,
@@ -33,7 +34,8 @@ export type Overlay = null | "palette" | "fibers" | "archive";
  * questions ("what is the run doing" / "what did it do to this file") and
  * neither is a subordinate view of the other.
  */
-export type Mode = "agent" | "code";
+/** Mode ids are contributed by desktop modules. */
+export type Mode = string;
 
 /** The tabs over one thread: its transcript, its files, its bill. */
 export type PanelView = "thread" | "changes" | "usage";

@@ -148,6 +148,39 @@ describe("groupEvents", () => {
     expect(items.map((i) => i.kind)).toEqual(["tools"]);
   });
 
+  it("folds terminal file changes whose completion lives on the call", () => {
+    // Codex emits file-change items only after the patch finishes, so there is
+    // no separate tool_result row to close either call.
+    const items = groupEvents(
+      [
+        ev("tool_call", {
+          id: "patch-1",
+          name: "file_change",
+          status: "completed",
+        }),
+        ev("tool_call", {
+          id: "patch-2",
+          name: "file_change",
+          status: "failed",
+        }),
+      ],
+      { live: true },
+    );
+    expect(items.map((i) => i.kind)).toEqual(["tools"]);
+    expect(items[0]!.kind === "tools" && items[0]!.events).toHaveLength(2);
+  });
+
+  it("keeps a call with an in-progress status unfolded", () => {
+    const open = ev("tool_call", {
+      id: "patch-1",
+      name: "future_streaming_tool",
+      status: "in_progress",
+    });
+    expect(groupEvents([open], { live: true })).toEqual([
+      { kind: "event", event: open, running: true },
+    ]);
+  });
+
   /*
    * A parallel batch is journaled call, call, call and then answered in
    * whatever order the calls finish, so "the one running" is a set, and

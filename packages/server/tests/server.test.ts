@@ -26,7 +26,9 @@ import {
 import { Threads, type EntryRange } from "@daydream-code/thread";
 import {
   Sessions,
+  type AttachmentInput,
   type DispatchRequest,
+  type NextMessage,
   type SessionHandle,
 } from "@daydream-code/session";
 import { SessionDrivers } from "@daydream-code/driver";
@@ -217,6 +219,7 @@ class FakeSessions extends Sessions {
   readonly continues: Array<{ id: SessionIdT; message: string }> = [];
   readonly stops: SessionIdT[] = [];
   readonly records = new Map<string, SessionRecord>();
+  readonly next = new Map<string, NextMessage[]>();
 
   async dispatch(request: DispatchRequest): Promise<SessionHandle> {
     this.dispatches.push(request);
@@ -230,6 +233,62 @@ class FakeSessions extends Sessions {
     const record = this.records.get(id) ?? fakeRecord(id, message);
     this.records.set(record.id, record);
     return { record, done: Promise.resolve(record) };
+  }
+
+  nextMessages(id: SessionIdT): NextMessage[] {
+    return this.next.get(id) ?? [];
+  }
+
+  enqueueNextMessage(
+    id: SessionIdT,
+    message: string,
+    _attachments?: AttachmentInput[],
+  ): NextMessage {
+    const queue = this.next.get(id) ?? [];
+    const value: NextMessage = {
+      deliveryId: `msg_${queue.length + 1}`,
+      message,
+      images: [],
+      createdAt: nowIso(),
+      editing: false,
+    };
+    queue.push(value);
+    this.next.set(id, queue);
+    return value;
+  }
+
+  beginNextMessageEdit(id: SessionIdT, deliveryId: string): NextMessage {
+    const current = this.nextMessages(id).find((item) => item.deliveryId === deliveryId);
+    if (current === undefined) throw new Error("queued message is gone");
+    Object.assign(current, { editing: true });
+    return current;
+  }
+
+  updateNextMessage(
+    id: SessionIdT,
+    deliveryId: string,
+    message: string,
+    _attachments?: AttachmentInput[],
+  ): NextMessage {
+    const current = this.beginNextMessageEdit(id, deliveryId);
+    Object.assign(current, { message, editing: false });
+    return current;
+  }
+
+  cancelNextMessageEdit(id: SessionIdT, deliveryId: string): NextMessage {
+    const current = this.nextMessages(id).find((item) => item.deliveryId === deliveryId);
+    if (current === undefined) throw new Error("queued message is gone");
+    Object.assign(current, { editing: false });
+    return current;
+  }
+
+  cancelNextMessage(id: SessionIdT, deliveryId: string): boolean {
+    const queue = this.nextMessages(id);
+    const at = queue.findIndex((item) => item.deliveryId === deliveryId);
+    if (at < 0) return false;
+    queue.splice(at, 1);
+    if (queue.length === 0) this.next.delete(id);
+    return true;
   }
 
   async stop(id: SessionIdT): Promise<void> {
@@ -446,6 +505,49 @@ describe("FastifyServer", () => {
     });
     expect(msg.status).toBe(200);
     expect(sessions.continues).toEqual([{ id: record.id, message: "keep going" }]);
+
+    const deferred = await fetch(
+      `${base}/api/sessions/${record.id}/next-messages`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "send this next" }),
+      },
+    );
+    expect(deferred.status).toBe(200);
+    const deferredMessage = (await deferred.json()) as NextMessage;
+    expect(deferredMessage).toMatchObject({ message: "send this next" });
+
+    const detail = await fetch(`${base}/api/sessions/${record.id}`);
+    expect(await detail.json()).toMatchObject({
+      nextMessages: [{ message: "send this next", editing: false }],
+    });
+
+    const deliveryId = deferredMessage.deliveryId;
+    const beginEdit = await fetch(
+      `${base}/api/sessions/${record.id}/next-messages/${deliveryId}/edit`,
+      { method: "POST" },
+    );
+    expect(await beginEdit.json()).toMatchObject({ editing: true });
+
+    const update = await fetch(
+      `${base}/api/sessions/${record.id}/next-messages/${deliveryId}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "send this edited version" }),
+      },
+    );
+    expect(await update.json()).toMatchObject({
+      message: "send this edited version",
+      editing: false,
+    });
+
+    const cancel = await fetch(
+      `${base}/api/sessions/${record.id}/next-messages/${deliveryId}`,
+      { method: "DELETE" },
+    );
+    expect(await cancel.json()).toEqual({ cancelled: true });
 
     const stop = await fetch(`${base}/api/sessions/${record.id}/stop`, {
       method: "POST",

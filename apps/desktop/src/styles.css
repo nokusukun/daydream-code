@@ -1054,6 +1054,77 @@ pre {
   gap: var(--s2);
 }
 
+.panel-has-next-message {
+  --composer-clear: 320px;
+}
+
+/* A held follow-up is chrome, not transcript: it floats with the composer and
+   stays visibly cancellable until the runner takes it. Its fill is opaque
+   because the preview is content, and the panel's transparent canvas gives a
+   backdrop filter nothing reliable to blur. */
+.next-message-list {
+  align-self: flex-end;
+  display: grid;
+  gap: 6px;
+  width: min(100%, 560px);
+  max-height: 154px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.next-message {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  width: 100%;
+  min-height: 42px;
+  padding: 7px 8px 7px var(--s4);
+  border: 1px solid var(--glass-edge);
+  border-radius: 999px;
+  background: var(--panel-surface);
+  box-shadow: inset 0 1px 0 var(--glass-specular),
+    0 8px 24px -14px var(--glass-shade);
+  animation: pop-in var(--t-base) var(--ease-out-quart) both;
+}
+
+.next-message.is-editing {
+  border-color: color-mix(in oklab, var(--accent) 44%, var(--glass-edge));
+  background: color-mix(in oklab, var(--accent) 7%, var(--panel-surface));
+}
+
+.next-message-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  line-height: 1.25;
+}
+
+.next-message-copy strong {
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  font-weight: 620;
+}
+
+.next-message-copy > span {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.next-message-cancel {
+  flex: none;
+  margin-left: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .next-message {
+    animation: none;
+  }
+}
+
 /*
  * The composer is a pane of glass resting on the transcript: real blur of the
  * content behind it, a specular top edge, a rim light on the underside, and a
@@ -1816,6 +1887,50 @@ kbd {
 
 .error-bar button {
   margin-left: auto;
+}
+
+/* A module owns its failure surface. Panel/sidebar failures fill only their
+   slot; toolbar failures stay compact; the root fallback still leaves a usable
+   retry affordance instead of a blank Electron window. */
+.module-failure {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s3);
+  min-width: 0;
+  padding: var(--s4);
+  color: var(--bad);
+  font-size: var(--text-sm);
+  user-select: text;
+}
+
+.module-failure-panel,
+.module-failure-sidebar,
+.module-failure-root {
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  text-align: center;
+}
+
+.module-failure-toolbar {
+  padding: 0 var(--s1);
+  white-space: nowrap;
+}
+
+.module-failure-overlay {
+  min-height: 180px;
+}
+
+.module-empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.module-health {
+  color: var(--bad);
+  font-weight: 750;
 }
 
 /* ==========================================================================

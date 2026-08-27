@@ -114,7 +114,7 @@ export function ActivityMenu(props: {
       {open && (
         <div className="activity-pop pop" role="menu">
           <div className="pop-head">
-            active agents
+            active threads
             <span>
               {/* `0 live` is the footer's claim in miniature — while a project
                   is still being read, the only honest half of this line is how

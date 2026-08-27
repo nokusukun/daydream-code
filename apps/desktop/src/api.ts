@@ -5,7 +5,7 @@
  */
 import type { QuickActionRecord } from "@daydream-code/actions";
 import type { BlobRef } from "@daydream-code/blobs";
-import type { AttachmentInput } from "@daydream-code/session";
+import type { AttachmentInput, NextMessage } from "@daydream-code/session";
 import type { SettingsView, WriteRequest, WriteResult } from "@daydream-code/settings";
 import type {
   FileContent,
@@ -97,6 +97,7 @@ export interface FiberDump {
 export interface SessionDetail {
   session: SessionRecord;
   journal: JournalEvent[];
+  nextMessages: NextMessage[];
 }
 
 export interface ApiClientOptions {
@@ -225,6 +226,65 @@ export class ApiClient {
         ? { attachments }
         : {}),
     });
+  }
+
+  enqueueNextMessage(
+    id: string,
+    message: string,
+    attachments?: AttachmentInput[],
+  ): Promise<NextMessage> {
+    return this.#post(`/api/sessions/${encodeURIComponent(id)}/next-messages`, {
+      message,
+      ...(attachments !== undefined && attachments.length > 0
+        ? { attachments }
+        : {}),
+    });
+  }
+
+  beginNextMessageEdit(id: string, deliveryId: string): Promise<NextMessage> {
+    return this.#post(
+      `/api/sessions/${encodeURIComponent(id)}/next-messages/${encodeURIComponent(deliveryId)}/edit`,
+      {},
+    );
+  }
+
+  updateNextMessage(
+    id: string,
+    deliveryId: string,
+    message: string,
+    attachments?: AttachmentInput[],
+  ): Promise<NextMessage> {
+    return this.#request(
+      `/api/sessions/${encodeURIComponent(id)}/next-messages/${encodeURIComponent(deliveryId)}`,
+      undefined,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          message,
+          ...(attachments !== undefined && attachments.length > 0
+            ? { attachments }
+            : {}),
+        }),
+      },
+    );
+  }
+
+  cancelNextMessageEdit(id: string, deliveryId: string): Promise<NextMessage> {
+    return this.#post(
+      `/api/sessions/${encodeURIComponent(id)}/next-messages/${encodeURIComponent(deliveryId)}/edit/cancel`,
+      {},
+    );
+  }
+
+  cancelNextMessage(
+    id: string,
+    deliveryId: string,
+  ): Promise<{ cancelled: boolean }> {
+    return this.#request(
+      `/api/sessions/${encodeURIComponent(id)}/next-messages/${encodeURIComponent(deliveryId)}`,
+      undefined,
+      { method: "DELETE" },
+    );
   }
 
   /**

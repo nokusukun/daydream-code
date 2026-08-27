@@ -16,10 +16,13 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type Dispatch,
   type DragEvent,
   type ReactNode,
+  type SetStateAction,
 } from "react";
-import type { SessionRecord } from "@daydream-code/shared";
+import type { ImagePart, SessionRecord } from "@daydream-code/shared";
+import type { NextMessage } from "@daydream-code/session";
 import { useHarness } from "../harness.js";
 import {
   MAX_ATTACHMENTS,
@@ -185,6 +188,10 @@ function Box(props: {
   onFiles(files: ImageFile[]): void;
   onRemove(blobId: string): void;
   onSubmit(): void;
+  onDefer?(): void;
+  onEditPrevious?(): void;
+  onCancelEdit?(): void;
+  leading?: ReactNode;
   footer: ReactNode;
 }): ReactNode {
   const boxRef = useRef<HTMLTextAreaElement>(null);
@@ -240,6 +247,7 @@ function Box(props: {
       }}
       onDrop={onDrop}
     >
+      {props.leading}
       <div className="composer-field">
         <AttachmentTray
           attachments={props.attachments}
@@ -262,10 +270,21 @@ function Box(props: {
             props.onFiles(files);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              props.onSubmit();
-            }
+            const action = composerKeyAction(e, {
+              canDefer: props.onDefer !== undefined,
+              canEditPrevious:
+                props.onEditPrevious !== undefined &&
+                props.value.length === 0 &&
+                props.attachments.length === 0 &&
+                props.pending.length === 0,
+              editing: props.onCancelEdit !== undefined,
+            });
+            if (action === null) return;
+            e.preventDefault();
+            if (action === "defer") props.onDefer?.();
+            else if (action === "editPrevious") props.onEditPrevious?.();
+            else if (action === "cancelEdit") props.onCancelEdit?.();
+            else props.onSubmit();
           }}
         />
         <div className="composer-row">
@@ -303,6 +322,148 @@ function Box(props: {
       </div>
     </div>
   );
+}
+
+export function composerKeyAction(
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey">,
+  options: { canDefer: boolean; canEditPrevious: boolean; editing: boolean },
+): "send" | "defer" | "editPrevious" | "cancelEdit" | null {
+  if (event.key === "Escape" && options.editing) return "cancelEdit";
+  if (event.key === "ArrowUp" && options.canEditPrevious) return "editPrevious";
+  if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey)) return null;
+  if (options.editing) return "send";
+  return event.shiftKey && options.canDefer ? "defer" : "send";
+}
+
+function nextPreview(next: NextMessage): string {
+  const images = next.images.length;
+  return [
+    next.message.trim(),
+    images > 0 ? `${images} image${images === 1 ? "" : "s"}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function NextMessageQueue(props: {
+  messages: NextMessage[];
+  busyId: string | null;
+  onCancel(next: NextMessage): void;
+  onCancelEdit(next: NextMessage): void;
+}): ReactNode {
+  if (props.messages.length === 0) return null;
+  return (
+    <div className="next-message-list" role="list" aria-live="polite">
+      {props.messages.map((next, index) => {
+        const preview = nextPreview(next);
+        const busy = props.busyId === next.deliveryId;
+        return (
+          <div
+            className={`next-message${next.editing ? " is-editing" : ""}`}
+            role="listitem"
+            key={next.deliveryId}
+          >
+            <span className="next-message-copy">
+              <strong>
+                {next.editing
+                  ? "Editing queued message"
+                  : index === 0
+                    ? "Next message to send"
+                    : `Then · ${index + 1}`}
+              </strong>
+              <span title={preview}>{preview}</span>
+            </span>
+            <button
+              type="button"
+              className="btn btn-quiet next-message-cancel"
+              disabled={busy}
+              aria-label={
+                next.editing
+                  ? "Cancel queued message edit"
+                  : "Cancel queued message"
+              }
+              onClick={() =>
+                next.editing ? props.onCancelEdit(next) : props.onCancel(next)
+              }
+            >
+              {busy ? "Working…" : next.editing ? "Cancel edit" : "Cancel"}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function imageDraft(image: ImagePart): Attachment {
+  return {
+    blobId: image.blobId,
+    mediaType: image.mediaType,
+    bytes: 0,
+    ...(image.width !== undefined ? { width: image.width } : {}),
+    ...(image.height !== undefined ? { height: image.height } : {}),
+    ...(image.alt !== undefined ? { name: image.alt } : {}),
+  };
+}
+
+function putNext(current: NextMessage[], next: NextMessage): NextMessage[] {
+  const at = current.findIndex((item) => item.deliveryId === next.deliveryId);
+  if (at < 0) return [...current, next];
+  return current.map((item, index) => (index === at ? next : item));
+}
+
+export function useNextMessageControls(
+  sessionId: string,
+  setMessages: Dispatch<SetStateAction<NextMessage[]>>,
+  onError: (message: string) => void,
+): {
+  busyId: string | null;
+  cancel(next: NextMessage): void;
+  cancelEdit(next: NextMessage): void;
+} {
+  const { api, drafts } = useHarness();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const cancel = useCallback(
+    (next: NextMessage) => {
+      if (busyId !== null) return;
+      setBusyId(next.deliveryId);
+      api
+        .cancelNextMessage(sessionId, next.deliveryId)
+        .then(({ cancelled }) => {
+          if (cancelled) {
+            setMessages((current) =>
+              current.filter((item) => item.deliveryId !== next.deliveryId),
+            );
+            if (drafts.get(sessionId).queuedDeliveryId === next.deliveryId) {
+              drafts.clear(sessionId);
+            }
+          }
+        })
+        .catch((error: unknown) =>
+          onError(error instanceof Error ? error.message : String(error)),
+        )
+        .finally(() => setBusyId(null));
+    },
+    [api, busyId, drafts, onError, sessionId, setMessages],
+  );
+  const cancelEdit = useCallback(
+    (next: NextMessage) => {
+      if (busyId !== null) return;
+      setBusyId(next.deliveryId);
+      api
+        .cancelNextMessageEdit(sessionId, next.deliveryId)
+        .then((updated) => {
+          setMessages((current) => putNext(current, updated));
+          drafts.clear(sessionId);
+        })
+        .catch((error: unknown) =>
+          onError(error instanceof Error ? error.message : String(error)),
+        )
+        .finally(() => setBusyId(null));
+    },
+    [api, busyId, drafts, onError, sessionId, setMessages],
+  );
+  return { busyId, cancel, cancelEdit };
 }
 
 /** Starts a run. The master thread's composer. */
@@ -417,6 +578,8 @@ export function SendButton(props: {
 export function MessageComposer(props: {
   session: SessionRecord | null;
   id: string;
+  nextMessages: NextMessage[];
+  onNextMessages: Dispatch<SetStateAction<NextMessage[]>>;
   onError(message: string): void;
 }): ReactNode {
   const { api, drafts } = useHarness();
@@ -427,6 +590,17 @@ export function MessageComposer(props: {
   const running = props.session?.status === "running";
   const onError = props.onError;
   const { pending, take, remove } = useAttachments(props.id, onError);
+  const controls = useNextMessageControls(
+    props.id,
+    props.onNextMessages,
+    onError,
+  );
+  const editingId = draft.queuedDeliveryId;
+  const editingMode = editingId !== undefined;
+  const editing =
+    editingId === undefined
+      ? null
+      : props.nextMessages.find((next) => next.deliveryId === editingId) ?? null;
 
   // A screenshot with no caption is a message; an empty box with nothing
   // attached is not.
@@ -450,6 +624,65 @@ export function MessageComposer(props: {
       .finally(() => setBusy(false));
   }, [api, draft, busy, sendable, props.id, drafts, onError]);
 
+  const queue = useCallback(() => {
+    if (!sendable || busy || (!running && !editingMode)) return;
+    setBusy(true);
+    const id = props.id;
+    const request =
+      !editingMode
+        ? api.enqueueNextMessage(
+            id,
+            draft.text.trim(),
+            draft.attachments.map(attachmentInput),
+          )
+        : api.updateNextMessage(
+            id,
+            editingId,
+            draft.text.trim(),
+            draft.attachments.map(attachmentInput),
+          );
+    request
+      .then((next) => {
+        drafts.clear(id);
+        props.onNextMessages((current) => putNext(current, next));
+      })
+      .catch((e: unknown) =>
+        onError(e instanceof Error ? e.message : String(e)),
+      )
+      .finally(() => setBusy(false));
+  }, [
+    api,
+    draft,
+    busy,
+    running,
+    sendable,
+    editingId,
+    editingMode,
+    props,
+    drafts,
+    onError,
+  ]);
+
+  const editPrevious = useCallback(() => {
+    if (busy || props.nextMessages.length === 0) return;
+    const next = props.nextMessages[props.nextMessages.length - 1]!;
+    setBusy(true);
+    api
+      .beginNextMessageEdit(props.id, next.deliveryId)
+      .then((claimed) => {
+        props.onNextMessages((current) => putNext(current, claimed));
+        drafts.set(props.id, {
+          text: claimed.message,
+          attachments: claimed.images.map(imageDraft),
+          queuedDeliveryId: claimed.deliveryId,
+        });
+      })
+      .catch((e: unknown) =>
+        onError(e instanceof Error ? e.message : String(e)),
+      )
+      .finally(() => setBusy(false));
+  }, [api, busy, drafts, onError, props]);
+
   const usage = props.session?.usage;
   const tokens = usage === undefined ? 0 : usage.tokensIn + usage.tokensOut;
 
@@ -457,9 +690,11 @@ export function MessageComposer(props: {
     <Box
       value={draft.text}
       placeholder={
-        running
-          ? "Steer this run — it lands on the next turn…"
-          : "Send a message to resume this run…"
+        editingMode
+          ? "Edit queued message…"
+          : running
+            ? "Steer this run — it lands on the next turn…"
+            : "Send a message to resume this run…"
       }
       disabled={false}
       autoFocus={false}
@@ -468,7 +703,22 @@ export function MessageComposer(props: {
       onChange={(text) => setDraft({ ...draft, text })}
       onFiles={take}
       onRemove={remove}
-      onSubmit={send}
+      onSubmit={editingMode ? queue : send}
+      {...(running && !editingMode ? { onDefer: queue } : {})}
+      {...(editing !== null
+        ? { onCancelEdit: () => controls.cancelEdit(editing) }
+        : {})}
+      {...(!editingMode && props.nextMessages.length > 0
+        ? { onEditPrevious: editPrevious }
+        : {})}
+      leading={
+        <NextMessageQueue
+          messages={props.nextMessages}
+          busyId={controls.busyId}
+          onCancel={controls.cancel}
+          onCancelEdit={controls.cancelEdit}
+        />
+      }
       footer={
         <>
           {usage !== undefined && tokens > 0 && (
@@ -481,15 +731,37 @@ export function MessageComposer(props: {
             </span>
           )}
           <span className="composer-spacer" />
-          <span className="composer-hint">
-            <kbd>⌘</kbd> <kbd>return</kbd>
+          <span
+            className="composer-hint"
+            title={
+              editingMode
+                ? "⌘ Return saves the edit; Escape cancels"
+                : running
+                  ? "⌘ Return sends now; ⇧ ⌘ Return sends when this run ends"
+                  : "⌘ Return sends"
+            }
+          >
+            {editingMode ? (
+              <>
+                <kbd>⌘</kbd> <kbd>return</kbd> save · <kbd>esc</kbd> cancel
+              </>
+            ) : (
+              <>
+                <kbd>⌘</kbd> <kbd>return</kbd>
+              </>
+            )}
+            {running && !editingMode && (
+              <>
+                {" · "}<kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>return</kbd> next
+              </>
+            )}
           </span>
           <SendButton
             busy={busy}
             disabled={!sendable}
-            label="Send"
-            busyLabel="Sending"
-            onClick={send}
+            label={editingMode ? "Save queued message" : "Send"}
+            busyLabel={editingMode ? "Saving" : "Sending"}
+            onClick={editingMode ? queue : send}
           />
         </>
       }

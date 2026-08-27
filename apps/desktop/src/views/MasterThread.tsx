@@ -108,6 +108,7 @@ function Entry(props: {
       kind={kind}
       label={kind}
       time={fmtTime(entry.createdAt)}
+      copyText={text}
       {...(open ? { className: "is-open" } : {})}
       meta={
         entry.sessionId !== undefined ? (

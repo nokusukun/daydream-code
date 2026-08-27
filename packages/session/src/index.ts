@@ -1,5 +1,5 @@
 import { Service, type Context } from "@daydream-code/kernel";
-import type { SessionId, SessionRecord } from "@daydream-code/shared";
+import type { ImagePart, SessionId, SessionRecord } from "@daydream-code/shared";
 import type { Injection } from "@daydream-code/driver";
 
 declare module "@daydream-code/kernel" {
@@ -105,6 +105,22 @@ export interface SessionHandle {
 }
 
 /**
+ * One item in the ordered user-authored follow-up queue.
+ *
+ * Images are already durable blob references by the time this is returned.
+ * That makes the value safe to journal and send to a renderer without keeping
+ * a pasted file or base64 payload alive in memory.
+ */
+export interface NextMessage {
+  deliveryId: string;
+  message: string;
+  images: ImagePart[];
+  createdAt: string;
+  /** True while a composer has claimed this item for in-place editing. */
+  editing: boolean;
+}
+
+/**
  * Exclusive seam: the session lifecycle. The default provider (session-runner)
  * implements dispatch = fork master + drive + journal + write back; a
  * different provider can replace the whole loop.
@@ -121,6 +137,31 @@ export abstract class Sessions extends Service {
     message: string,
     attachments?: AttachmentInput[],
   ): Promise<SessionHandle>;
+  /** Ordered follow-ups waiting for the current and subsequent runs. */
+  abstract nextMessages(id: SessionId): NextMessage[];
+  /**
+   * Append one follow-up. Each successful run releases exactly one item, so
+   * the queue stays visible and ordered rather than entering one live run as a
+   * burst of turn-boundary injections.
+   */
+  abstract enqueueNextMessage(
+    id: SessionId,
+    message: string,
+    attachments?: AttachmentInput[],
+  ): NextMessage;
+  /** Claim an item so run completion cannot release it during an edit. */
+  abstract beginNextMessageEdit(id: SessionId, deliveryId: string): NextMessage;
+  /** Replace the claimed item in place, preserving its queue position. */
+  abstract updateNextMessage(
+    id: SessionId,
+    deliveryId: string,
+    message: string,
+    attachments?: AttachmentInput[],
+  ): NextMessage;
+  /** Leave edit mode without changing the queued content. */
+  abstract cancelNextMessageEdit(id: SessionId, deliveryId: string): NextMessage;
+  /** Cancel one held follow-up. False means it already left the queue. */
+  abstract cancelNextMessage(id: SessionId, deliveryId: string): boolean;
   /**
    * Hand text to a session without blocking the sender: queue it into a live
    * run, or wake an idle one, whichever applies.

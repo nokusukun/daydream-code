@@ -90,7 +90,11 @@ const sessionRoutes = {
             limit: intParam(req.query.limit) ?? 200,
             latest: true,
           });
-          return { session, journal };
+          return {
+            session,
+            journal,
+            nextMessages: ctx.sessions.nextMessages(session.id),
+          };
         },
       },
       {
@@ -127,6 +131,78 @@ const sessionRoutes = {
           void handle.done.catch(() => {});
           return handle.record;
         },
+      },
+      {
+        method: "POST",
+        path: "/api/sessions/:id/next-messages",
+        handle: (req: RouteRequest) => {
+          const session = resolve(req);
+          const body = MessageBody.parse(req.body);
+          try {
+            return ctx.sessions.enqueueNextMessage(
+              session.id,
+              body.message,
+              body.attachments,
+            );
+          } catch (error) {
+            throw new HttpError(409, String((error as Error).message ?? error));
+          }
+        },
+      },
+      {
+        method: "POST",
+        path: "/api/sessions/:id/next-messages/:deliveryId/edit",
+        handle: (req: RouteRequest) => {
+          try {
+            return ctx.sessions.beginNextMessageEdit(
+              resolve(req).id,
+              req.params.deliveryId!,
+            );
+          } catch (error) {
+            throw new HttpError(409, String((error as Error).message ?? error));
+          }
+        },
+      },
+      {
+        method: "PUT",
+        path: "/api/sessions/:id/next-messages/:deliveryId",
+        handle: (req: RouteRequest) => {
+          const body = MessageBody.parse(req.body);
+          try {
+            return ctx.sessions.updateNextMessage(
+              resolve(req).id,
+              req.params.deliveryId!,
+              body.message,
+              body.attachments,
+            );
+          } catch (error) {
+            throw new HttpError(409, String((error as Error).message ?? error));
+          }
+        },
+      },
+      {
+        method: "POST",
+        path: "/api/sessions/:id/next-messages/:deliveryId/edit/cancel",
+        handle: (req: RouteRequest) => {
+          try {
+            return ctx.sessions.cancelNextMessageEdit(
+              resolve(req).id,
+              req.params.deliveryId!,
+            );
+          } catch (error) {
+            throw new HttpError(409, String((error as Error).message ?? error));
+          }
+        },
+      },
+      {
+        method: "DELETE",
+        path: "/api/sessions/:id/next-messages/:deliveryId",
+        handle: (req: RouteRequest) => ({
+          cancelled: ctx.sessions.cancelNextMessage(
+            resolve(req).id,
+            req.params.deliveryId!,
+          ),
+        }),
       },
       {
         method: "POST",

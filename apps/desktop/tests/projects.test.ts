@@ -137,13 +137,13 @@ describe("displayParent", () => {
 });
 
 describe("projectFacts", () => {
-  it("counts sessions, in the singular when there is one", () => {
+  it("labels session counts as threads, in the singular when there is one", () => {
     expect(
       projectFacts(project({ stats: { sessions: 1, lastActivityAt: null, live: null } })),
-    ).toEqual(["1 session"]);
+    ).toEqual(["1 thread"]);
     expect(
       projectFacts(project({ stats: { sessions: 4, lastActivityAt: null, live: null } })),
-    ).toEqual(["4 sessions"]);
+    ).toEqual(["4 threads"]);
   });
 
   it("says nothing at all when the store could not be read", () => {
@@ -156,8 +156,8 @@ describe("projectFacts", () => {
       active: true,
       stats: { sessions: 4, lastActivityAt: null, live: 2 },
     });
-    expect(projectFacts(closed)).toEqual(["4 sessions"]);
-    expect(projectFacts(open)).toEqual(["4 sessions", "2 live"]);
+    expect(projectFacts(closed)).toEqual(["4 threads"]);
+    expect(projectFacts(open)).toEqual(["4 threads", "2 live"]);
   });
 
   it("stays quiet about zero live sessions rather than printing 0", () => {
@@ -165,7 +165,7 @@ describe("projectFacts", () => {
       active: true,
       stats: { sessions: 4, lastActivityAt: null, live: 0 },
     });
-    expect(projectFacts(open)).toEqual(["4 sessions"]);
+    expect(projectFacts(open)).toEqual(["4 threads"]);
   });
 
   it("replaces the facts entirely when the folder is gone", () => {

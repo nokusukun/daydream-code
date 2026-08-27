@@ -113,6 +113,12 @@ export function Entry(props: {
   time?: string;
   /** Extra meta between the label and the time: a session link, a count. */
   meta?: ReactNode;
+  /**
+   * Plain source copied when this row is right-clicked without a selection.
+   * Keep it separate from rendered text: labels, timestamps and collapsed
+   * previews are presentation, not part of the thread message.
+   */
+  copyText?: string;
   className?: string;
   children?: ReactNode;
 }): ReactNode {
@@ -120,7 +126,12 @@ export function Entry(props: {
   const showMeta = label !== null || props.meta !== undefined || props.time !== undefined;
 
   return (
-    <article className={`entry${props.className !== undefined ? ` ${props.className}` : ""}`}>
+    <article
+      className={`entry${props.className !== undefined ? ` ${props.className}` : ""}`}
+      {...(props.copyText !== undefined && props.copyText.trim().length > 0
+        ? { "data-copy-text": props.copyText }
+        : {})}
+    >
       <div className="entry-gutter" aria-hidden="true">
         <EntryMark kind={props.kind} />
       </div>

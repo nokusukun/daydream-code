@@ -15,6 +15,7 @@ import {
   type ReactNode,
 } from "react";
 import type { JournalEvent, SessionRecord } from "@daydream-code/shared";
+import type { NextMessage } from "@daydream-code/session";
 import { useHarness } from "../harness.js";
 import { pendingQuestionFrom } from "../pending-question.js";
 import { QuestionPrompt } from "./QuestionPrompt.js";
@@ -46,18 +47,23 @@ export function SessionPanel(props: { id: string }): ReactNode {
   const { status } = useWorkspace();
   const [session, setSession] = useState<SessionRecord | null>(null);
   const [events, setEvents] = useState<JournalEvent[] | null>(null);
+  const [nextMessages, setNextMessages] = useState<NextMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setEvents(null);
     setSession(null);
+    setNextMessages([]);
     api
       .session(id)
       .then((detail) => {
         if (cancelled) return;
         setSession(detail.session);
         setEvents(detail.journal);
+        // An older core omits this field. Version skew must degrade to an
+        // empty queue, not pass `undefined` into the queue renderer.
+        setNextMessages(detail.nextMessages ?? []);
         setError(null);
       })
       .catch((e: unknown) => {
@@ -79,6 +85,7 @@ export function SessionPanel(props: { id: string }): ReactNode {
               ? prev
               : [...prev, frame.event],
           );
+          setNextMessages((current) => nextMessagesAfter(current, frame.event));
         }
         if (frame.kind === "session" && (frame.session.id as string) === id) {
           setSession(frame.session);
@@ -143,7 +150,7 @@ export function SessionPanel(props: { id: string }): ReactNode {
   );
 
   return (
-    <main className="panel">
+    <main className={`panel${nextMessages.length === 0 ? "" : " panel-has-next-message"}`}>
       <div className="panel-top">
         <Head
           session={session}
@@ -244,12 +251,60 @@ export function SessionPanel(props: { id: string }): ReactNode {
       )}
 
       {view === "thread" && pending !== null ? (
-        <QuestionPrompt sessionId={id} pending={pending} onError={setError} />
+        <QuestionPrompt
+          sessionId={id}
+          pending={pending}
+          nextMessages={nextMessages}
+          onNextMessages={setNextMessages}
+          onError={setError}
+        />
       ) : (
-        <MessageComposer session={session} id={id} onError={setError} />
+        <MessageComposer
+          session={session}
+          id={id}
+          nextMessages={nextMessages}
+          onNextMessages={setNextMessages}
+          onError={setError}
+        />
       )}
     </main>
   );
+}
+
+/** Apply one live journal event to the server-owned next-message snapshot. */
+export function nextMessagesAfter(
+  current: NextMessage[],
+  event: JournalEvent,
+): NextMessage[] {
+  const payload = payloadOf(event);
+  if (
+    event.type === "user_message_deferred" ||
+    event.type === "user_message_updated"
+  ) {
+    if (
+      typeof payload.deliveryId !== "string" ||
+      typeof payload.message !== "string" ||
+      typeof payload.createdAt !== "string" ||
+      !Array.isArray(payload.images)
+    ) {
+      return current;
+    }
+    const next = {
+      ...payload,
+      editing: payload.editing === true,
+    } as unknown as NextMessage;
+    const at = current.findIndex((item) => item.deliveryId === next.deliveryId);
+    if (at < 0) return [...current, next];
+    return current.map((item, index) => (index === at ? next : item));
+  }
+  if (
+    (event.type === "user_message_released" ||
+      event.type === "user_message_cancelled") &&
+    typeof payload.deliveryId === "string"
+  ) {
+    return current.filter((item) => item.deliveryId !== payload.deliveryId);
+  }
+  return current;
 }
 
 /** 56.6k — the bar has room for a number, not for six digits. */
@@ -386,6 +441,11 @@ export function drawsNothing(event: JournalEvent): boolean {
     case "user_message_queued":
     case "user_injected":
       return blank && imageParts(payload.images).length === 0;
+    case "user_message_deferred":
+    case "user_message_updated":
+    case "user_message_released":
+    case "user_message_cancelled":
+      return true;
     default:
       return false;
   }
@@ -403,6 +463,18 @@ function callIdOf(event: JournalEvent): string | null {
 }
 
 /**
+ * Some providers encode completion on the call itself instead of journaling a
+ * separate result. Codex file changes are the concrete case: its SDK emits the
+ * item only after the patch succeeds or fails, and the driver preserves that
+ * terminal status on a lone `tool_call` row.
+ */
+function isTerminalCall(event: JournalEvent): boolean {
+  if (event.type !== "tool_call") return false;
+  const status = payloadOf(event).status;
+  return status === "completed" || status === "failed";
+}
+
+/**
  * The calls a run has opened and not closed yet, in journal order.
  *
  * Pairing is by id where there is one — Claude's result blocks carry the call
@@ -414,7 +486,7 @@ function openCalls(run: readonly JournalEvent[]): JournalEvent[] {
   const open: JournalEvent[] = [];
   for (const event of run) {
     if (event.type === "tool_call") {
-      open.push(event);
+      if (!isTerminalCall(event)) open.push(event);
       continue;
     }
     const id = callIdOf(event);
@@ -626,7 +698,7 @@ export function Event(props: {
       return (
         <>
           {(text.trim().length > 0 || images.length > 0) && (
-            <Row kind="you" label="you" time={fmtTime(event.ts)}>
+            <Row kind="you" label="you" time={fmtTime(event.ts)} copyText={text}>
               {text.trim().length > 0 && (
                 <div className="entry-prose">
                   <Markdown text={text} />
@@ -652,7 +724,7 @@ export function Event(props: {
     case "turn": {
       const text = short(payload.text ?? "");
       return (
-        <Row kind="reply" label="reply" time={fmtTime(event.ts)}>
+        <Row kind="reply" label="reply" time={fmtTime(event.ts)} copyText={text}>
           <div className="entry-prose">
             <Markdown text={text} />
           </div>
@@ -668,6 +740,7 @@ export function Event(props: {
           time={fmtTime(event.ts)}
           meta={<span className="entry-pending-state">pending</span>}
           className="entry-pending"
+          copyText={text}
         >
           {text.trim().length > 0 && (
             <div className="entry-prose">
@@ -681,7 +754,7 @@ export function Event(props: {
     case "user_injected": {
       const text = short(payload.text ?? "");
       return (
-        <Row kind="you" label="you" time={fmtTime(event.ts)}>
+        <Row kind="you" label="you" time={fmtTime(event.ts)} copyText={text}>
           {text.trim().length > 0 && (
             <div className="entry-prose">
               <Markdown text={text} />
@@ -691,20 +764,27 @@ export function Event(props: {
         </Row>
       );
     }
-    case "master_injected":
+    case "master_injected": {
+      const text = short(payload.text ?? payload);
       return (
-        <Row kind="master" label="master thread" time={fmtTime(event.ts)}>
+        <Row
+          kind="master"
+          label="master thread"
+          time={fmtTime(event.ts)}
+          copyText={text}
+        >
           <div className="entry-prose">
-            <Markdown text={short(payload.text ?? payload)} />
+            <Markdown text={text} />
           </div>
         </Row>
       );
+    }
     case "thinking": {
       const text = short(payload.text ?? "");
       // No timestamp: thinking is the one row that should recede, and the turn
       // it belongs to is timestamped a few rows down.
       return (
-        <Row kind="thinking" label="thinking">
+        <Row kind="thinking" label="thinking" copyText={text}>
           <div className="entry-prose entry-prose-quiet">
             <Markdown text={text} />
           </div>
@@ -741,8 +821,23 @@ export function Event(props: {
         question: string;
         options: { label: string; description: string }[];
       }[];
+      const text = questions
+        .map((question) =>
+          [
+            question.question,
+            ...question.options.map(
+              (option) => `- ${option.label}: ${option.description}`,
+            ),
+          ].join("\n"),
+        )
+        .join("\n\n");
       return (
-        <Row kind="question" label="question" time={fmtTime(event.ts)}>
+        <Row
+          kind="question"
+          label="question"
+          time={fmtTime(event.ts)}
+          copyText={text}
+        >
           <div className="event-line event-question">
             {questions.map((q) => (
               <p key={q.question}>
@@ -767,17 +862,19 @@ export function Event(props: {
               ? "you decide — proceeding on its own recommendation"
               : `cancelled: ${short(payload.reason)}`;
       return (
-        <Row kind="answer" label="answer" time={fmtTime(event.ts)}>
+        <Row kind="answer" label="answer" time={fmtTime(event.ts)} copyText={said}>
           <p className="event-line event-answer">{said}</p>
         </Row>
       );
     }
-    case "driver_error":
+    case "driver_error": {
+      const text = short(payload.error ?? payload, 800);
       return (
-        <Row kind="error" label="driver error" time={fmtTime(event.ts)}>
-          <p className="event-line event-error">{short(payload.error ?? payload, 800)}</p>
+        <Row kind="error" label="driver error" time={fmtTime(event.ts)} copyText={text}>
+          <p className="event-line event-error">{text}</p>
         </Row>
       );
+    }
     default: {
       const label = metaLabel(event);
       return (
@@ -840,10 +937,12 @@ function Tool(props: {
   const { card } = props;
   const label = useMemo(() => `${props.arrow} ${card.name}`, [props.arrow, card.name]);
   const failed = props.error === true || card.caption === "failed" || /^exit /.test(card.caption ?? "");
+  const copyText = card.body.kind === "empty" ? card.preview : card.body.text;
 
   return (
     <Row
       kind={failed ? "error" : props.meta === true ? "meta" : "tool"}
+      copyText={copyText}
       className={
         `tool${open ? " is-open" : ""}` +
         (failed ? " tool-error" : "") +
@@ -899,7 +998,7 @@ function Patch(props: {
   const stat = props.changed.get(relative);
 
   return (
-    <Row kind="patch" label="wrote">
+    <Row kind="patch" label="wrote" copyText={relative}>
       <button
         type="button"
         className="patch"

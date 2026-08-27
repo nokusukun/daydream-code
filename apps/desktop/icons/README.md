@@ -4,13 +4,13 @@
 The other three numbered SVGs are the candidates it was chosen from; `index.html`
 is the contact sheet that compares all four at 128 / 64 / 32 / 16.
 
-The mark is the `◈` the master thread already wears in the rail, on the same
-tinted-navy ground the window surfaces are mixed from (hue ~265). Accent is the
-one blue element, which is the rule the rest of the app follows: accent means
-live state, never decoration.
+The mark is the `◈` the master thread already wears in the rail. Its soft,
+light-mode tile uses a warm porcelain ground, a cool slate facet, and one muted
+blue center. The accent stays contained to the center so the mark keeps the
+restrained color strategy used by the rest of the app.
 
 ```
-ground  #39445A → #1A2030      mark #EEF2F8      accent #4EA3FF
+ground  #FAF8F3 → #E7EAF0      mark #5A6575      accent #82ACE3
 canvas 1024, squircle inset 96 (832 body, r=186), specular top edge
 ```
 

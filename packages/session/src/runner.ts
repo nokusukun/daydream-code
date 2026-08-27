@@ -34,6 +34,7 @@ import {
   type AttachmentInput,
   type DeliveryOutcome,
   type DispatchRequest,
+  type NextMessage,
   type SessionHandle,
 } from "./index.js";
 
@@ -42,6 +43,11 @@ interface ActiveRun {
   injections: Injection[];
   done: Promise<SessionRecord>;
   stopping: boolean;
+}
+
+interface HeldNextMessage {
+  view: NextMessage;
+  attachments: AttachmentInput[];
 }
 
 type SessionRow = typeof schema.sessions.$inferSelect;
@@ -115,6 +121,7 @@ export default class SessionRunner extends Sessions {
   readonly #wakeBudget: number;
 
   #active = new Map<string, ActiveRun>();
+  #nextMessages = new Map<string, HeldNextMessage[]>();
 
   /**
    * Harness-authored wakes spent per session since the user last spoke to it.
@@ -754,6 +761,184 @@ export default class SessionRunner extends Sessions {
     });
   }
 
+  nextMessages(id: SessionId): NextMessage[] {
+    return (this.#nextMessages.get(id) ?? []).map((held) => held.view);
+  }
+
+  enqueueNextMessage(
+    id: SessionId,
+    message: string,
+    attachments?: AttachmentInput[],
+  ): NextMessage {
+    const record = this.get(id);
+    if (record === undefined) throw new Error(`unknown session "${id}"`);
+    if (!this.#active.has(id) || !LIVE_STATUSES.includes(record.status)) {
+      throw new Error("a next message can only wait behind a live run");
+    }
+    const images = this.#ingest(attachments);
+    if (message.trim().length === 0 && images.length === 0) {
+      throw new Error("a next message needs text or an image");
+    }
+    const normalized = images.map(
+      (image): AttachmentInput => ({
+        blobId: image.blobId,
+        ...(image.alt !== undefined ? { alt: image.alt } : {}),
+      }),
+    );
+    const view: NextMessage = {
+      deliveryId: newId("msg"),
+      message,
+      images,
+      createdAt: nowIso(),
+      editing: false,
+    };
+    const queue = this.#nextMessages.get(id) ?? [];
+    queue.push({ view, attachments: normalized });
+    this.#nextMessages.set(id, queue);
+    this.ctx.journal.append({
+      sessionId: id,
+      type: "user_message_deferred",
+      payload: view,
+    });
+    return view;
+  }
+
+  #held(id: SessionId, deliveryId: string): HeldNextMessage {
+    const held = this.#nextMessages
+      .get(id)
+      ?.find((candidate) => candidate.view.deliveryId === deliveryId);
+    if (held === undefined) {
+      throw new Error("that queued message is no longer waiting");
+    }
+    return held;
+  }
+
+  #announceUpdate(id: SessionId, held: HeldNextMessage): NextMessage {
+    this.ctx.journal.append({
+      sessionId: id,
+      type: "user_message_updated",
+      payload: held.view,
+    });
+    return held.view;
+  }
+
+  beginNextMessageEdit(id: SessionId, deliveryId: string): NextMessage {
+    const held = this.#held(id, deliveryId);
+    if (!held.view.editing) {
+      held.view = { ...held.view, editing: true };
+      this.#announceUpdate(id, held);
+    }
+    return held.view;
+  }
+
+  updateNextMessage(
+    id: SessionId,
+    deliveryId: string,
+    message: string,
+    attachments?: AttachmentInput[],
+  ): NextMessage {
+    const held = this.#held(id, deliveryId);
+    if (!held.view.editing) throw new Error("claim the queued message before editing it");
+    const images = this.#ingest(attachments);
+    if (message.trim().length === 0 && images.length === 0) {
+      throw new Error("a queued message needs text or an image");
+    }
+    held.attachments = images.map(
+      (image): AttachmentInput => ({
+        blobId: image.blobId,
+        ...(image.alt !== undefined ? { alt: image.alt } : {}),
+      }),
+    );
+    held.view = { ...held.view, message, images, editing: false };
+    const updated = this.#announceUpdate(id, held);
+    this.#releaseIfIdle(id);
+    return updated;
+  }
+
+  cancelNextMessageEdit(id: SessionId, deliveryId: string): NextMessage {
+    const held = this.#held(id, deliveryId);
+    if (held.view.editing) {
+      held.view = { ...held.view, editing: false };
+      this.#announceUpdate(id, held);
+    }
+    this.#releaseIfIdle(id);
+    return held.view;
+  }
+
+  cancelNextMessage(id: SessionId, deliveryId: string): boolean {
+    const queue = this.#nextMessages.get(id);
+    const at = queue?.findIndex((held) => held.view.deliveryId === deliveryId) ?? -1;
+    if (queue === undefined || at < 0) return false;
+    const [held] = queue.splice(at, 1);
+    if (queue.length === 0) this.#nextMessages.delete(id);
+    this.ctx.journal.append({
+      sessionId: id,
+      type: "user_message_cancelled",
+      payload: { deliveryId: held!.view.deliveryId, reason: "cancelled by the user" },
+    });
+    this.#releaseIfIdle(id);
+    return true;
+  }
+
+  /**
+   * Release the held follow-up only after the active entry is gone.
+   *
+   * A killed run was stopped on purpose, and a failed run may fail again for
+   * the same reason. Neither may silently restart. Successful completion is
+   * the only terminal state that spends the queued follow-up.
+   */
+  #afterRun(id: SessionId): void {
+    const status = this.get(id)?.status;
+    if (status !== "completed") {
+      this.#cancelQueue(id, `previous run ended ${status ?? "without a status"}`);
+      return;
+    }
+    this.#releaseIfIdle(id);
+  }
+
+  #cancelQueue(id: SessionId, reason: string): void {
+    const queue = this.#nextMessages.get(id) ?? [];
+    this.#nextMessages.delete(id);
+    for (const held of queue) {
+      this.ctx.journal.append({
+        sessionId: id,
+        type: "user_message_cancelled",
+        payload: { deliveryId: held.view.deliveryId, reason },
+      });
+    }
+  }
+
+  #releaseIfIdle(id: SessionId): void {
+    if (this.#active.has(id) || this.get(id)?.status !== "completed") return;
+    const queue = this.#nextMessages.get(id);
+    const held = queue?.[0];
+    if (queue === undefined || held === undefined || held.view.editing) return;
+    queue.shift();
+    if (queue.length === 0) this.#nextMessages.delete(id);
+
+    this.ctx.journal.append({
+      sessionId: id,
+      type: "user_message_released",
+      payload: { deliveryId: held.view.deliveryId },
+    });
+    queueMicrotask(() => {
+      void this.continueSession(
+        id,
+        held.view.message,
+        held.attachments,
+      )
+        .then((handle) => void handle.done.catch(() => undefined))
+        .catch((error: unknown) => {
+          this.#cancelQueue(id, "a queued message could not start");
+          this.ctx.journal.append({
+            sessionId: id,
+            type: "driver_error",
+            payload: { error: `next message could not start: ${String(error)}` },
+          });
+        });
+    });
+  }
+
   async deliver(
     id: SessionId,
     text: string,
@@ -1120,6 +1305,7 @@ export default class SessionRunner extends Sessions {
         );
       } finally {
         this.#active.delete(record.id);
+        this.#afterRun(record.id);
       }
     })();
 

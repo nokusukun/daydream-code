@@ -19,6 +19,8 @@ import type { SearchHit } from "../api.js";
 import { bridge } from "../bridge.js";
 import { useHarness } from "../harness.js";
 import { runPaletteAction } from "../palette-actions.js";
+import { useDesktopModules } from "../modules/react.js";
+import type { DesktopHost } from "../modules/host.js";
 import { isArchived, useSessions } from "../sessions.js";
 import { fmtAgo } from "../ui.js";
 
@@ -37,6 +39,7 @@ export function CommandPalette(props: {
   onSwitchProject?: (() => void) | undefined;
 }): ReactNode {
   const { select, setOverlay, sidebar, toggleSidebar } = useHarness();
+  const modules = useDesktopModules<DesktopHost>();
   const { sessions } = useSessions();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -64,7 +67,6 @@ export function CommandPalette(props: {
     }
 
     const lower = term.toLowerCase();
-    const archivedCount = sessions.filter(isArchived).length;
     const match = (text: string): boolean =>
       lower.length === 0 || text.toLowerCase().includes(lower);
 
@@ -87,6 +89,25 @@ export function CommandPalette(props: {
         run: () => select(s.id as string),
       }));
 
+    const overlayCommands = modules.overlays
+      .flatMap((overlay) =>
+        overlay.command === undefined
+          ? []
+          : [
+              {
+                key: `overlay-${overlay.id}`,
+                group: "commands",
+                label: overlay.command.label,
+                ...(overlay.command.hint === undefined
+                  ? {}
+                  : { hint: overlay.command.hint }),
+                order: overlay.command.order ?? 0,
+                run: () => setOverlay(overlay.id),
+              },
+            ],
+      )
+      .sort((a, b) => a.order - b.order || a.key.localeCompare(b.key));
+
     const commands: Item[] = [
       {
         key: "cmd-search",
@@ -95,15 +116,7 @@ export function CommandPalette(props: {
         hint: "?",
         run: () => setQuery(SEARCH_PREFIX),
       },
-      {
-        key: "cmd-archive",
-        group: "commands",
-        label: "Show archived runs",
-        // Listed even with nothing archived: this is where the gesture is
-        // discoverable, and the window's empty state teaches it.
-        hint: `${archivedCount}`,
-        run: () => setOverlay("archive"),
-      },
+      ...overlayCommands,
       {
         // The toolbar no longer has a button for this — that slot is quick
         // actions now — so the palette is where it stays reachable without
@@ -113,12 +126,6 @@ export function CommandPalette(props: {
         label: sidebar ? "Hide sidebar" : "Show sidebar",
         hint: "⌘B",
         run: toggleSidebar,
-      },
-      {
-        key: "cmd-fibers",
-        group: "commands",
-        label: "Show plugin fibers",
-        run: () => setOverlay("fibers"),
       },
       {
         key: "cmd-settings",
@@ -150,6 +157,7 @@ export function CommandPalette(props: {
     setOverlay,
     sidebar,
     toggleSidebar,
+    modules.overlays,
     props.onSwitchProject,
   ]);
 

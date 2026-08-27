@@ -73,13 +73,13 @@ function collapseHome(path: string, home: string): string {
 /**
  * The facts line: what this project holds, and what it is doing if we are
  * entitled to say. A project with no readable store contributes nothing rather
- * than "0 sessions", which would be a claim we cannot support.
+ * than "0 threads", which would be a claim we cannot support.
  */
 export function projectFacts(project: ProjectSummary): string[] {
   if (!project.exists) return ["folder is missing"];
   const stats = project.stats;
   if (stats === null) return [];
-  const facts = [stats.sessions === 1 ? "1 session" : `${stats.sessions} sessions`];
+  const facts = [stats.sessions === 1 ? "1 thread" : `${stats.sessions} threads`];
   // `live` is null unless a core for the project is retained by this app: an
   // unopened project's `running` rows may be a crashed process's residue.
   if (stats.live !== null && stats.live > 0) facts.push(`${stats.live} live`);

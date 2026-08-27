@@ -12,10 +12,14 @@ import {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import type { Question } from "@daydream-code/questions";
+import type { NextMessage } from "@daydream-code/session";
 import { useHarness } from "../harness.js";
+import { NextMessageQueue, useNextMessageControls } from "./Composer.js";
 import {
   answeredCount,
   buildAnswers,
@@ -30,6 +34,8 @@ import {
 export function QuestionPrompt(props: {
   sessionId: string;
   pending: PendingQuestionView;
+  nextMessages: NextMessage[];
+  onNextMessages: Dispatch<SetStateAction<NextMessage[]>>;
   onError(message: string): void;
 }): ReactNode {
   const { api } = useHarness();
@@ -38,6 +44,11 @@ export function QuestionPrompt(props: {
   const [index, setIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const customRef = useRef<HTMLInputElement>(null);
+  const nextControls = useNextMessageControls(
+    props.sessionId,
+    props.onNextMessages,
+    props.onError,
+  );
 
   // A new request is a new set of answers; reusing them would silently carry a
   // previous question's pick into this one.
@@ -108,6 +119,12 @@ export function QuestionPrompt(props: {
 
   return (
     <div className="composer composer-question">
+      <NextMessageQueue
+        messages={props.nextMessages}
+        busyId={nextControls.busyId}
+        onCancel={nextControls.cancel}
+        onCancelEdit={nextControls.cancelEdit}
+      />
       <div className="question-card">
         <div className="question-head">
           <span className="question-chip">{active.header}</span>

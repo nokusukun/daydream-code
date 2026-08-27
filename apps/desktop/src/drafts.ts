@@ -29,14 +29,20 @@ import { attachmentSummary, type Attachment } from "./attachments.js";
 export interface Draft {
   text: string;
   attachments: Attachment[];
+  /** Queue item currently claimed by this composer for editing. */
+  queuedDeliveryId?: string;
 }
 
 /** The one empty draft. Shared so "has nothing" is an identity comparison. */
 export const EMPTY_DRAFT: Draft = { text: "", attachments: [] };
 
-/** True when there is nothing worth keeping — no text and no images. */
+/** True when there is nothing worth keeping, including an active queue edit. */
 export function isEmptyDraft(draft: Draft): boolean {
-  return draft.text.length === 0 && draft.attachments.length === 0;
+  return (
+    draft.text.length === 0 &&
+    draft.attachments.length === 0 &&
+    draft.queuedDeliveryId === undefined
+  );
 }
 
 /** Draft key for the not-yet-dispatched session; every other key is a session id. */
@@ -68,6 +74,7 @@ export interface DraftStoreOptions {
 interface Entry {
   text: string;
   attachments: Attachment[];
+  queuedDeliveryId?: string;
   at: number;
   /** Anything a later version wrote; preserved verbatim on rewrite. */
   rest?: Record<string, unknown>;
@@ -125,15 +132,31 @@ function parseEntry(raw: string | null): Entry | null {
       text,
       at: rawAt,
       attachments: rawAttachments,
+      queuedDeliveryId: rawQueuedDeliveryId,
       ...rest
     } = value as Record<string, unknown> & { text: string };
     const at = typeof rawAt === "number" ? rawAt : 0;
     const attachments = parseAttachments(rawAttachments);
-    // An image with no caption is still a draft; only the empty one is not.
-    if (text.length === 0 && attachments.length === 0) return null;
-    return Object.keys(rest).length === 0
-      ? { text, attachments, at }
-      : { text, attachments, at, rest };
+    const queuedDeliveryId =
+      typeof rawQueuedDeliveryId === "string" && rawQueuedDeliveryId.length > 0
+        ? rawQueuedDeliveryId
+        : undefined;
+    // An image with no caption is still a draft. So is an empty queue edit:
+    // clearing the field must not lose the id needed to cancel or save it.
+    if (
+      text.length === 0 &&
+      attachments.length === 0 &&
+      queuedDeliveryId === undefined
+    ) {
+      return null;
+    }
+    const own = {
+      text,
+      attachments,
+      at,
+      ...(queuedDeliveryId !== undefined ? { queuedDeliveryId } : {}),
+    };
+    return Object.keys(rest).length === 0 ? own : { ...own, rest };
   } catch {
     return null;
   }
@@ -196,6 +219,7 @@ export class DraftStore {
     if (
       current !== undefined &&
       current.text === draft.text &&
+      current.queuedDeliveryId === draft.queuedDeliveryId &&
       sameAttachments(current.attachments, draft.attachments)
     ) {
       return;
@@ -203,6 +227,9 @@ export class DraftStore {
     this.#entries.set(key, {
       text: draft.text,
       attachments: draft.attachments,
+      ...(draft.queuedDeliveryId !== undefined
+        ? { queuedDeliveryId: draft.queuedDeliveryId }
+        : {}),
       at: this.#now(),
       ...(current?.rest !== undefined ? { rest: current.rest } : {}),
     });
@@ -224,6 +251,9 @@ export class DraftStore {
     this.set(key, {
       text: draft.text,
       attachments: [...draft.attachments, attachment],
+      ...(draft.queuedDeliveryId !== undefined
+        ? { queuedDeliveryId: draft.queuedDeliveryId }
+        : {}),
     });
   }
 
@@ -231,7 +261,13 @@ export class DraftStore {
     const draft = this.get(key);
     const attachments = draft.attachments.filter((a) => a.blobId !== blobId);
     if (attachments.length === draft.attachments.length) return;
-    this.set(key, { text: draft.text, attachments });
+    this.set(key, {
+      text: draft.text,
+      attachments,
+      ...(draft.queuedDeliveryId !== undefined
+        ? { queuedDeliveryId: draft.queuedDeliveryId }
+        : {}),
+    });
   }
 
   clear(key: string): void {
@@ -321,12 +357,19 @@ export class DraftStore {
       const unchanged =
         before !== undefined &&
         before.text === entry.text &&
+        before.queuedDeliveryId === entry.queuedDeliveryId &&
         sameAttachments(before.attachments, entry.attachments);
       next.set(
         key,
         unchanged
           ? before
-          : { text: entry.text, attachments: entry.attachments },
+          : {
+              text: entry.text,
+              attachments: entry.attachments,
+              ...(entry.queuedDeliveryId !== undefined
+                ? { queuedDeliveryId: entry.queuedDeliveryId }
+                : {}),
+            },
       );
     }
     this.#snapshot = next;

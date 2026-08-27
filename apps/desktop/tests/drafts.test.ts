@@ -99,6 +99,22 @@ describe("DraftStore", () => {
     expect(storage.map.size).toBe(0);
   });
 
+  it("keeps an empty queued-message edit through a reload", () => {
+    const storage = new FakeStorage();
+    const drafts = store(storage);
+    drafts.set("ses_1", {
+      text: "",
+      attachments: [],
+      queuedDeliveryId: "msg_1",
+    });
+    expect(drafts.keys()).toEqual(["ses_1"]);
+    expect(store(storage).get("ses_1")).toEqual({
+      text: "",
+      attachments: [],
+      queuedDeliveryId: "msg_1",
+    });
+  });
+
   it("lists the sessions holding a draft", () => {
     const drafts = store(new FakeStorage());
     type_(drafts, "ses_1", "one");

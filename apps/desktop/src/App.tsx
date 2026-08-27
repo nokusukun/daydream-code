@@ -9,26 +9,32 @@
  * next to a 250px run list next to a transcript is three columns none of which
  * is wide enough to read.
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { bridge, connectionFromQuery, type ConnectionInfo } from "./bridge.js";
 import { useAppearance, type ThemeState } from "./appearance.js";
-import { HarnessProvider, useHarness, type Mode } from "./harness.js";
+import { HarnessProvider, useHarness } from "./harness.js";
 import { WorkspaceProvider, useWorkspace } from "./workspace.js";
 import { SplitPane } from "./split.js";
 import { ProjectPicker } from "./views/ProjectPicker.js";
 import { ProjectSwitcher, useSwitcherHotkey } from "./views/ProjectSwitcher.js";
-import { ThreadRail } from "./views/ThreadRail.js";
-import { FileTree } from "./views/FileTree.js";
-import { MasterPanel } from "./views/MasterPanel.js";
-import { SessionPanel } from "./views/SessionPanel.js";
-import { CodeView } from "./views/CodeView.js";
-import { ActivityMenu } from "./views/ActivityMenu.js";
 import { ProjectFanoutProvider } from "./project-fanout.js";
-import { AppMenu } from "./views/AppMenu.js";
-import { CommandPalette } from "./views/CommandPalette.js";
-import { QuickActions } from "./views/QuickActions.js";
-import { FibersSheet } from "./views/FibersSheet.js";
-import { ArchiveSheet } from "./views/ArchiveSheet.js";
+import {
+  DesktopHostProvider,
+  type DesktopHost,
+  type ProjectSwitcherHost,
+} from "./modules/host.js";
+import {
+  ModuleBoundary,
+  useDesktopModuleRuntime,
+  useDesktopModules,
+} from "./modules/react.js";
 
 export function App(): ReactNode {
   const [opened, setOpened] = useState<{
@@ -147,27 +153,12 @@ export function App(): ReactNode {
   );
 }
 
-/** Everything the toolbar switcher needs, absent when there is no bridge. */
-interface SwitcherProps {
-  opening: string | null;
-  error: string | null;
-  onOpen(rootPath: string): void;
-  onOpenSession(rootPath: string, sessionId: string): void;
-  onPick(): void;
-}
-
-const MODES: Array<[Mode, string]> = [
-  ["agent", "Agent"],
-  ["code", "Code"],
-];
-
 function Workspace(props: {
   theme: ThemeState;
-  switcher?: SwitcherProps | undefined;
+  switcher?: ProjectSwitcherHost | undefined;
 }): ReactNode {
   const {
     connection,
-    selected,
     newSession,
     overlay,
     setOverlay,
@@ -177,24 +168,53 @@ function Workspace(props: {
     toggleSidebar,
   } = useHarness();
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const modules = useDesktopModules<DesktopHost>();
+  const moduleRuntime = useDesktopModuleRuntime<DesktopHost>();
   const hasSwitcher = props.switcher !== undefined;
   const toggleSwitcher = useCallback(() => {
     if (hasSwitcher) setSwitcherOpen((o) => !o);
   }, [hasSwitcher]);
   useSwitcherHotkey(toggleSwitcher);
 
+  const openSwitcher = useCallback(() => {
+    if (hasSwitcher) setSwitcherOpen(true);
+  }, [hasSwitcher]);
+  const host = useMemo<DesktopHost>(
+    () => ({
+      theme: props.theme,
+      ...(props.switcher === undefined ? {} : { switcher: props.switcher }),
+      openSwitcher,
+    }),
+    [props.theme, props.switcher, openSwitcher],
+  );
+
+  const activeMode = modules.modes.find((entry) => entry.id === mode);
+  const loadingModules = modules.statuses.some(
+    (entry) => entry.state === "loading",
+  );
+  const failedModules = modules.statuses.filter(
+    (entry) => entry.state === "failed",
+  );
+  const activeOverlay =
+    overlay === null
+      ? undefined
+      : modules.overlays.find((entry) => entry.id === overlay);
+
+  // Do not jump to whichever module wins an import race. Once discovery has
+  // settled, fall back only if the selected mode genuinely is unavailable.
+  useEffect(() => {
+    if (
+      !loadingModules &&
+      activeMode === undefined &&
+      modules.modes[0] !== undefined
+    ) {
+      setMode(modules.modes[0].id);
+    }
+  }, [activeMode, loadingModules, modules.modes, setMode]);
+
   // App-level shortcuts, bound here rather than per-view because none of them
   // belongs to a view: ⌘K and ⌘N reach the whole window, ⌘, is the platform's
   // settings key, and ⌘⇧E is what every editor uses to get to the file tree.
-  const panel =
-    mode === "code" ? (
-      <CodeView />
-    ) : selected === null ? (
-      <MasterPanel />
-    ) : (
-      <SessionPanel key={selected} id={selected} />
-    );
-
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (!(event.metaKey || event.ctrlKey)) {
@@ -216,7 +236,9 @@ function Workspace(props: {
       }
       if (key === "e" && event.shiftKey) {
         event.preventDefault();
-        setMode(mode === "code" ? "agent" : "code");
+        const at = modules.modes.findIndex((entry) => entry.id === mode);
+        const next = modules.modes[(at + 1) % modules.modes.length];
+        if (next !== undefined) setMode(next.id);
       }
       if (event.key === ",") {
         event.preventDefault();
@@ -225,10 +247,26 @@ function Workspace(props: {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [overlay, setOverlay, newSession, toggleSidebar, setMode, mode]);
+  }, [overlay, setOverlay, newSession, toggleSidebar, setMode, mode, modules.modes]);
+
+  const Panel = activeMode?.panel;
+  const panel =
+    Panel === undefined ? (
+      <main className="panel module-empty" aria-busy={loadingModules}>
+        {loadingModules
+          ? "loading desktop modules…"
+          : "no workspace module is available"}
+      </main>
+    ) : (
+      <ModuleBoundary moduleId={activeMode?.id ?? mode} surface="panel">
+        <Panel />
+      </ModuleBoundary>
+    );
+  const Sidebar = activeMode?.sidebar;
 
   return (
-    <div className="app">
+    <DesktopHostProvider value={host}>
+      <div className="app">
       <header className="toolbar">
         {/* The traffic lights sit in this strip under `hiddenInset`; the
             leading gap is theirs, not padding. */}
@@ -252,26 +290,33 @@ function Workspace(props: {
           </div>
         )}
 
-        <div className="segmented segmented-mode" role="tablist" aria-label="Mode">
-          {MODES.map(([value, label]) => (
+        <div
+          className="segmented segmented-mode"
+          role="tablist"
+          aria-label="Mode"
+        >
+          {modules.modes.map((entry) => (
             <button
               type="button"
-              key={value}
+              key={entry.id}
               role="tab"
-              aria-selected={mode === value}
-              title={`${label} (⌘⇧E)`}
-              onClick={() => setMode(value)}
+              aria-selected={mode === entry.id}
+              title={`${entry.label} (⌘⇧E)`}
+              onClick={() => setMode(entry.id)}
             >
-              {label}
+              {entry.label}
             </button>
           ))}
         </div>
 
         <span className="toolbar-spacer" />
-        <ActivityMenu
-          onOpenProject={props.switcher?.onOpen}
-          onOpenProjectSession={props.switcher?.onOpenSession}
-        />
+        {modules.toolbar
+          .filter((entry) => entry.position === "center")
+          .map(({ id, Component }) => (
+            <ModuleBoundary key={id} moduleId={id} surface="toolbar">
+              <Component host={host} />
+            </ModuleBoundary>
+          ))}
         <span className="toolbar-spacer" />
 
         <button
@@ -285,21 +330,45 @@ function Workspace(props: {
         <button
           type="button"
           className="toolbar-icon"
-          aria-label={props.theme.resolved === "dark" ? "Use light theme" : "Use dark theme"}
+          aria-label={
+            props.theme.resolved === "dark"
+              ? "Use light theme"
+              : "Use dark theme"
+          }
           title={`Appearance: ${props.theme.choice}`}
           onClick={props.theme.toggle}
         >
           {props.theme.resolved === "dark" ? "☀" : "☾"}
         </button>
-        <QuickActions />
-        <AppMenu theme={props.theme} />
+        {failedModules.length > 0 && (
+          <button
+            type="button"
+            className="toolbar-icon module-health"
+            aria-label={`Retry ${failedModules.length} failed desktop modules`}
+            title={failedModules
+              .map((entry) => `${entry.name}: ${entry.error}`)
+              .join("\n")}
+            onClick={() => {
+              for (const entry of failedModules) void moduleRuntime.retry(entry.id);
+            }}
+          >
+            !
+          </button>
+        )}
+        {modules.toolbar
+          .filter((entry) => entry.position === "actions")
+          .map(({ id, Component }) => (
+            <ModuleBoundary key={id} moduleId={id} surface="toolbar">
+              <Component host={host} />
+            </ModuleBoundary>
+          ))}
       </header>
 
       {/* Two ids, not one: a file tree and a run list want different widths,
           and sharing a key would make switching modes resize the other one. */}
-      {sidebar ? (
+      {sidebar && Sidebar !== undefined ? (
         <SplitPane
-          id={mode === "code" ? "shell-tree" : "shell-rail"}
+          id={activeMode?.splitId ?? `shell-${mode}`}
           className="body"
           direction="row"
           fixed="first"
@@ -308,7 +377,12 @@ function Workspace(props: {
           max={520}
           first={
             <aside className="sidebar glass">
-              {mode === "agent" ? <ThreadRail /> : <FileTree />}
+              <ModuleBoundary
+                moduleId={activeMode?.id ?? mode}
+                surface="sidebar"
+              >
+                <Sidebar />
+              </ModuleBoundary>
             </aside>
           }
           second={panel}
@@ -317,14 +391,18 @@ function Workspace(props: {
         <div className="body">{panel}</div>
       )}
 
-      {overlay === "palette" && (
-        <CommandPalette
-          onSwitchProject={hasSwitcher ? () => setSwitcherOpen(true) : undefined}
-        />
+      {activeOverlay !== undefined && (
+        <ModuleBoundary
+          key={activeOverlay.id}
+          moduleId={activeOverlay.id}
+          surface="overlay"
+          onDismiss={() => setOverlay(null)}
+        >
+          <activeOverlay.Component />
+        </ModuleBoundary>
       )}
-      {overlay === "fibers" && <FibersSheet />}
-      {overlay === "archive" && <ArchiveSheet />}
-    </div>
+      </div>
+    </DesktopHostProvider>
   );
 }
 

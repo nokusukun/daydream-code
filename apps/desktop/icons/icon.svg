@@ -1,18 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
     <linearGradient id="g" x1="512" y1="96" x2="512" y2="928" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#39445A"/>
-      <stop offset="1" stop-color="#1A2030"/>
+      <stop offset="0" stop-color="#FAF8F3"/>
+      <stop offset="1" stop-color="#E7EAF0"/>
     </linearGradient>
     <linearGradient id="spec" x1="512" y1="96" x2="512" y2="420" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.15"/>
-      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0" stop-color="#FFFEFC" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#FFFEFC" stop-opacity="0"/>
     </linearGradient>
   </defs>
   <rect x="96" y="96" width="832" height="832" rx="186" fill="url(#g)"/>
   <rect x="96" y="96" width="832" height="832" rx="186" fill="url(#spec)"/>
-  <rect x="97.5" y="97.5" width="829" height="829" rx="184.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.15" stroke-width="3"/>
-  <path d="M512 276 L748 512 L512 748 L276 512 Z" fill="none" stroke="#EEF2F8"
+  <rect x="97.5" y="97.5" width="829" height="829" rx="184.5" fill="none" stroke="#B8C0CC" stroke-opacity="0.62" stroke-width="3"/>
+  <path d="M512 276 L748 512 L512 748 L276 512 Z" fill="none" stroke="#5A6575"
         stroke-width="58" stroke-linejoin="round"/>
-  <path d="M512 406 L618 512 L512 618 L406 512 Z" fill="#4EA3FF"/>
+  <path d="M512 406 L618 512 L512 618 L406 512 Z" fill="#82ACE3"/>
 </svg>
