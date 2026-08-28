@@ -467,8 +467,19 @@ pre {
   flex: 1;
 }
 
+.mode-control {
+  position: relative;
+  flex: none;
+}
+
+.mode-menu-trigger,
+.mode-pop {
+  display: none;
+}
+
 /* The palette trigger reads as a search field, the way a Mac toolbar does. */
 .titlebar-search {
+  flex: none;
   display: flex;
   align-items: center;
   gap: var(--s2);
@@ -486,13 +497,98 @@ pre {
   font-size: var(--text-sm);
   transition: border-color var(--t-fast) var(--ease-out-quart),
     background var(--t-fast) var(--ease-out-quart),
-    box-shadow var(--t-fast) var(--ease-out-quart);
+    box-shadow var(--t-fast) var(--ease-out-quart),
+    transform var(--t-instant) var(--ease-out-quart);
 }
 
 .titlebar-search:hover {
   border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
   background: var(--tb-control-hi);
   box-shadow: var(--glass-control-shadow-hi);
+}
+
+.titlebar-search:active {
+  transform: scale(0.97);
+}
+
+.titlebar-search svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.35;
+  vector-effect: non-scaling-stroke;
+}
+
+.titlebar-search-label {
+  white-space: nowrap;
+}
+
+/*
+ * Search, appearance, quick actions and settings are four segments of one
+ * toolbar control. The shell owns the material and outline; each action owns
+ * only its hit area and hover state, like the composer's split send button.
+ */
+.toolbar-actions {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  height: var(--tb-control-h);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--tb-control);
+  backdrop-filter: var(--glass-control-filter);
+  -webkit-backdrop-filter: var(--glass-control-filter);
+  box-shadow: var(--glass-control-shadow);
+}
+
+.toolbar-actions > * {
+  flex: none;
+}
+
+.toolbar-actions > * + * {
+  border-left: 1px solid var(--border);
+}
+
+.toolbar-actions .titlebar-search,
+.toolbar-actions .toolbar-icon {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+.toolbar-actions > .titlebar-search:first-child {
+  border-radius: 999px 0 0 999px;
+}
+
+.toolbar-actions > button:last-child,
+.toolbar-actions > :last-child > .toolbar-icon {
+  border-radius: 0 999px 999px 0;
+}
+
+.toolbar-actions .quick-actions,
+.toolbar-actions .app-menu {
+  height: 100%;
+}
+
+.toolbar-actions .titlebar-search:hover,
+.toolbar-actions .toolbar-icon:hover {
+  border-color: transparent;
+  background: var(--tb-control-hi);
+  box-shadow: none;
+}
+
+.toolbar-actions .titlebar-search:active,
+.toolbar-actions .toolbar-icon:active {
+  transform: none;
+  box-shadow: inset 0 1px 2px var(--glass-shade);
 }
 
 /*
@@ -6152,7 +6248,91 @@ table.fibers td:first-child {
   }
 
   .titlebar-search {
+    display: grid;
+    place-items: center;
+    width: var(--tb-control-h);
+    min-width: var(--tb-control-h);
+    padding: 0;
+    gap: 0;
+  }
+
+  .titlebar-search-label,
+  .titlebar-search kbd {
     display: none;
+  }
+
+  .segmented-mode {
+    display: none;
+  }
+
+  .mode-menu-trigger {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    height: var(--tb-control-h);
+    min-width: 88px;
+    padding: 0 var(--s2) 0 var(--s3);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--tb-control);
+    backdrop-filter: var(--glass-control-filter);
+    -webkit-backdrop-filter: var(--glass-control-filter);
+    box-shadow: var(--glass-control-shadow);
+    color: var(--text-1);
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 590;
+  }
+
+  .mode-menu-trigger:hover,
+  .mode-menu-trigger[aria-expanded="true"] {
+    border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+    background: var(--tb-control-hi);
+    box-shadow: var(--glass-control-shadow-hi);
+  }
+
+  .mode-menu-trigger span {
+    flex: 1;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .mode-menu-trigger svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.35;
+  }
+
+  .mode-pop {
+    display: block;
+    left: 0;
+    width: 180px;
+  }
+
+  .mode-pop-row {
+    flex-wrap: nowrap;
+  }
+
+  .mode-pop-check {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 14px;
+    color: var(--accent-ink);
+  }
+
+  .mode-pop-check svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.6;
   }
 }
 

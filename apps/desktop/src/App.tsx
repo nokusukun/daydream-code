@@ -21,6 +21,7 @@ import { bridge, connectionFromQuery, type ConnectionInfo } from "./bridge.js";
 import { useAppearance, type ThemeState } from "./appearance.js";
 import { HarnessProvider, useHarness } from "./harness.js";
 import { WorkspaceProvider, useWorkspace } from "./workspace.js";
+import { useDismiss } from "./overlay.js";
 import { SplitPane } from "./split.js";
 import { ProjectPicker } from "./views/ProjectPicker.js";
 import { ProjectSwitcher, useSwitcherHotkey } from "./views/ProjectSwitcher.js";
@@ -168,6 +169,8 @@ function Workspace(props: {
     toggleSidebar,
   } = useHarness();
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const modeMenuRef = useRef<HTMLDivElement>(null);
   const modules = useDesktopModules<DesktopHost>();
   const moduleRuntime = useDesktopModuleRuntime<DesktopHost>();
   const hasSwitcher = props.switcher !== undefined;
@@ -175,6 +178,7 @@ function Workspace(props: {
     if (hasSwitcher) setSwitcherOpen((o) => !o);
   }, [hasSwitcher]);
   useSwitcherHotkey(toggleSwitcher);
+  useDismiss(modeMenuRef, modeMenuOpen, () => setModeMenuOpen(false));
 
   const openSwitcher = useCallback(() => {
     if (hasSwitcher) setSwitcherOpen(true);
@@ -290,23 +294,66 @@ function Workspace(props: {
           </div>
         )}
 
-        <div
-          className="segmented segmented-mode"
-          role="tablist"
-          aria-label="Mode"
-        >
-          {modules.modes.map((entry) => (
-            <button
-              type="button"
-              key={entry.id}
-              role="tab"
-              aria-selected={mode === entry.id}
-              title={`${entry.label} (⌘⇧E)`}
-              onClick={() => setMode(entry.id)}
-            >
-              {entry.label}
-            </button>
-          ))}
+        <div className="mode-control" ref={modeMenuRef}>
+          <div
+            className="segmented segmented-mode"
+            role="tablist"
+            aria-label="Mode"
+          >
+            {modules.modes.map((entry) => (
+              <button
+                type="button"
+                key={entry.id}
+                role="tab"
+                aria-selected={mode === entry.id}
+                title={`${entry.label} (⌘⇧E)`}
+                onClick={() => setMode(entry.id)}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="mode-menu-trigger"
+            aria-label={`Workspace view: ${activeMode?.label ?? "View"}`}
+            aria-expanded={modeMenuOpen}
+            aria-haspopup="menu"
+            title="Switch workspace view (⌘⇧E)"
+            onClick={() => setModeMenuOpen((open) => !open)}
+          >
+            <span>{activeMode?.label ?? "View"}</span>
+            <svg viewBox="0 0 12 12" aria-hidden="true">
+              <path d="m3.25 4.75 2.75 2.5 2.75-2.5" />
+            </svg>
+          </button>
+          {modeMenuOpen && (
+            <div className="mode-pop pop" role="menu" aria-label="Workspace view">
+              <div className="pop-head">view</div>
+              {modules.modes.map((entry) => (
+                <button
+                  type="button"
+                  key={entry.id}
+                  className="pop-row mode-pop-row"
+                  role="menuitemradio"
+                  aria-checked={mode === entry.id}
+                  onClick={() => {
+                    setMode(entry.id);
+                    setModeMenuOpen(false);
+                  }}
+                >
+                  <span className="mode-pop-check" aria-hidden="true">
+                    {mode === entry.id && (
+                      <svg viewBox="0 0 12 12">
+                        <path d="m2.25 6.25 2.35 2.2 5.15-5.1" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className="pop-row-title">{entry.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <span className="toolbar-spacer" />
@@ -319,49 +366,87 @@ function Workspace(props: {
           ))}
         <span className="toolbar-spacer" />
 
-        <button
-          type="button"
-          className="titlebar-search"
-          onClick={() => setOverlay("palette")}
-        >
-          Search or jump to…
-          <kbd>⌘K</kbd>
-        </button>
-        <button
-          type="button"
-          className="toolbar-icon"
-          aria-label={
-            props.theme.resolved === "dark"
-              ? "Use light theme"
-              : "Use dark theme"
-          }
-          title={`Appearance: ${props.theme.choice}`}
-          onClick={props.theme.toggle}
-        >
-          {props.theme.resolved === "dark" ? "☀" : "☾"}
-        </button>
-        {failedModules.length > 0 && (
+        <div className="toolbar-actions" role="group" aria-label="Toolbar actions">
           <button
             type="button"
-            className="toolbar-icon module-health"
-            aria-label={`Retry ${failedModules.length} failed desktop modules`}
-            title={failedModules
-              .map((entry) => `${entry.name}: ${entry.error}`)
-              .join("\n")}
-            onClick={() => {
-              for (const entry of failedModules) void moduleRuntime.retry(entry.id);
-            }}
+            className="titlebar-search"
+            aria-label="Search or jump to"
+            title="Search or jump to (Command-K)"
+            onClick={() => setOverlay("palette")}
           >
-            !
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="7" cy="7" r="4.25" />
+              <path d="m10.25 10.25 3 3" />
+            </svg>
+            <span className="titlebar-search-label">Search or jump to…</span>
+            <kbd>⌘K</kbd>
           </button>
-        )}
-        {modules.toolbar
-          .filter((entry) => entry.position === "actions")
-          .map(({ id, Component }) => (
-            <ModuleBoundary key={id} moduleId={id} surface="toolbar">
-              <Component host={host} />
-            </ModuleBoundary>
-          ))}
+          <button
+            type="button"
+            className="toolbar-icon"
+            aria-label={
+              props.theme.resolved === "dark"
+                ? "Use light theme"
+                : "Use dark theme"
+            }
+            title={`Appearance: ${props.theme.choice}`}
+            onClick={props.theme.toggle}
+          >
+            {props.theme.resolved === "dark" ? (
+              <svg
+                viewBox="0 0 16 16"
+                width="15"
+                height="15"
+                aria-hidden="true"
+                focusable="false"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+              >
+                <circle cx="8" cy="8" r="2.6" />
+                <path d="M8 1.5v1.3M8 13.2v1.3M1.5 8h1.3M13.2 8h1.3M3.4 3.4l.9.9M11.7 11.7l.9.9M12.6 3.4l-.9.9M4.3 11.7l-.9.9" />
+              </svg>
+            ) : (
+              <svg
+                viewBox="0 0 16 16"
+                width="15"
+                height="15"
+                aria-hidden="true"
+                focusable="false"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12.9 10.5A5.65 5.65 0 0 1 5.5 3.1 5.65 5.65 0 1 0 12.9 10.5Z" />
+              </svg>
+            )}
+          </button>
+          {failedModules.length > 0 && (
+            <button
+              type="button"
+              className="toolbar-icon module-health"
+              aria-label={`Retry ${failedModules.length} failed desktop modules`}
+              title={failedModules
+                .map((entry) => `${entry.name}: ${entry.error}`)
+                .join("\n")}
+              onClick={() => {
+                for (const entry of failedModules) void moduleRuntime.retry(entry.id);
+              }}
+            >
+              !
+            </button>
+          )}
+          {modules.toolbar
+            .filter((entry) => entry.position === "actions")
+            .map(({ id, Component }) => (
+              <ModuleBoundary key={id} moduleId={id} surface="toolbar">
+                <Component host={host} />
+              </ModuleBoundary>
+            ))}
+        </div>
       </header>
 
       {/* Two ids, not one: a file tree and a run list want different widths,
