@@ -9,7 +9,7 @@ import { useMemo, type ReactNode } from "react";
 import type { JournalEvent, SessionRecord, ThreadEntry } from "@daydream-code/shared";
 import { useHarness } from "../harness.js";
 import { elapsedMs, fmtElapsed } from "../sessions.js";
-import { compact } from "./ThreadRail.js";
+import { compact } from "../ui.js";
 
 interface ModelRow {
   key: string;
@@ -144,7 +144,7 @@ export function UsageView(props: {
               {row.label}
               {props.sessions.length > 1 && (
                 <i className="usage-runs">
-                  {row.runs} run{row.runs === 1 ? "" : "s"}
+                  {row.runs} thread{row.runs === 1 ? "" : "s"}
                 </i>
               )}
             </span>
@@ -239,12 +239,12 @@ function buildLedger(
     0,
   );
   return [
-    ["Runs", live > 0 ? `${sessions.length} · ${live} live` : String(sessions.length)],
+    ["Threads", live > 0 ? `${sessions.length} · ${live} live` : String(sessions.length)],
     ...(failedRuns > 0
       ? ([["Failed", String(failedRuns)]] as Array<[string, string]>)
       : []),
-    ["Longest run", fmtElapsed(busiest)],
+    ["Longest thread", fmtElapsed(busiest)],
     ["Cost", `$${cost.toFixed(4)}`],
-    ["Cost / run", `$${(cost / Math.max(1, sessions.length)).toFixed(4)}`],
+    ["Cost / thread", `$${(cost / Math.max(1, sessions.length)).toFixed(4)}`],
   ];
 }

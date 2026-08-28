@@ -204,6 +204,8 @@ export type JournalEventType =
   | "context_assembled"
   | "compaction"
   | "driver_error"
+  | "model_changed"
+  | "handoff"
   | "session_ended"
   | (string & {});
 
@@ -298,6 +300,13 @@ export interface SessionRecord {
   task: string;
   driver: string;
   modelId: string | null;
+  /**
+   * Reasoning-effort level pinned at dispatch, or null for the driver's own
+   * default. A driver-native string ("xhigh", codex's "minimal"), not an enum
+   * here: the valid set differs per provider and per model, so the driver that
+   * spends the tokens is the one that validates it.
+   */
+  effort: string | null;
   status: SessionStatus;
   lastSeenMasterSeq: number;
   startedAt: string;

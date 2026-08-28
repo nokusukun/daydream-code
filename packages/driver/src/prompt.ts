@@ -21,17 +21,35 @@ function renderContent(content: ModelMessage["content"]): string {
   return content.map(renderPart).join("\n");
 }
 
+function renderBlocks(messages: readonly ModelMessage[]): string {
+  return messages
+    .map((message) => `[${message.role}]\n${renderContent(message.content)}`)
+    .join("\n\n");
+}
+
 /**
  * Render the forked master-thread context as a delimited transcript preamble
  * followed by the task. With no context, the task is the whole prompt.
+ *
+ * `transcript` is the session's *own* prior conversation, replayed from the
+ * journal when no provider-side history exists (the agent driving the thread
+ * changed). It gets its own delimiter — labelling it `master-thread` would
+ * tell the model its earlier turns were someone else's.
  */
 export function renderInitialPrompt(
   context: readonly ModelMessage[],
   task: string,
+  transcript: readonly ModelMessage[] = [],
 ): string {
-  if (context.length === 0) return task;
-  const blocks = context.map(
-    (message) => `[${message.role}]\n${renderContent(message.content)}`,
-  );
-  return `<master-thread>\n${blocks.join("\n\n")}\n</master-thread>\n\n${task}`;
+  const sections: string[] = [];
+  if (context.length > 0) {
+    sections.push(`<master-thread>\n${renderBlocks(context)}\n</master-thread>`);
+  }
+  if (transcript.length > 0) {
+    sections.push(
+      `<prior-transcript>\nThis thread's earlier turns, replayed because the agent driving it changed and the previous agent's provider-side history is not available to you. Continue this conversation as your own.\n\n${renderBlocks(transcript)}\n</prior-transcript>`,
+    );
+  }
+  sections.push(task);
+  return sections.join("\n\n");
 }

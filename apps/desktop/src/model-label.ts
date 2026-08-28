@@ -39,7 +39,7 @@ export function labelForModel(
   if (modelId === null) {
     // Name the model the driver will actually pick, when it advertises one.
     const fallback = entry?.models.find((m) => m.isDefault === true);
-    return { label: fallback?.label ?? "default model" };
+    return { label: fallback?.label ?? "Default model" };
   }
   const { base, variant } = splitModelId(modelId);
   const known = entry?.models.find((m) => m.id === base)?.label;

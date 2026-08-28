@@ -140,7 +140,7 @@ renderer gets `.no-vibrancy` and paints opaque surfaces instead.
   add a layer without removing noise.
 - **Events with no text are not rendered.** Models that omit thinking still
   journal the event; an empty row is a hairline artifact.
-- **`.transcript > *` and `.thread-feed > *` set `flex: none`.** Flex items
+- **`.transcript > *` and `.runs > *` set `flex: none`.** Flex items
   shrink by default, and in a tall transcript that squeezed single-line rows
   down to their own borders so they rendered as blank hairlines. Any new
   scroller built as a flex column needs the same rule.
@@ -148,7 +148,7 @@ renderer gets `.no-vibrancy` and paints opaque surfaces instead.
   and a pill in the panel header.
 - **The session strip** is one 44px row, never two bands: status dot, title,
   status pill, task, then the facts that move while you watch (provider mark,
-  model, tokens, cost), then actions. Exact timestamps and full token counts
+  model, tokens, elapsed time), then actions. Exact timestamps and full token counts
   live in `title` attributes; the strip shows only what is glanceable, and
   drops the task then the facts as the window narrows.
 - **Providers are marks, not words.** `ProviderIcon` renders the Anthropic and

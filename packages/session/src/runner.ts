@@ -34,9 +34,12 @@ import {
   type AttachmentInput,
   type DeliveryOutcome,
   type DispatchRequest,
+  type HandoffRequest,
+  type ModelChange,
   type NextMessage,
   type SessionHandle,
 } from "./index.js";
+import { transcriptMessages, transcriptText } from "./transcript.js";
 
 interface ActiveRun {
   abort: AbortController;
@@ -48,6 +51,15 @@ interface ActiveRun {
 interface HeldNextMessage {
   view: NextMessage;
   attachments: AttachmentInput[];
+}
+
+interface ModelUndoState {
+  from: {
+    driver: string;
+    modelId: string | null;
+    effort: string | null;
+  };
+  resumeToken: string | null;
 }
 
 type SessionRow = typeof schema.sessions.$inferSelect;
@@ -62,6 +74,7 @@ function rowToRecord(row: SessionRow): SessionRecord {
     task: row.task,
     driver: row.driver,
     modelId: row.modelId,
+    effort: row.effort,
     status: row.status,
     lastSeenMasterSeq: row.lastSeenMasterSeq,
     startedAt: row.startedAt,
@@ -649,6 +662,9 @@ export default class SessionRunner extends Sessions {
         task: request.task,
         driver: driverId,
         modelId: modelId ?? null,
+        // No project-level default, unlike modelId: null means the driver's
+        // own default, which tracks the provider instead of freezing a level.
+        effort: request.effort ?? null,
         status: "running",
         // The fork saw everything up to its cut; awareness starts after it.
         lastSeenMasterSeq: fork.forkedAtSeq ?? 0,
@@ -758,6 +774,7 @@ export default class SessionRunner extends Sessions {
       ...(attachments !== undefined ? { attachments } : {}),
       driver: revived.driver,
       ...(revived.modelId ? { modelId: revived.modelId } : {}),
+      ...(revived.effort ? { effort: revived.effort } : {}),
     });
   }
 
@@ -1029,6 +1046,245 @@ export default class SessionRunner extends Sessions {
   }
 
   /**
+   * Re-point an idle thread at a different agent/model/effort.
+   *
+   * The row update is the whole switch: every revive rebuilds its run from
+   * `record.driver/modelId/effort`, so nothing else has to know. The one
+   * casualty is the active resume token — it is the *old* provider's handle,
+   * keyed by session id alone, and the new provider would either choke on it
+   * or, worse, accept it and overwrite it. It is set aside until the new run
+   * starts so the switch can be undone; its absence from the active slot makes
+   * `#beginRun` replay the journal for the incoming agent.
+   */
+  setModel(id: SessionId, change: ModelChange): SessionRecord {
+    const record = this.#requireIdle(id, "switch the agent of");
+    const driver = change.driver ?? record.driver;
+    const modelId = change.modelId !== undefined ? change.modelId : record.modelId;
+    const effort = change.effort !== undefined ? change.effort : record.effort;
+    if (
+      driver === record.driver &&
+      modelId === record.modelId &&
+      effort === record.effort
+    ) {
+      return record;
+    }
+    const driverChanged = driver !== record.driver;
+    if (driverChanged && this.ctx.drivers.get(driver) === undefined) {
+      // Validated here, not left to run start: a wrong model id fails one run
+      // loudly, but an unknown driver would strand the thread un-runnable with
+      // the mistake already durable.
+      throw new Error(
+        `driver "${driver}" is not registered (available: ${this.ctx.drivers.list().join(", ") || "none"})`,
+      );
+    }
+    const resumeToken = driverChanged ? this.#loadResumeToken(id) : null;
+    const undo: ModelUndoState = {
+      from: {
+        driver: record.driver,
+        modelId: record.modelId,
+        effort: record.effort,
+      },
+      resumeToken,
+    };
+    this.ctx.store.db.transaction((tx) => {
+      tx
+        .update(schema.sessions)
+        .set({ driver, modelId, effort })
+        .where(eq(schema.sessions.id, id))
+        .run();
+      // A model choice is one action with one undo. Any later choice replaces
+      // that action; only a cross-driver switch needs the context safeguard.
+      tx
+        .delete(schema.settings)
+        .where(eq(schema.settings.key, this.#modelUndoKey(id)))
+        .run();
+      if (driverChanged) {
+        tx
+          .insert(schema.settings)
+          .values({
+            key: this.#modelUndoKey(id),
+            valueJson: JSON.stringify(undo),
+            updatedAt: nowIso(),
+          })
+          .run();
+        tx
+          .delete(schema.settings)
+          .where(eq(schema.settings.key, this.#resumeKey(id)))
+          .run();
+      }
+    });
+    const updated = this.get(id)!;
+    // Journaled so the transcript can say the agent changed at this point —
+    // row first, then journal, then broadcast, same order as everything else.
+    this.ctx.journal.append({
+      sessionId: id,
+      type: "model_changed",
+      payload: {
+        from: {
+          driver: record.driver,
+          modelId: record.modelId,
+          effort: record.effort,
+        },
+        to: { driver, modelId, effort },
+        contextRebuilt: driverChanged,
+      },
+    });
+    this.ctx.emit("session/updated", updated);
+    return updated;
+  }
+
+  undoModelChange(id: SessionId): SessionRecord {
+    const record = this.#requireIdle(id, "undo the context rebuild for");
+    const row = this.ctx.store.db
+      .select()
+      .from(schema.settings)
+      .where(eq(schema.settings.key, this.#modelUndoKey(id)))
+      .get();
+    if (row === undefined) {
+      throw new Error(
+        `there is no pending context rebuild to undo for ${record.name}`,
+      );
+    }
+    const undo = JSON.parse(row.valueJson) as ModelUndoState;
+    if (
+      typeof undo?.from?.driver !== "string" ||
+      !(
+        undo.from.modelId === null || typeof undo.from.modelId === "string"
+      ) ||
+      !(undo.from.effort === null || typeof undo.from.effort === "string") ||
+      !(undo.resumeToken === null || typeof undo.resumeToken === "string")
+    ) {
+      throw new Error(`the saved context for ${record.name} cannot be restored`);
+    }
+
+    const restored = undo.from;
+    this.ctx.store.db.transaction((tx) => {
+      tx
+        .update(schema.sessions)
+        .set(restored)
+        .where(eq(schema.sessions.id, id))
+        .run();
+      tx
+        .delete(schema.settings)
+        .where(eq(schema.settings.key, this.#resumeKey(id)))
+        .run();
+      if (undo.resumeToken !== null) {
+        tx
+          .insert(schema.settings)
+          .values({
+            key: this.#resumeKey(id),
+            valueJson: JSON.stringify(undo.resumeToken),
+            updatedAt: nowIso(),
+          })
+          .onConflictDoUpdate({
+            target: schema.settings.key,
+            set: {
+              valueJson: JSON.stringify(undo.resumeToken),
+              updatedAt: nowIso(),
+            },
+          })
+          .run();
+      }
+      tx
+        .delete(schema.settings)
+        .where(eq(schema.settings.key, this.#modelUndoKey(id)))
+        .run();
+    });
+
+    const updated = this.get(id)!;
+    this.ctx.journal.append({
+      sessionId: id,
+      type: "model_changed",
+      payload: {
+        from: {
+          driver: record.driver,
+          modelId: record.modelId,
+          effort: record.effort,
+        },
+        to: restored,
+        contextRebuilt: undo.resumeToken === null,
+        undo: true,
+      },
+    });
+    this.ctx.emit("session/updated", updated);
+    return updated;
+  }
+
+  /**
+   * Dispatch a new thread carrying this one's work: its journal replayed as a
+   * transcript, or the summarizer's digest of it. A plain dispatch underneath,
+   * so the new thread forks master, gets its own name and title from the
+   * instruction line, and shows up everywhere a dispatched thread does.
+   */
+  async handoff(id: SessionId, request: HandoffRequest): Promise<SessionHandle> {
+    const ctx = this.ctx;
+    const source = this.get(id);
+    if (source === undefined) throw new Error(`unknown session "${id}"`);
+    const events = ctx.journal.read({ sessionId: id });
+    let contextBlock: string;
+    if (request.mode === "summary") {
+      const reason =
+        source.status === "failed" || source.status === "killed"
+          ? source.status
+          : "completed";
+      const { summary } = await ctx.summarizer.sessionSummary({
+        session: source,
+        events,
+        reason,
+      });
+      contextBlock = summary;
+    } else {
+      contextBlock = transcriptText(events);
+    }
+    // The instruction goes first because the title and name derive from the
+    // task's opening line — a handoff titled after its boilerplate would read
+    // as thirty identical threads.
+    const instruction =
+      request.task !== undefined && request.task.trim().length > 0
+        ? request.task.trim()
+        : `Take over the thread "${source.name}" (${source.title}) and continue its work.`;
+    const task = [
+      instruction,
+      "",
+      `## Handed off from thread "${source.name}"`,
+      `original task: ${source.task}`,
+      "",
+      request.mode === "summary"
+        ? "### Summary of its work"
+        : "### Its transcript",
+      contextBlock,
+    ].join("\n");
+    // The unspecified agent is the *source's*, not the project default: the
+    // person is handing off this thread, and "same agent, fresh thread" is
+    // the unsurprising reading. Model and effort follow only while the driver
+    // does — they are meaningless in another driver's vocabulary.
+    const driver = request.driver ?? source.driver;
+    const inherit = driver === source.driver;
+    const modelId =
+      request.modelId ?? (inherit ? source.modelId ?? undefined : undefined);
+    const effort =
+      request.effort ?? (inherit ? source.effort ?? undefined : undefined);
+    const handle = await this.dispatch({
+      task,
+      driver,
+      ...(modelId !== undefined ? { modelId } : {}),
+      ...(effort !== undefined ? { effort } : {}),
+    });
+    // Recorded on the source so its transcript names where the work went;
+    // the reverse direction is already in the new thread's opening task.
+    ctx.journal.append({
+      sessionId: id,
+      type: "handoff",
+      payload: {
+        toSessionId: handle.record.id,
+        toName: handle.record.name,
+        mode: request.mode,
+      },
+    });
+    return handle;
+  }
+
+  /**
    * Purge a session: journal events, thread, thread entries, row.
    *
    * The order is load-bearing. Migration v4 scopes `journal_no_delete` to
@@ -1057,6 +1313,10 @@ export default class SessionRunner extends Sessions {
         .delete(schema.settings)
         .where(eq(schema.settings.key, this.#resumeKey(id)))
         .run();
+      tx
+        .delete(schema.settings)
+        .where(eq(schema.settings.key, this.#modelUndoKey(id)))
+        .run();
     });
     this.ctx.emit("session/deleted", record);
     return record;
@@ -1083,6 +1343,10 @@ export default class SessionRunner extends Sessions {
 
   #resumeKey(id: string): string {
     return `driver_resume:${id}`;
+  }
+
+  #modelUndoKey(id: string): string {
+    return `model_undo:${id}`;
   }
 
   #loadResumeToken(id: string): string | null {
@@ -1182,10 +1446,26 @@ export default class SessionRunner extends Sessions {
     // cheap on a re-run, and it fails loudly here rather than mid-turn.
     const taskImages = this.#ingest(request.attachments);
 
+    // Starting the next run consumes a pending cross-driver switch. From this
+    // point the new provider may append work of its own, so restoring the old
+    // provider token would silently omit that work. Retire undo before any
+    // driver code runs, including a run that fails during startup.
+    this.ctx.store.db
+      .delete(schema.settings)
+      .where(eq(schema.settings.key, this.#modelUndoKey(record.id)))
+      .run();
     const resumeToken = this.#loadResumeToken(record.id);
     // With a driver-native resume token the driver already holds the full
     // transcript; otherwise seed with the forked master-thread context.
     const context = resumeToken ? [] : ctx.threads.liveMessages(record.threadId);
+    // A token-less run of a thread that has already spoken means the provider
+    // holds none of its history — the agent was switched (setModel moves the
+    // token aside) or the previous driver kept no state. Replay the journal so the
+    // thread stays one conversation instead of restarting with amnesia. Fresh
+    // dispatches have an empty journal, so this is [] exactly when it should be.
+    const transcript = resumeToken
+      ? []
+      : transcriptMessages(ctx.journal.read({ sessionId: record.id }));
 
     let turnEvents: JournalEvent[] = [];
     let usage: Usage = zeroUsage();
@@ -1237,8 +1517,12 @@ export default class SessionRunner extends Sessions {
             task,
             driver: record.driver,
             modelId: record.modelId,
+            effort: record.effort,
             contextMessages: context.length,
             resumed: resumeToken !== null,
+            ...(transcript.length > 0
+              ? { transcriptMessages: transcript.length }
+              : {}),
             ...(taskImages.length > 0 ? { images: taskImages } : {}),
           },
         });
@@ -1252,12 +1536,14 @@ export default class SessionRunner extends Sessions {
             task,
             ...(taskImages.length > 0 ? { taskImages } : {}),
             modelId: record.modelId,
+            effort: record.effort,
             tools: ctx.tools.list(),
             onEvent,
             drainInjections,
             signal: (abort as unknown as { signal: AbortSignal }).signal,
             permissionMode: request.permissionMode ?? "auto",
             resumeToken,
+            ...(transcript.length > 0 ? { transcript } : {}),
           });
         } finally {
           // Released here rather than in the outer finally so the settle lands

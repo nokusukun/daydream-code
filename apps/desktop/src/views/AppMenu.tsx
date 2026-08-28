@@ -13,7 +13,7 @@ import type { ProjectRecord } from "@daydream-code/shared";
 import { bridge } from "../bridge.js";
 import { useHarness } from "../harness.js";
 import { GearIcon } from "../ui.js";
-import { useDismiss } from "./ActivityMenu.js";
+import { useDismiss } from "../overlay.js";
 import type { ThemeState, ThemeChoice } from "../appearance.js";
 
 const THEMES: Array<[ThemeChoice, string]> = [
@@ -89,7 +89,7 @@ export function AppMenu(props: { theme: ThemeState }): ReactNode {
 
           <div className="pop-field">
             <span className="pop-field-label">Default model</span>
-            <span className="pop-value" title="Used by every new run in this project">
+            <span className="pop-value" title="Used by every new thread in this project">
               {model === null ? "…" : model.label}
               {model?.variant !== undefined && <i>{model.variant}</i>}
             </span>

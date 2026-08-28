@@ -10,9 +10,10 @@
  * It shares `.sheet` with the fibers overlay and the palette rather than
  * inventing a surface, so the three overlays read as one kind of thing.
  */
-import { useMemo, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { sessionActivityAt, type SessionRecord } from "@daydream-code/shared";
 import { useHarness } from "../harness.js";
+import { useDismiss, useInitialFocus } from "../overlay.js";
 import { clip } from "../master.js";
 import { StatusGlyph, fmtAgo, fmtTime } from "../ui.js";
 import { railSessions, useSessionActions, useSessions } from "../sessions.js";
@@ -22,6 +23,10 @@ export function ArchiveSheet(): ReactNode {
   const { sessions, loading } = useSessions();
   const { setArchived, remove, failure } = useSessionActions();
   const archived = useMemo(() => railSessions(sessions).archived, [sessions]);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOverlay(null), [setOverlay]);
+  useDismiss(sheetRef, true, close);
+  useInitialFocus(sheetRef);
 
   return (
     <div
@@ -32,19 +37,18 @@ export function ArchiveSheet(): ReactNode {
       }}
     >
       <div
+        ref={sheetRef}
         className="sheet glass-strong archive-sheet"
         role="dialog"
         aria-modal="true"
-        aria-label="Archived runs"
-        onKeyDown={(event) => {
-          if (event.key === "Escape") setOverlay(null);
-        }}
+        aria-label="Archived threads"
+        tabIndex={-1}
       >
         <header className="sheet-head">
           <h2>archived</h2>
           {!loading && archived.length > 0 && (
             <span className="palette-hint">
-              {archived.length} {archived.length === 1 ? "run" : "runs"}
+              {archived.length} {archived.length === 1 ? "thread" : "threads"}
             </span>
           )}
           <button
@@ -63,9 +67,9 @@ export function ArchiveSheet(): ReactNode {
               into this window is a menu item most people have not found yet. */}
           {!loading && archived.length === 0 && (
             <p className="archive-empty">
-              Nothing archived. Right-click a run in the sidebar and choose
+              Nothing archived. Right-click a thread in the sidebar and choose
               Archive to move it here. It keeps its transcript and stays
-              readable; it just stops competing for the list.
+              readable, just out of the list.
             </p>
           )}
 
@@ -80,8 +84,8 @@ export function ArchiveSheet(): ReactNode {
                 select(session.id as string);
                 setOverlay(null);
               }}
-              onRestore={() => void setArchived(session, false)}
-              onDelete={() => void remove(session)}
+              onRestore={() => setArchived(session, false)}
+              onDelete={() => remove(session)}
             />
           ))}
         </div>
@@ -103,12 +107,27 @@ function ArchivedRow(props: {
   session: SessionRecord;
   model: string;
   onOpen(): void;
-  onRestore(): void;
-  onDelete(): void;
+  onRestore(): Promise<unknown>;
+  onDelete(): Promise<unknown>;
 }): ReactNode {
   const { session } = props;
   const said = clip(session.tldr ?? "", 160);
   const activity = sessionActivityAt(session);
+  const [busy, setBusy] = useState<"restore" | "delete" | null>(null);
+
+  // The row can vanish mid-flight (a successful delete removes it), so the
+  // reset is guarded: setting state on an unmounted row is the classic way a
+  // fix like this becomes a warning in the console.
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+  const run = useCallback(async (action: () => Promise<unknown>) => {
+    setBusy(action === props.onDelete ? "delete" : "restore");
+    try {
+      await action();
+    } finally {
+      if (alive.current) setBusy(null);
+    }
+  }, [props.onDelete]);
 
   return (
     <div className="archive-row">
@@ -132,11 +151,25 @@ function ArchivedRow(props: {
         </span>
       </button>
       <span className="archive-row-actions">
-        <button type="button" className="btn btn-quiet" onClick={props.onRestore}>
-          restore
+        {/* Both requests are awaited but neither button was ever locked, so a
+            second click sent a second DELETE for a thread already gone. */}
+        <button
+          type="button"
+          className="btn btn-quiet"
+          onClick={() => void run(props.onRestore)}
+          disabled={busy !== null}
+          aria-busy={busy === "restore"}
+        >
+          {busy === "restore" ? "restoring…" : "restore"}
         </button>
-        <button type="button" className="btn btn-danger" onClick={props.onDelete}>
-          delete
+        <button
+          type="button"
+          className="btn btn-danger"
+          onClick={() => void run(props.onDelete)}
+          disabled={busy !== null}
+          aria-busy={busy === "delete"}
+        >
+          {busy === "delete" ? "deleting…" : "delete"}
         </button>
       </span>
     </div>

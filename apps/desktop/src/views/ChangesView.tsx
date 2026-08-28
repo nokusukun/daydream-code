@@ -11,10 +11,27 @@
 import { useMemo, type ReactNode } from "react";
 import { useHarness } from "../harness.js";
 import { useWorkspace } from "../workspace.js";
-import type { ChangedFile } from "../api.js";
+import type { ChangedFile, FileStatus } from "../api.js";
 
 /** Bar widths, scaled against the biggest change in the list, not absolutely. */
 const BAR_MAX = 64;
+
+/**
+ * The letter git prints, as a word.
+ *
+ * The badge itself is `aria-hidden`, so without this the row announces a path
+ * and two numbers and never says what happened to the file.
+ */
+function statusWord(status: FileStatus): string {
+  const words: Record<FileStatus, string> = {
+    M: "modified",
+    A: "added",
+    D: "deleted",
+    R: "renamed",
+    "?": "untracked",
+  };
+  return words[status];
+}
 
 export function ChangesView(props: {
   /**
@@ -55,7 +72,7 @@ export function ChangesView(props: {
         <p className="empty-title">Not a git repository</p>
         <p className="empty-body">
           This project is not under version control, so there is no HEAD to
-          compare against. Runs still work; there is just nothing to diff.
+          compare against, so there is nothing to diff.
         </p>
       </div>
     );
@@ -72,7 +89,7 @@ export function ChangesView(props: {
         <p className="empty-body">
           {props.paths === undefined
             ? `Nothing differs from HEAD${status.branch !== null ? ` on ${status.branch}` : ""}.`
-            : "This run has not written a file that still differs from HEAD."}
+            : "This thread has not written a file that still differs from HEAD."}
         </p>
       </div>
     );
@@ -85,7 +102,9 @@ export function ChangesView(props: {
           type="button"
           key={file.path}
           className="change-row"
-          title={file.from !== undefined ? `renamed from ${file.from}` : file.path}
+          title={`${file.path} · ${statusWord(file.status)}${
+            file.from === undefined ? "" : ` from ${file.from}`
+          }`}
           onClick={() => openFile(file.path)}
         >
           <span className={`change-badge change-${file.status}`} aria-hidden="true">

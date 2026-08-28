@@ -1,7 +1,11 @@
 import { z } from "zod";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { createInterface } from "node:readline";
 import { defineConfig, field } from "@daydream-code/config";
 import {
   Codex,
+  type ModelReasoningEffort,
   type Thread,
   type ThreadItem,
   type ThreadOptions,
@@ -16,6 +20,7 @@ import {
 } from "@daydream-code/shared";
 import {
   DriverModelSchema,
+  type AgentSkill,
   type DriverModel,
   type DriverRunInput,
   type DriverSessionResult,
@@ -25,11 +30,39 @@ import { injectedPayload } from "./index.js";
 import { signalAborted } from "./abort.js";
 import { renderInitialPrompt } from "./prompt.js";
 
+/**
+ * The SDK declares one union for every thread rather than a per-model list,
+ * so the catalog mirrors it wholesale below. Typed against the union so an
+ * SDK rename breaks the build here, not a session at runtime.
+ */
+const CODEX_EFFORTS: readonly ModelReasoningEffort[] = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+];
+
+/** Narrow a stored effort string to the SDK's union, loudly. */
+function codexEffort(level: string): ModelReasoningEffort {
+  if (!(CODEX_EFFORTS as readonly string[]).includes(level)) {
+    throw new Error(
+      `unknown effort "${level}" — codex accepts ${CODEX_EFFORTS.join(", ")}`,
+    );
+  }
+  return level as ModelReasoningEffort;
+}
+
 function threadOptions(input: DriverRunInput): ThreadOptions {
   const base: ThreadOptions = {
     workingDirectory: input.workdir,
     skipGitRepoCheck: true,
     ...(input.modelId !== null ? { model: input.modelId } : {}),
+    ...(input.effort !== null
+      ? { modelReasoningEffort: codexEffort(input.effort) }
+      : {}),
   };
   switch (input.permissionMode) {
     case "auto":
@@ -51,9 +84,9 @@ function threadOptions(input: DriverRunInput): ThreadOptions {
 
 /** Baked-in catalog (config-replaceable): the current Codex lineup. */
 const CODEX_MODELS: DriverModel[] = [
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", description: "flagship", isDefault: true },
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", description: "everyday workhorse" },
-  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", description: "fast and affordable" },
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", description: "flagship", isDefault: true, efforts: [...CODEX_EFFORTS] },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", description: "everyday workhorse", efforts: [...CODEX_EFFORTS] },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", description: "fast and affordable", efforts: [...CODEX_EFFORTS] },
 ];
 
 export class CodexDriver implements SessionDriver {
@@ -62,8 +95,14 @@ export class CodexDriver implements SessionDriver {
     readonly models: readonly DriverModel[] = CODEX_MODELS,
   ) {}
 
+  skills(workdir: string): Promise<AgentSkill[]> {
+    return codexSkills(workdir);
+  }
+
   async run(input: DriverRunInput): Promise<DriverSessionResult> {
     const codex = new Codex();
+    // May throw on a bad effort level — before any thread exists, so the
+    // dispatch fails rather than a turn that already cost tokens.
     const options = threadOptions(input);
     const thread: Thread =
       input.resumeToken != null
@@ -240,7 +279,10 @@ export class CodexDriver implements SessionDriver {
     });
 
     try {
-      await runTurn(renderInitialPrompt(input.context, input.task), input.taskImages);
+      await runTurn(
+        renderInitialPrompt(input.context, input.task, input.transcript ?? []),
+        input.taskImages,
+      );
       // Injection loop: keep running follow-up turns while injections queue up.
       while (!signalAborted(input.signal)) {
         const injections = input.drainInjections();
@@ -269,6 +311,157 @@ export class CodexDriver implements SessionDriver {
   }
 }
 
+interface CodexSkillMetadata {
+  name: string;
+  description: string;
+  shortDescription?: string;
+  scope: "user" | "repo" | "system" | "admin";
+  enabled: boolean;
+}
+
+interface CodexSkillsResponse {
+  data: Array<{ cwd: string; skills: CodexSkillMetadata[] }>;
+}
+
+interface CodexExecutable {
+  executablePath: string;
+  pathDirs: string[];
+}
+
+/**
+ * The SDK resolves a bundled, platform-specific CLI but does not expose its
+ * path publicly. Its runtime object retains the resolved executable for turn
+ * spawning; reading that value keeps discovery on the exact same Codex build
+ * as the agent instead of hoping a different `codex` happens to be on PATH.
+ */
+function codexExecutable(): CodexExecutable {
+  const instance = new Codex() as unknown as {
+    exec?: { executablePath?: unknown; pathDirs?: unknown };
+  };
+  const executablePath = instance.exec?.executablePath;
+  const pathDirs = instance.exec?.pathDirs;
+  if (
+    typeof executablePath !== "string" ||
+    !Array.isArray(pathDirs) ||
+    !pathDirs.every((item) => typeof item === "string")
+  ) {
+    throw new Error("the Codex SDK did not expose its resolved executable");
+  }
+  return { executablePath, pathDirs } as CodexExecutable;
+}
+
+/** Query Codex's native registry. No thread or model turn is created. */
+export function codexSkills(workdir: string): Promise<AgentSkill[]> {
+  const executable = codexExecutable();
+  const env = { ...process.env };
+  const pathKey = process.platform === "win32" ? "Path" : "PATH";
+  env[pathKey] = [
+    ...executable.pathDirs,
+    env[pathKey] ?? env.PATH ?? "",
+  ]
+    .filter(Boolean)
+    .join(path.delimiter);
+  const child = spawn(
+    executable.executablePath,
+    ["app-server", "--listen", "stdio://"],
+    { cwd: workdir, env, stdio: ["pipe", "pipe", "pipe"] },
+  );
+
+  return new Promise((resolve, reject) => {
+    const lines = createInterface({ input: child.stdout });
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(
+      () => finish(new Error("Codex skill discovery timed out")),
+      10_000,
+    );
+
+    const send = (value: unknown): void => {
+      child.stdin.write(`${JSON.stringify(value)}\n`);
+    };
+    const finish = (error?: Error, skills?: AgentSkill[]): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      lines.close();
+      child.kill();
+      if (error !== undefined) reject(error);
+      else resolve(skills ?? []);
+    };
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => finish(error));
+    child.on("exit", (code) => {
+      if (!settled) {
+        finish(
+          new Error(
+            `Codex skill discovery exited ${code ?? "early"}${stderr.trim().length > 0 ? `: ${stderr.trim()}` : ""}`,
+          ),
+        );
+      }
+    });
+    lines.on("line", (line) => {
+      if (line.trim().length === 0) return;
+      let message: { id?: number; result?: unknown; error?: { message?: string } };
+      try {
+        message = JSON.parse(line) as typeof message;
+      } catch {
+        return;
+      }
+      if (message.id === 1) {
+        if (message.error !== undefined) {
+          finish(new Error(message.error.message ?? "Codex could not initialise"));
+          return;
+        }
+        send({ method: "initialized" });
+        send({
+          id: 2,
+          method: "skills/list",
+          params: { cwds: [workdir], forceReload: false },
+        });
+        return;
+      }
+      if (message.id !== 2) return;
+      if (message.error !== undefined) {
+        finish(new Error(message.error.message ?? "Codex could not list skills"));
+        return;
+      }
+      const response = message.result as CodexSkillsResponse | undefined;
+      if (response === undefined || !Array.isArray(response.data)) {
+        finish(new Error("Codex returned an invalid skill catalog"));
+        return;
+      }
+      const skills = response.data
+        .flatMap((entry) => entry.skills)
+        .filter((skill) => skill.enabled)
+        .map(
+          (skill): AgentSkill => ({
+            name: skill.name,
+            invocation: "$",
+            description: skill.shortDescription ?? skill.description,
+            scope: skill.scope,
+          }),
+        );
+      finish(undefined, skills);
+    });
+
+    send({
+      id: 1,
+      method: "initialize",
+      params: {
+        clientInfo: {
+          name: "daydream-code",
+          title: "Daydream Code",
+          version: "0.1.0",
+        },
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      },
+    });
+  });
+}
+
 export const name = "driver-codex";
 export const inject = ["drivers"] as const;
 
@@ -287,6 +480,15 @@ export const { Config, settings } = defineConfig({
       label: field.string({ label: "shown as" }),
       description: field.string({ label: "description", optional: true }),
       isDefault: field.boolean({ label: "preselected", optional: true }),
+      // Declared here or it is stripped: the list item validates-and-strips,
+      // so a key missing from this shape never reaches the catalog — not even
+      // from the baked-in default above.
+      efforts: field.json({
+        label: "effort levels",
+        help: "reasoning-effort levels the picker offers for this model. Omit for none.",
+        schema: z.array(z.string()),
+        optional: true,
+      }),
     },
     default: CODEX_MODELS,
   }),

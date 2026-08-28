@@ -17,7 +17,7 @@
 
 :root {
   /* Overwritten from systemPreferences.getAccentColor(); this is macOS blue. */
-  --accent: #0a84ff;
+  --accent: oklch(63% 0.21 254);
 
   /* Type ------------------------------------------------------------------ */
   --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui,
@@ -25,6 +25,11 @@
   --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo,
     Consolas, monospace;
 
+  /* Below the prose scale: carets and gutter glyphs, which are shapes read at a
+     glance rather than text read as words. The three carets that sat at 8px
+     round up to it, because one size for seven marks beats a 1px distinction
+     nobody can see. */
+  --text-2xs: 9px;
   --text-xs: 10.5px;
   --text-sm: 11.5px;
   --text-base: 13px;
@@ -41,6 +46,8 @@
   --s6: 32px;
   --s7: 48px;
 
+  /* Thin bars round to their own half-height; --r-sm on a 3px track is a pill. */
+  --r-xs: 3px;
   --r-sm: 5px;
   --r-md: 8px;
   --r-lg: 12px;
@@ -53,6 +60,19 @@
   --t-fast: 150ms;
   --t-base: 220ms;
   --t-slow: 320ms;
+  /* Loop periods for the indeterminate indicators. Two, not five: several of
+     these run in the same frame, and unrelated periods read as one of them
+     lagging rather than as two separate things being alive. */
+  --t-loop: 1.3s;
+  --t-loop-slow: 1.4s;
+  --t-preloader: 1.65s;
+
+  /* Tahoe-style loading light. Content placeholders are not glass surfaces,
+     but a soft accent-tinted caustic gives them the same sense of material as
+     the surrounding chrome without making the content layer translucent. */
+  --preloader-base: color-mix(in oklab, var(--text-1) 7%, transparent);
+  --preloader-edge: color-mix(in oklab, var(--glass-specular) 24%, transparent);
+  --preloader-glow: color-mix(in oklab, var(--accent) 18%, var(--glass-specular));
 
   /* One physical treatment for raised controls across every chrome layer. */
   --glass-control-filter: blur(16px) saturate(180%);
@@ -209,30 +229,48 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
     color-scheme: light;
-    --surface-0: oklch(95.5% 0.004 265);
-    --surface-1: oklch(99.2% 0.002 265);
-    --surface-2: oklch(96.5% 0.004 265);
-    --surface-3: oklch(93% 0.006 265);
-    --text-1: oklch(23% 0.012 265);
-    --text-2: oklch(42% 0.014 265);
-    --text-3: oklch(48% 0.014 265);
-    --hairline: oklch(0% 0 0 / 0.1);
-    --border: oklch(0% 0 0 / 0.17);
-    --glass-tint: oklch(98% 0.004 265 / 0.6);
-    --glass-tint-strong: oklch(99% 0.003 265 / 0.84);
+
+    --surface-0: color-mix(in oklab, var(--accent) 4%, oklch(95.5% 0.004 265));
+    --surface-1: color-mix(in oklab, var(--accent) 2%, oklch(99.2% 0.002 265));
+    --surface-2: color-mix(in oklab, var(--accent) 4%, oklch(96.5% 0.004 265));
+    --surface-3: color-mix(in oklab, var(--accent) 7%, oklch(93% 0.006 265));
+
+    --text-1: color-mix(in oklab, var(--accent) 6%, oklch(23% 0.012 265));
+    --text-2: color-mix(in oklab, var(--accent) 8%, oklch(42% 0.014 265));
+    --text-3: color-mix(in oklab, var(--accent) 9%, oklch(48% 0.014 265));
+
+    --hairline: color-mix(in oklab, var(--accent) 10%, oklch(0% 0 0 / 0.1));
+    --border: color-mix(in oklab, var(--accent) 12%, oklch(0% 0 0 / 0.17));
+
+    --glass-tint: color-mix(in oklab, var(--accent) 5%, oklch(98% 0.004 265 / 0.6));
+    --glass-tint-strong: color-mix(
+      in oklab,
+      var(--accent) 5%,
+      oklch(99% 0.003 265 / 0.84)
+    );
     --glass-specular: oklch(100% 0 0 / 0.7);
     --glass-specular-soft: oklch(100% 0 0 / 0.4);
     --glass-edge: oklch(100% 0 0 / 0.5);
     --glass-shade: oklch(60% 0.02 265 / 0.22);
-    --glass-control: oklch(100% 0 0 / 0.66);
-    --glass-control-hi: oklch(100% 0 0 / 0.9);
+    --glass-control: color-mix(in oklab, var(--accent) 4%, oklch(100% 0 0 / 0.66));
+    --glass-control-hi: color-mix(in oklab, var(--accent) 6%, oklch(100% 0 0 / 0.9));
+
     --accent-text: oklch(100% 0 0);
+    --accent-weak: color-mix(in oklab, var(--accent) 16%, transparent);
+    --accent-veil: color-mix(in oklab, var(--accent) 10%, transparent);
     --accent-solid: color-mix(in oklab, var(--accent) 72%, oklch(22% 0.05 265));
     --accent-ink: color-mix(in oklab, var(--accent) 74%, oklch(24% 0.06 265));
+
     --ok: oklch(52% 0.14 155);
     --warn: oklch(58% 0.13 68);
     --bad: oklch(54% 0.19 25);
     --info: oklch(52% 0.13 240);
+
+    /* Omitting these left the dark values in force, so a popover on a near-white
+       page carried a 70%-black 60px halo. Every token the themed blocks set has
+       to be set here too. */
+    --shadow-panel: 0 0 0 1px oklch(0% 0 0 / 0.08), 0 16px 40px -14px oklch(0% 0 0 / 0.22);
+    --shadow-pop: 0 0 0 1px var(--border), 0 24px 60px -14px oklch(0% 0 0 / 0.3);
   }
 }
 
@@ -308,7 +346,7 @@ pre {
 ::-webkit-scrollbar-thumb {
   background: color-mix(in oklab, var(--text-3) 40%, transparent);
   border: 3px solid transparent;
-  border-radius: 99px;
+  border-radius: 999px;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -499,7 +537,7 @@ pre {
   font-size: var(--text-xs);
   color: var(--text-3);
   background: color-mix(in oklab, var(--text-3) 16%, transparent);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   padding: 1px 5px;
 }
 
@@ -684,7 +722,7 @@ pre {
   border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-2);
-  font-size: 15px;
+  font-size: var(--text-md);
   font-weight: 400;
   line-height: 1;
   transition: background var(--t-instant) var(--ease-out-quart),
@@ -710,77 +748,12 @@ pre {
   gap: 1px;
 }
 
-.session-row {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: var(--s2);
-  width: 100%;
-  padding: var(--s2) var(--s2) var(--s2) var(--s3);
-  border: 0;
-  border-radius: var(--r-md);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: default;
-  transition: background var(--t-instant) var(--ease-out-quart);
-}
-
-.session-row:hover {
-  background: color-mix(in oklab, var(--text-1) 7%, transparent);
-}
-
 /* Selected rows are lit objects, not filled rectangles: a specular top edge
    and a contact shadow lift them off the sidebar glass. */
-.session-row[aria-current="true"] {
-  background: var(--accent-solid);
-  color: var(--accent-text);
-  box-shadow: inset 0 1px 0 color-mix(in oklab, oklch(100% 0 0) 26%, transparent),
-    0 2px 8px -3px color-mix(in oklab, var(--accent) 55%, transparent);
-}
-
-.session-row[aria-current="true"] .session-row-sub,
-.session-row[aria-current="true"] .session-row-time {
-  color: color-mix(in oklab, var(--accent-text) 92%, transparent);
-}
-
-.session-row-main {
-  min-width: 0;
-}
-
-.session-row-name,
-.session-row-sub {
-  display: block;
-}
-
-.session-row-name {
-  font-size: var(--text-base);
-  font-weight: 500;
-  letter-spacing: -0.006em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.session-row-sub {
-  font-size: var(--text-sm);
-  color: var(--text-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.session-row-time {
-  font-size: var(--text-xs);
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
-
 /*
  * Status glyphs. One optical weight, one 10px box, monochrome by
- * `currentColor`. Running is an activity meter that genuinely moves while the
- * session works; the rest are static marks. Colour reinforces, never carries.
+ * `currentColor`. Running uses the same incomplete-ring language as the larger
+ * thread preloader; the rest are static marks. Colour reinforces, never carries.
  */
 .glyph {
   flex: none;
@@ -789,29 +762,17 @@ pre {
 
 .glyph-running {
   color: var(--accent-ink);
+  transform-origin: center;
+  filter: drop-shadow(0 0 3px var(--accent-weak));
+  animation: preloader-spin 820ms linear infinite;
 }
 
-.glyph-running rect {
-  transform-box: fill-box;
-  transform-origin: 50% 50%;
-  animation: meter 1.15s var(--ease-out-quart) infinite;
+.glyph-running-track {
+  opacity: 0.2;
 }
 
-.glyph-running rect:nth-child(1) {
-  animation-delay: -0.25s;
-}
-.glyph-running rect:nth-child(3) {
-  animation-delay: -0.5s;
-}
-
-@keyframes meter {
-  0%,
-  100% {
-    transform: scaleY(0.3);
-  }
-  50% {
-    transform: scaleY(1);
-  }
+.glyph-running-light {
+  opacity: 0.95;
 }
 
 .glyph-completed {
@@ -833,10 +794,6 @@ pre {
 
 /* On a selected row the glyph rides the accent fill, so it takes the
    on-accent ink rather than its own state colour. */
-.session-row[aria-current="true"] .glyph {
-  color: var(--accent-text);
-}
-
 /* A draft has no status yet: an open outline, deliberately unfilled. */
 .dot {
   width: 8px;
@@ -865,15 +822,6 @@ pre {
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   border-top: 1px solid var(--hairline);
-}
-
-.thread-feed {
-  overflow-y: auto;
-  padding: var(--s1) var(--s4) var(--s4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s3);
-  user-select: text;
 }
 
 /*
@@ -1054,7 +1002,7 @@ pre {
   gap: var(--s2);
 }
 
-.panel-has-next-message {
+.panel-has-composer-banner {
   --composer-clear: 320px;
 }
 
@@ -1071,6 +1019,48 @@ pre {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+}
+
+.context-rebuild-notice {
+  align-self: flex-end;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  width: min(100%, 560px);
+  min-height: 42px;
+  padding: 7px 8px 7px var(--s4);
+  border: 1px solid color-mix(in oklab, var(--info) 34%, var(--glass-edge));
+  border-radius: 999px;
+  background: var(--panel-surface);
+  box-shadow: inset 0 1px 0 var(--glass-specular),
+    0 8px 24px -14px var(--glass-shade);
+  animation: pop-in var(--t-base) var(--ease-out-quart) both;
+}
+
+.context-rebuild-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  line-height: 1.25;
+}
+
+.context-rebuild-copy strong {
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  font-weight: 620;
+}
+
+.context-rebuild-copy > span {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-rebuild-undo {
+  flex: none;
+  margin-left: auto;
 }
 
 .next-message {
@@ -1120,7 +1110,8 @@ pre {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .next-message {
+  .next-message,
+  .context-rebuild-notice {
     animation: none;
   }
 }
@@ -1148,6 +1139,192 @@ pre {
   border-color: color-mix(in oklab, var(--accent) 70%, var(--border));
   box-shadow: inset 0 1px 0 var(--glass-specular),
     0 0 0 3px var(--accent-veil), 0 14px 36px -12px var(--glass-shade);
+}
+
+/* Leading-slash completion is attached to the composer, not a modal command
+   palette. It rises over the transcript so typing never moves the field. */
+.skill-menu {
+  position: absolute;
+  z-index: 8;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + var(--s2));
+  overflow: hidden;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--r-lg);
+  color: var(--text-1);
+  box-shadow: inset 0 1px 0 var(--glass-specular),
+    0 18px 44px -18px var(--glass-shade);
+  animation: palette-in var(--t-fast) var(--ease-out-expo);
+  /*
+   * The dispatch composer (sidebar, ~244px) and the message composer (panel,
+   * ~700px) are on screen together at the same viewport width, so the narrow
+   * one is only reachable by a container query. A media query cannot tell them
+   * apart, and the three-column row collapsed the description to 1px there.
+   */
+  container-type: inline-size;
+}
+
+.skill-menu-head,
+.skill-menu-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+/* Same uppercase group label as the palette's, so it reads as one system. */
+.skill-menu-head {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--hairline);
+  font-weight: 640;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.skill-menu-list {
+  max-height: min(320px, 42vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding: var(--s1);
+  padding: var(--s1);
+}
+
+.skill-menu-item {
+  display: grid;
+  grid-template-columns: minmax(132px, 0.34fr) minmax(0, 1fr) auto;
+  grid-template-areas: "name description hint";
+  align-items: baseline;
+  column-gap: var(--s3);
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+}
+
+.skill-menu-item[data-active="true"] {
+  background: var(--accent-solid);
+  color: var(--accent-text);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, oklch(100% 0 0) 24%, transparent);
+}
+
+.skill-menu-name {
+  grid-area: name;
+  overflow: hidden;
+  color: var(--text-1);
+  font-weight: 590;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-menu-description {
+  grid-area: description;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-menu-hint {
+  grid-area: hint;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.skill-menu-item[data-active="true"] .skill-menu-name {
+  color: inherit;
+}
+
+/* Secondary text stays secondary on the accent fill, as it does in the palette. */
+.skill-menu-item[data-active="true"] .skill-menu-description,
+.skill-menu-item[data-active="true"] .skill-menu-hint {
+  color: color-mix(in oklab, var(--accent-text) 92%, transparent);
+}
+
+/*
+ * Under ~420px the description has no column left to live in, so the row folds:
+ * name and argument hint on the first line, description wrapped beneath it.
+ */
+@container (max-width: 420px) {
+  .skill-menu-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name hint"
+      "description description";
+    column-gap: var(--s2);
+    row-gap: 1px;
+  }
+
+  .skill-menu-description {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    line-height: 1.35;
+  }
+}
+
+.skill-menu-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s4) var(--s4) var(--s5);
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* Loading is shaped like the rows it will become, never a centered spinner. */
+.skill-menu-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s3);
+}
+
+.skill-menu-foot {
+  flex-wrap: wrap;
+  row-gap: var(--s1);
+  border-top: 1px solid var(--hairline);
+}
+
+.skill-menu-foot kbd + kbd {
+  margin-left: 2px;
+}
+
+/* The provider note earns the right edge; it is the one thing here that is not
+   a key hint, and on a narrow menu it wraps to its own line instead. */
+.skill-menu-note {
+  margin-left: auto;
+}
+
+@container (max-width: 420px) {
+  .skill-menu-note {
+    margin-left: 0;
+  }
+
+  /* Two hints fit on one line here; a third wrapped the footer. */
+  .skill-menu-optional {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skill-menu {
+    animation: none;
+  }
 }
 
 /*
@@ -1302,16 +1479,50 @@ button {
 }
 
 /*
- * The composer's send/dispatch action. Square-in-a-pill at the button's own
- * height, so it reads as a mark you press rather than a label that lost its
- * text, and the arrow sits a half pixel high because a stroke arrow's optical
- * centre is below its bounding box.
+ * The composer's send/dispatch action. The mark is the shortcut itself (⌘⏎),
+ * which is wider than a square icon, so the pill takes a fixed width instead
+ * of `.btn-icon`'s 26px — fixed rather than auto so the button doesn't
+ * collapse when the busy ring (a 10px glyph) replaces the mark.
  */
-.composer-send svg {
-  transform: translateY(-0.5px);
+.composer-send {
+  width: 40px;
 }
 
-/* The running meter is accent-coloured everywhere else, which on an accent
+/*
+ * The split: send-now and send-later fused into one pill, because they are
+ * one action at two moments, not two actions. The main segment keeps the pill
+ * shape on its left, the ⇧ segment on its right, and the seam between them is
+ * the defer segment's own left border in the button's ink at low alpha — one
+ * hairline, not two abutting borders.
+ */
+.composer-send-split {
+  display: inline-flex;
+  align-items: stretch;
+  flex: none;
+}
+
+.composer-send-split .composer-send {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: none;
+}
+
+.composer-send-defer {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left-color: color-mix(in oklab, var(--accent-text) 32%, transparent);
+}
+
+/*
+ * The kill switch sits beside the send mark — the two controls that decide
+ * what the thread does next, in one place. Same pill geometry as its
+ * neighbour so they read as a pair, danger ink so they never read as equals.
+ */
+.composer-stop {
+  flex: none;
+}
+
+/* The running ring is accent-coloured everywhere else, which on an accent
    button would be the button painting itself. In here it takes the button's
    own ink. */
 .composer-send .glyph-running {
@@ -1321,7 +1532,7 @@ button {
 /*
  * In flight the button is unclickable, but it is not *unavailable* — it is the
  * one moment it has something to report. The disabled dim at 0.4 took the
- * meter down with it, so a send in progress looked like a send you could not
+ * ring down with it, so a send in progress looked like a send you could not
  * make. Held back enough to read as untouchable, bright enough to read at all.
  */
 .composer-send[aria-busy="true"]:disabled {
@@ -1375,20 +1586,6 @@ button {
   user-select: text;
 }
 
-/* The task takes whatever room is left and gives it back first. */
-.bar-task {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--text-sm);
-  color: var(--text-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding-left: var(--s2);
-  border-left: 1px solid var(--hairline);
-  user-select: text;
-}
-
 .bar-facts {
   margin-left: auto;
   display: flex;
@@ -1408,11 +1605,9 @@ button {
 }
 
 /* Below ~1100px the facts are the first thing to go: the transcript matters
-   more than the running cost. */
+   more than secondary run details. The final fact is elapsed time, so it is
+   retained longest while someone monitors a live thread. */
 @media (max-width: 1100px) {
-  .bar-task {
-    display: none;
-  }
 }
 
 @media (max-width: 900px) {
@@ -1443,19 +1638,13 @@ button {
 /* The runtime id is exact but ugly; the strip shows the label and keeps the
    id in the tooltip. This suffix is the context-window variant, e.g. `1m`. */
 .bar-variant {
-  margin-left: 4px;
-  padding: 0 4px;
-  border-radius: 4px;
+  margin-left: var(--s1);
+  padding: 0 var(--s1);
+  border-radius: var(--r-sm);
   font-size: var(--text-xs);
   font-weight: 500;
   color: var(--text-3);
   background: color-mix(in oklab, var(--text-1) 9%, transparent);
-}
-
-.session-row-sub {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .model-group-title {
@@ -1490,8 +1679,7 @@ button {
  * single-line tool rows down to their borders, so they rendered as blank
  * hairlines. Every row keeps its intrinsic height.
  */
-.transcript > *,
-.thread-feed > * {
+.transcript > * {
   flex: none;
 }
 
@@ -1649,7 +1837,7 @@ button {
 
 .tool-caret {
   color: var(--text-3);
-  font-size: 9px;
+  font-size: var(--text-2xs);
   width: 9px;
   transition: transform var(--t-fast) var(--ease-out-quart);
 }
@@ -1681,7 +1869,7 @@ button {
   vertical-align: 1px;
   border-radius: 50%;
   background: var(--accent);
-  animation: tool-running 1.4s ease-in-out infinite;
+  animation: tool-running var(--t-loop-slow) var(--ease-out-quart) infinite;
 }
 
 @keyframes tool-running {
@@ -1739,17 +1927,42 @@ button {
   color: var(--bad);
 }
 
-/* Live typing indicator while a turn is streaming. Centred in the reading
-   column rather than indented to the gutter: with the label hidden there is no
-   text for the dots to sit beside, so a left edge would read as a stray mark. */
+/* Live activity while a turn is streaming. The compact incomplete ring follows
+   macOS's constrained-space activity-indicator convention. It stays centred in
+   the reading column because there is no visible label to align to a gutter. */
 .live-hint {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
   padding: var(--s1) 0;
   font-size: var(--text-sm);
   color: var(--text-3);
+}
+
+.live-hint::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 12deg,
+    transparent 0deg,
+    color-mix(in oklab, currentColor 22%, transparent) 72deg,
+    currentColor 292deg,
+    color-mix(in oklab, var(--accent) 62%, currentColor) 360deg
+  );
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 2px),
+    oklch(0% 0 0) calc(100% - 1.5px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 2px),
+    oklch(0% 0 0) calc(100% - 1.5px)
+  );
+  filter: drop-shadow(0 0 4px var(--accent-weak));
+  animation: preloader-spin 820ms linear infinite;
 }
 
 /* Visually hidden, still announced: the polite live region needs text. */
@@ -1765,19 +1978,10 @@ button {
   border: 0;
 }
 
-.live-hint i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: blink 1.3s var(--ease-out-quart) infinite;
-}
-
-.live-hint i:nth-child(2) {
-  animation-delay: 0.18s;
-}
-.live-hint i:nth-child(3) {
-  animation-delay: 0.36s;
+@keyframes preloader-spin {
+  to {
+    transform: rotate(1turn);
+  }
 }
 
 @keyframes blink {
@@ -1819,19 +2023,11 @@ button {
   line-height: 1.6;
 }
 
-.empty-kbd {
-  margin-top: var(--s2);
-  display: flex;
-  gap: var(--s2);
-  align-items: center;
-  font-size: var(--text-sm);
-}
-
 kbd {
   font-family: var(--ui);
   font-size: var(--text-xs);
   padding: 2px 6px;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: color-mix(in oklab, var(--text-1) 7%, transparent);
   color: var(--text-2);
@@ -1844,25 +2040,66 @@ kbd {
   line-height: 1.5;
 }
 
-/* Skeletons rather than spinners: the layout is known before the data is. */
-.skeleton {
-  border-radius: var(--r-sm);
-  background: linear-gradient(
-    90deg,
-    color-mix(in oklab, var(--text-1) 7%, transparent) 25%,
-    color-mix(in oklab, var(--text-1) 13%, transparent) 37%,
-    color-mix(in oklab, var(--text-1) 7%, transparent) 63%
-  );
-  background-size: 400% 100%;
-  animation: shimmer 1.4s ease-in-out infinite;
+/* Skeletons rather than spinners when the future layout is known. The old
+   background-position shimmer stretched one flat highlight across the whole
+   row. This narrow caustic has a bright core and soft coloured shoulders, like
+   light travelling through the app's glass controls, while the placeholder
+   itself remains an opaque content surface. */
+.skeleton,
+.sweep-unknown,
+.blob-image-pending {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--preloader-base);
+  box-shadow: inset 0 1px 0 var(--preloader-edge);
 }
 
-@keyframes shimmer {
-  0% {
-    background-position: 100% 0;
-  }
-  100% {
-    background-position: 0 0;
+.skeleton {
+  border-radius: var(--r-sm);
+}
+
+.skeleton::before,
+.sweep-unknown::before,
+.blob-image-pending::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: -55%;
+  bottom: -55%;
+  left: -48%;
+  width: 44%;
+  border-radius: 50%;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    color-mix(in oklab, var(--accent) 8%, transparent) 20%,
+    color-mix(in oklab, var(--preloader-glow) 45%, transparent) 42%,
+    var(--preloader-edge) 49%,
+    color-mix(in oklab, var(--preloader-glow) 58%, transparent) 56%,
+    color-mix(in oklab, var(--accent) 8%, transparent) 78%,
+    transparent 100%
+  );
+  filter: blur(3px);
+  transform: translate3d(-20%, 0, 0) skewX(-9deg);
+  will-change: transform;
+  animation: preloader-caustic var(--t-preloader) linear infinite;
+}
+
+/* A loading stack should feel like one sheet catching light, not three copies
+   of an animation starting on the same frame. Negative delays also mean the
+   first paint already contains motion instead of a blank lead-in. */
+.skeleton:nth-child(2)::before {
+  animation-delay: -0.55s;
+}
+
+.skeleton:nth-child(3)::before {
+  animation-delay: -1.1s;
+}
+
+@keyframes preloader-caustic {
+  to {
+    transform: translate3d(340%, 0, 0) skewX(-9deg);
   }
 }
 
@@ -1871,10 +2108,14 @@ kbd {
   margin: var(--s1) var(--s2);
 }
 
+/* Server-authored errors carry paths, URLs and stack frames, none of which have
+   a break opportunity in them. Without these the string sets the row's minimum
+   width and pushes `dismiss` out of the panel it is supposed to dismiss. */
 .error-bar {
   display: flex;
   align-items: center;
   gap: var(--s2);
+  min-width: 0;
   margin: var(--s2) var(--s4);
   padding: var(--s2) var(--s3);
   border-radius: var(--r-md);
@@ -1882,10 +2123,12 @@ kbd {
   background: color-mix(in oklab, var(--bad) 12%, transparent);
   color: var(--bad);
   font-size: var(--text-sm);
+  overflow-wrap: anywhere;
   user-select: text;
 }
 
 .error-bar button {
+  flex: none;
   margin-left: auto;
 }
 
@@ -1984,8 +2227,13 @@ kbd {
   user-select: text;
 }
 
-.palette input:focus {
+/* The outline is dropped because a 2px ring at 2px offset on a full-bleed field
+   is clipped by the palette's own rounded overflow. What replaces it is the same
+   accent edge plus veil the settings and quick-action fields use. */
+.palette input:focus-visible {
   outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-veil);
 }
 
 .palette input::placeholder {
@@ -2149,6 +2397,7 @@ table.fibers td:first-child {
 .fiber-err {
   color: var(--bad);
   font-family: var(--mono);
+  overflow-wrap: anywhere;
 }
 
 /* ==========================================================================
@@ -2157,6 +2406,11 @@ table.fibers td:first-child {
 
 .model-select {
   position: relative;
+  /* Model and effort pills are one control cluster: a tight gap groups them
+     against the footer's looser rhythm. */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
 }
 
 .model-trigger {
@@ -2166,7 +2420,6 @@ table.fibers td:first-child {
   height: 26px;
   max-width: 200px;
   padding: 0 var(--s2) 0 var(--s3);
-  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--glass-control);
@@ -2189,7 +2442,9 @@ table.fibers td:first-child {
   opacity: 0.45;
 }
 
-.model-trigger span:first-child {
+/* The first child is the provider mark (an svg), so this cannot be
+   `span:first-child`: the label carries its own class. */
+.model-trigger-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2197,7 +2452,15 @@ table.fibers td:first-child {
 
 .model-caret {
   color: var(--text-3);
-  font-size: 8px;
+  font-size: var(--text-2xs);
+  /* One glyph that turns, not two that swap: the rotation is the state
+     change, and the global reduced-motion rule collapses it to an instant
+     flip for free. */
+  transition: transform var(--t-fast) var(--ease-out-quart);
+}
+
+.model-caret-open {
+  transform: rotate(180deg);
 }
 
 .model-pop {
@@ -2206,7 +2469,9 @@ table.fibers td:first-child {
      position arrives as inline `left`/`bottom` instead. */
   position: fixed;
   width: 320px;
-  max-height: 380px;
+  /* The viewport term keeps a short window from clipping the popover off the
+     top: it opens upward from the composer, so height is what overflows. */
+  max-height: min(380px, calc(100vh - 96px));
   display: flex;
   flex-direction: column;
   border-radius: var(--r-lg);
@@ -2235,8 +2500,10 @@ table.fibers td:first-child {
   user-select: text;
 }
 
-.model-search:focus {
+.model-search:focus-visible {
   outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-veil);
 }
 
 .model-list {
@@ -2294,6 +2561,18 @@ table.fibers td:first-child {
   padding: 0 2px;
   color: var(--text-3);
   line-height: 1;
+  /* An empty star on every row is noise; it appears when the row is under
+     the pointer or the roving index, and stays put once starred. Opacity,
+     not display, so revealing it never shifts the row's layout. */
+  opacity: 0;
+  transition: opacity var(--t-instant) var(--ease-out-quart);
+}
+
+.model-row:hover .model-star,
+.model-row-active .model-star,
+.model-star.starred,
+.model-star:focus-visible {
+  opacity: 1;
 }
 
 .model-row-check + .model-star {
@@ -2310,6 +2589,124 @@ table.fibers td:first-child {
   text-align: center;
   color: var(--text-3);
   font-size: var(--text-sm);
+}
+
+.model-empty-hint {
+  display: block;
+  margin-top: var(--s1);
+  font-size: var(--text-xs);
+  opacity: 0.75;
+}
+
+/* The favorites group's mark, sized to sit where the driver marks sit. */
+.model-group-fav {
+  flex: none;
+  color: var(--warn);
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* A picked choice visibly lands on the pill: the popover closes and the new
+   label rises in, instead of the text just being different. Driven by keyed
+   remounts, so it plays on change, never on hover or reopen. */
+@keyframes model-choice-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+.model-choice-in {
+  animation: model-choice-in var(--t-fast) var(--ease-out-quart);
+}
+
+/* Starring pulses once, at the moment of the act. The class is one-shot from
+   React (removed on animationend), so reopening the popover never replays it
+   across every starred row. Unstarring gets nothing. */
+@keyframes star-pop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.45);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.model-star-pop {
+  animation: star-pop var(--t-base) var(--ease-out-quart);
+}
+
+/* Effort pill: same control material as the model trigger (it shares the
+   class); the kicker names the axis, since a bare "high" beside a model name
+   would read as noise. */
+/* The pill grows out of the cluster when a picked model gains the effort
+   axis, rather than popping into existence beside the model pill. Plays on
+   mount only; changing levels while it is showing does not remount it. */
+@keyframes effort-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateX(-4px);
+  }
+}
+
+.effort-trigger {
+  transform-origin: left center;
+  animation: effort-in var(--t-base) var(--ease-out-expo);
+}
+
+.effort-kicker {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--text-2xs);
+  /* Title case, not the uppercase-kicker treatment: the pill's value is title
+     case too, and two casings inside one small control read as two controls. */
+  letter-spacing: 0.02em;
+}
+
+.effort-pop {
+  /* Fixed and body-portaled for the same backdrop-root reason as .model-pop. */
+  position: fixed;
+  width: 172px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--s2);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-pop), inset 0 1px 0 var(--glass-specular);
+  z-index: 40;
+  animation: model-in var(--t-fast) var(--ease-out-expo);
+}
+
+.effort-option {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2);
+  border: 0;
+  background: none;
+  border-radius: var(--r-md);
+  color: var(--text-1);
+  font-size: var(--text-base);
+  text-align: left;
+}
+
+/* Focus is the roving highlight here, same vocabulary as .model-row-active:
+   an accent outline inside a 172px popup would shout. */
+.effort-option:hover,
+.effort-option:focus-visible {
+  background: color-mix(in oklab, var(--text-1) 8%, transparent);
+}
+
+.effort-option:focus-visible {
+  outline: none;
+}
+
+.effort-option-selected {
+  color: var(--accent-ink);
+  font-weight: 550;
 }
 
 /* ==========================================================================
@@ -2403,7 +2800,7 @@ table.fibers td:first-child {
 }
 .ws-connecting i {
   background: var(--warn);
-  animation: blink 1s ease-in-out infinite;
+  animation: blink var(--t-loop) var(--ease-out-quart) infinite;
 }
 .ws-closed i {
   background: var(--bad);
@@ -2428,6 +2825,7 @@ table.fibers td:first-child {
   .palette,
   .sheet,
   .model-pop,
+  .effort-pop,
   .composer-field {
     background: var(--surface-0);
     backdrop-filter: none;
@@ -2454,9 +2852,14 @@ table.fibers td:first-child {
     --tb-control: var(--surface-0);
     --tb-control-hi: var(--surface-2);
   }
+  /* The question card and the fibers header hardcode their own blur rather than
+     taking `--glass-control-filter`, so neutralising the token is not enough to
+     reach them. */
   .glass,
   .glass-strong,
-  .composer-field {
+  .composer-field,
+  .question-card,
+  table.fibers th {
     background: var(--surface-0);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -2475,23 +2878,16 @@ table.fibers td:first-child {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  /* Liveness still has to read, so the meter freezes mid-stride rather than
-     flattening into three identical bars. */
-  .glyph-running rect {
+  /* Liveness still has to read, so the ring freezes with its open arc visible. */
+  .glyph-running {
     animation: none;
+    transform: rotate(32deg);
   }
-  .glyph-running rect:nth-child(1) {
-    transform: scaleY(0.45);
-  }
-  .glyph-running rect:nth-child(2) {
-    transform: scaleY(1);
-  }
-  .glyph-running rect:nth-child(3) {
-    transform: scaleY(0.65);
-  }
-  .live-hint i {
-    animation: none;
-    opacity: 0.7;
+  /* Press feedback still has to read, so only the movement goes. */
+  .btn:active:not(:disabled),
+  .toolbar-icon:active,
+  .rail-add:active {
+    transform: none;
   }
 }
 
@@ -2574,7 +2970,7 @@ table.fibers td:first-child {
   --ansi-12: light-dark(oklch(44% 0.16 255), oklch(83% 0.11 250));
   --ansi-13: light-dark(oklch(44% 0.18 330), oklch(84% 0.13 330));
   --ansi-14: light-dark(oklch(44% 0.12 205), oklch(87% 0.1 205));
-  --ansi-15: light-dark(oklch(25% 0.01 265), oklch(98% 0 0));
+  --ansi-15: light-dark(oklch(25% 0.01 265), oklch(98% 0.004 265));
 
   /* Code sits on its own surface: one step further from the page than a card,
      in both themes, so a block reads as a quotation of a file. */
@@ -2964,18 +3360,12 @@ table.fibers td:first-child {
  */
 .row-draft {
   flex: none;
-  padding: 0 4px;
-  border-radius: 4px;
+  padding: 0 var(--s1);
+  border-radius: var(--r-sm);
   font-size: var(--text-xs);
   font-weight: 500;
   color: var(--accent);
   background: var(--accent-veil);
-}
-
-/* On the selected row the accent is the background, so the mark inverts. */
-.session-row[aria-current="true"] .row-draft {
-  color: var(--accent-text);
-  background: color-mix(in oklab, var(--accent-text) 22%, transparent);
 }
 
 /* ==========================================================================
@@ -3246,8 +3636,10 @@ table.fibers td:first-child {
   user-select: text;
 }
 
-.proj-search input:focus {
+.proj-search input:focus-visible {
   outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-veil);
 }
 
 .proj-search input::placeholder {
@@ -3369,10 +3761,12 @@ table.fibers td:first-child {
 }
 
 .proj-error {
+  min-width: 0;
   padding: var(--s2) var(--s4);
   border-top: 1px solid var(--hairline);
   color: var(--bad);
   font-size: var(--text-sm);
+  overflow-wrap: anywhere;
 }
 
 /*
@@ -3843,7 +4237,7 @@ table.fibers td:first-child {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: oklch(100% 0 0);
+  background: var(--surface-1);
   box-shadow: 0 1px 3px -1px var(--glass-shade);
   transition: transform var(--t-fast) var(--ease-out-quart);
 }
@@ -3888,7 +4282,9 @@ table.fibers td:first-child {
 }
 
 .set-note-bad {
+  min-width: 0;
   color: var(--bad);
+  overflow-wrap: anywhere;
 }
 
 /* --- the full composition ------------------------------------------------ */
@@ -4104,7 +4500,7 @@ table.fibers td:first-child {
   background: var(--accent-solid);
   color: var(--accent-text);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--text-sm);
   font-weight: 600;
 }
 
@@ -4279,12 +4675,6 @@ table.fibers td:first-child {
   animation: sweep 1.6s linear infinite;
 }
 
-.mini-waiting::after {
-  background: var(--warn);
-  animation: none;
-  width: 100%;
-}
-
 /*
  * The highlight crosses the whole track, once, at a constant pace.
  *
@@ -4314,7 +4704,7 @@ table.fibers td:first-child {
 
 .caret {
   flex: none;
-  font-size: 8px;
+  font-size: var(--text-2xs);
   color: var(--text-3);
 }
 
@@ -4404,6 +4794,9 @@ table.fibers td:first-child {
 .pop-run {
   display: flex;
   align-items: center;
+  /* Wraps so a refused stop can take a full line under the row rather than
+     competing with the title for width. */
+  flex-wrap: wrap;
   gap: var(--s2);
   width: 100%;
   padding: var(--s2) var(--s3);
@@ -4413,9 +4806,29 @@ table.fibers td:first-child {
   text-align: left;
 }
 
-.pop-row:hover,
+/* A stop the server refused. Unbounded server text in a popover, so it wraps
+   anywhere rather than widening the menu. */
+.pop-run-error {
+  flex-basis: 100%;
+  min-width: 0;
+  margin: 0;
+  color: var(--bad);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.pop-row:not(:disabled):hover,
 .pop-run:hover {
   background: var(--accent-veil);
+}
+
+/* Disabled in the markup but not in the sheet, so these lit up under the
+   pointer and read as available. Same dim `.btn` takes. */
+.pop-row:disabled,
+.quick-row-main:disabled,
+.question-option:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .pop-run.is-current {
@@ -4503,14 +4916,7 @@ table.fibers td:first-child {
  * cannot be mistaken for the accent bar crossing it.
  */
 .sweep-unknown {
-  background: linear-gradient(
-    90deg,
-    color-mix(in oklab, var(--text-1) 7%, transparent) 25%,
-    color-mix(in oklab, var(--text-1) 13%, transparent) 37%,
-    color-mix(in oklab, var(--text-1) 7%, transparent) 63%
-  );
-  background-size: 400% 100%;
-  animation: shimmer 1.4s ease-in-out infinite;
+  background: var(--preloader-base);
 }
 
 .sweep-unknown i {
@@ -4571,7 +4977,7 @@ table.fibers td:first-child {
   padding: 1px 5px;
   border-radius: 999px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--text-xs);
   background: var(--accent-veil);
   color: var(--accent-ink);
 }
@@ -4602,7 +5008,7 @@ table.fibers td:first-child {
   border: 1px solid var(--hairline);
   background: transparent;
   color: var(--bad);
-  font-size: 9px;
+  font-size: var(--text-2xs);
 }
 
 .pop-stop:hover {
@@ -4701,7 +5107,7 @@ table.fibers td:first-child {
 
 .master-card-mark {
   color: var(--accent-ink);
-  font-size: 9px;
+  font-size: var(--text-2xs);
 }
 
 .master-card-label {
@@ -4919,7 +5325,7 @@ table.fibers td:first-child {
 .tree-caret {
   flex: none;
   width: 9px;
-  font-size: 8px;
+  font-size: var(--text-2xs);
   color: var(--text-3);
 }
 
@@ -5025,8 +5431,12 @@ table.fibers td:first-child {
 }
 
 .transcript {
-  /* The measure moved to `.column`; the scroller only owns the gutters. */
-  display: block;
+  /* The measure moved to `.column`; the scroller only owns the gutters. It
+     must remain a flex column, though: the column's auto top margin is what
+     settles a short thread above the floating composer instead of leaving a
+     dead half-screen between the two. */
+  display: flex;
+  flex-direction: column;
 }
 
 .bar-sub {
@@ -5057,7 +5467,28 @@ table.fibers td:first-child {
   scrollbar-gutter: stable;
   overflow-x: hidden;
   padding: var(--panel-head-clear) var(--s6) var(--composer-clear);
+  display: flex;
+  flex-direction: column;
   user-select: text;
+}
+
+/*
+ * A short record sits on the composer, not at the top of a tall empty column.
+ *
+ * Both feeds grow downward and auto-scroll to their end, so the newest entry
+ * is what the eye should land on. Left top-anchored, a project with three
+ * entries put them a screen away from the composer with nothing in between,
+ * which reads as a surface that failed to load rather than one just getting
+ * started.
+ *
+ * `margin-top: auto` rather than `justify-content: flex-end` on purpose: once
+ * the content is taller than the scroller the auto margin resolves to zero,
+ * where flex-end would push the overflow past the top edge and make the
+ * earliest entries unreachable.
+ */
+.timeline > .column,
+.transcript > .column {
+  margin-top: auto;
 }
 
 .timeline-skeleton {
@@ -5494,7 +5925,9 @@ table.fibers td:first-child {
   min-height: 0;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
   background: var(--surface-1);
+  border-radius: var(--r-xl);
   box-shadow: -1px 0 0 var(--hairline), var(--shadow-panel);
 }
 
@@ -5597,21 +6030,6 @@ table.fibers td:first-child {
   min-width: var(--s3);
 }
 
-.tab-back {
-  flex: none;
-  padding: 0 var(--s3);
-  border: 0;
-  border-left: 1px solid var(--hairline);
-  background: transparent;
-  color: var(--accent-ink);
-  font-size: var(--text-sm);
-  white-space: nowrap;
-}
-
-.tab-back:hover {
-  background: var(--accent-veil);
-}
-
 .crumbs {
   display: flex;
   align-items: center;
@@ -5624,12 +6042,13 @@ table.fibers td:first-child {
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .crumb i {
   margin-left: 6px;
   font-style: normal;
-  font-size: 9px;
+  font-size: var(--text-2xs);
   color: var(--text-3);
 }
 
@@ -5654,14 +6073,6 @@ table.fibers td:first-child {
   min-height: 19px;
 }
 
-.line-add {
-  background: color-mix(in oklab, var(--ok) 16%, transparent);
-}
-
-.line-del {
-  background: color-mix(in oklab, var(--bad) 14%, transparent);
-}
-
 .code-n {
   flex: none;
   width: 52px;
@@ -5684,19 +6095,11 @@ table.fibers td:first-child {
   user-select: none;
 }
 
-.line-add .code-mark {
-  color: var(--ok);
-}
-
-.line-del .code-mark {
-  color: var(--bad);
-}
-
 .code-text {
   flex: 1;
   padding-right: var(--s5);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 19px;
   white-space: pre;
   color: var(--text-1);
@@ -5808,7 +6211,19 @@ table.fibers td:first-child {
   }
 
   .sweep-unknown {
+    background: var(--preloader-base);
+  }
+
+  .live-hint::before {
     animation: none;
+    transform: rotate(32deg);
+  }
+
+  .skeleton::before,
+  .sweep-unknown::before,
+  .blob-image-pending::before {
+    animation: none;
+    transform: translate3d(155%, 0, 0) skewX(-9deg);
   }
 }
 
@@ -5924,6 +6339,7 @@ table.fibers td:first-child {
 }
 
 .split-second > .editor {
+  margin: 0 var(--window-inset) var(--window-inset) 0;
   box-shadow: var(--shadow-panel);
 }
 
@@ -6043,14 +6459,7 @@ table.fibers td:first-child {
 .blob-image-pending {
   min-width: 34px;
   min-height: 34px;
-  background: linear-gradient(
-    100deg,
-    var(--surface-1) 30%,
-    var(--surface-2) 50%,
-    var(--surface-1) 70%
-  );
-  background-size: 220% 100%;
-  animation: blob-shimmer 1.4s var(--ease-out-quart) infinite;
+  background: var(--preloader-base);
 }
 
 .blob-image-error {
@@ -6064,17 +6473,8 @@ table.fibers td:first-child {
   border-radius: var(--r-md);
 }
 
-@keyframes blob-shimmer {
-  from {
-    background-position: 180% 0;
-  }
-  to {
-    background-position: -40% 0;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .blob-image-pending {
+  .blob-image-pending::before {
     animation: none;
   }
 }
@@ -6218,10 +6618,13 @@ table.fibers td:first-child {
 
 /* An archive or delete that did not happen. Persistent, not a toast: it is
    about work the person asked for and did not get. */
+/* The rail is 268px wide, so an unbroken path here overflows the pane itself. */
 .rail-error {
+  min-width: 0;
   margin: var(--s2) var(--s4) var(--s3);
   font-size: var(--text-sm);
   color: var(--bad);
+  overflow-wrap: anywhere;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -6420,7 +6823,7 @@ table.fibers td:first-child {
   border-radius: 6px;
   background: transparent;
   color: var(--text-3);
-  font-size: 10px;
+  font-size: var(--text-xs);
   opacity: 0;
   transition: opacity var(--t-fast) var(--ease-out-quart);
 }
@@ -6498,4 +6901,358 @@ table.fibers td:first-child {
   .quick-row-act {
     opacity: 1;
   }
+}
+
+/* ==========================================================================
+   Press
+
+   Last in the sheet on purpose. Several of these surfaces already carry a
+   box-shadow from a hover or selected rule of equal specificity, and a press
+   that loses the tie is a press that does not happen.
+   ========================================================================== */
+
+/*
+ * `.btn` presses by shrinking, because a button is a discrete object you push.
+ * A row is as wide as the list it belongs to, and shrinking one pulls its text
+ * away from the rows above and below it — motion the eye reads as the list
+ * reflowing rather than as a press. So the rows invert their contact shadow to
+ * an inset and dim, which is the same physical idea standing still, and it
+ * composes over whatever fill the hover underneath it happens to be.
+ */
+.run-card:active,
+.master-card:active,
+.palette-item:active,
+.pop-row:not(:disabled):active,
+.pop-run-main:not(:disabled):active,
+.tree-row:active,
+.change-row:active,
+.proj-row:not(:disabled):active,
+.settings-tab:active,
+.segmented button:active,
+.title-trigger:active,
+.activity-trigger:active,
+.model-trigger:not(:disabled):active,
+.tab-main:active,
+.tool-head:active,
+.tool-group-head:active,
+.archive-row-main:active,
+.question-option:not(:disabled):active {
+  box-shadow: inset 0 1px 2px var(--glass-shade);
+  opacity: 0.88;
+  transition: opacity var(--t-instant) var(--ease-out-quart);
+}
+
+/* No padding box to shade: this one is the width of its own label. */
+.entry-session:active {
+  opacity: 0.72;
+  transition: opacity var(--t-instant) var(--ease-out-quart);
+}
+
+/* ===========================================================================
+   Terminal mode
+
+   A floating pane of structural glass wearing the rail's exact material —
+   fill, edge, radius, lensing, elevation — so the third mode reads as a
+   sibling of the first two rather than a slab fused to the window edge.
+
+   The tab strip keeps the editor's vocabulary (.tabs/.tab/.tab-dot): Code
+   and Terminal are sibling machine surfaces, and a tab that looked different
+   between them would read as a different control. Only the material beneath
+   the strip changes; the controls do not.
+
+   xterm draws its own text, so the app's tokens reach it through JS
+   (`src/terminal.ts`) — its background is the pane's own resolved fill,
+   which is what makes this one continuous material instead of a frame
+   around a differently-coloured rectangle. Glass never sits between the
+   user and the grid: a terminal's top row is real estate a full-screen
+   program draws on, so nothing floats over live output.
+   =========================================================================== */
+
+/* The sidebar-less body has no split padding, so the pane insets itself.
+   Top stays 0: the toolbar's own slack already provides that gap. */
+.body > .term-panel {
+  margin: 0 var(--window-inset) var(--window-inset);
+}
+
+/* Not `.terminal`: that is xterm's own root class, and a panel rule that
+   matched it would apply grid/flex layout *inside* the emulator. */
+.term-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  position: relative;
+  overflow: hidden;
+  background: var(--panel-surface);
+  border: 1px solid color-mix(in oklab, var(--glass-edge) 72%, var(--border));
+  border-radius: var(--r-xl);
+  box-shadow: inset 0 1px 0 var(--glass-specular),
+    inset 1px 0 0 var(--glass-specular-soft),
+    0 18px 48px -24px var(--glass-shade),
+    0 5px 16px -10px var(--glass-shade);
+}
+
+.term-panel > * {
+  grid-column: 1;
+  min-width: 0;
+}
+
+/* Edge lensing on the trailing edge, exactly the rail's: light bending at
+   the boundary is the one detail that sells the material as a physical pane
+   rather than a painted fill. */
+.term-panel::after {
+  content: "";
+  position: absolute;
+  top: var(--s3);
+  right: 0;
+  bottom: var(--s3);
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    var(--glass-edge),
+    color-mix(in oklab, var(--glass-edge) 35%, transparent) 45%,
+    transparent
+  );
+  pointer-events: none;
+}
+
+/* The strip sits directly on the pane's material rather than laying its own
+   tint over it; an active tab answers with the raised control treatment
+   instead of the editor's opaque fill, which would punch a square hole in
+   the glass. */
+.term-panel > .tabs {
+  background: transparent;
+}
+
+.term-panel .tab.is-active {
+  background: var(--glass-control);
+  box-shadow: inset 0 1px 0 var(--glass-specular);
+}
+
+/* The one strip control the editor lacks: opening another shell. It belongs
+   to the strip's chrome, not to the raised-button family. */
+.term-add {
+  flex: none;
+  width: 30px;
+  border: 0;
+  border-right: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--text-md);
+  line-height: 1;
+  transition:
+    background var(--t-fast) var(--ease-out-quart),
+    color var(--t-fast) var(--ease-out-quart);
+}
+
+.term-add:hover {
+  color: var(--text-1);
+  background: color-mix(in oklab, var(--text-3) 10%, transparent);
+}
+
+/* An exited shell wears a hollow ring: the filled dot is the editor's
+   "unsaved" and means something else. Shape, not colour, carries the state,
+   and the notice row below the surface says it in words. */
+.tab-dot.is-exited {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+
+.term-stack {
+  position: relative;
+  min-height: 0;
+}
+
+.term-surface {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+/* Grid items min-size to their content, and xterm's screen carries an
+   explicit pixel width — without this the mount's track grows to whatever
+   grid xterm last believed, fit() reads that inflated box back, and the
+   column count can only ever ratchet upward. */
+.term-surface > * {
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Hidden, not unmounted: the shell keeps running and the buffer keeps its
+   scroll position. A `display: none` box measures 0x0, which is why the view
+   re-fits on becoming visible rather than trusting its ResizeObserver. */
+.term-hidden {
+  display: none;
+}
+
+/* The emulator measures its cell grid from this element's font, so the mono
+   stack must be set here — inheriting the UI sans gives xterm sans metrics,
+   and every glyph gets letterboxed into a cell sized for a wider face. */
+.term-mount {
+  min-height: 0;
+  padding: var(--s3) var(--s4) var(--s2);
+  font-family: var(--mono);
+}
+
+/* xterm sizes itself from this box; letting it scroll would double the
+   scrollbar, since the emulator already draws its own. */
+.term-mount .xterm {
+  height: 100%;
+}
+
+.term-mount .xterm-viewport {
+  background: transparent !important;
+  scrollbar-width: thin;
+}
+
+/* The grid readout while a drag settles, the way Terminal.app answers one.
+   Appearance is the information; it needs no entrance animation. */
+.term-size {
+  position: absolute;
+  top: var(--s3);
+  right: var(--s4);
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--surface-3) 92%, transparent);
+  box-shadow:
+    inset 0 1px 0 var(--glass-specular-soft),
+    0 4px 12px -6px var(--glass-shade);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  pointer-events: none;
+}
+
+/* Notices wear the statusbar's chrome — structural, not raised. */
+.term-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-height: 32px;
+  padding: 0 var(--s3);
+  border-top: 1px solid var(--hairline);
+  background: var(--glass-tint);
+  box-shadow: inset 0 1px 0 var(--glass-specular-soft);
+  font-family: var(--ui);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.term-notice.is-error {
+  color: var(--bad);
+}
+
+.term-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s1);
+  font-family: var(--ui);
+  font-size: var(--text-base);
+  color: var(--text-2);
+  text-align: center;
+}
+
+.term-empty .dim {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  max-width: 42ch;
+}
+
+/* Opacity, on request: a person who has asked the OS for less transparency
+   is asking about exactly these surfaces. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .term-panel {
+    background: var(--surface-1);
+    border-color: var(--border);
+  }
+  .term-panel .tab.is-active {
+    background: var(--surface-3);
+  }
+  .term-notice {
+    background: var(--surface-1);
+  }
+}
+
+/* ==========================================================================
+   Handoff sheet — pick the agent that takes over a thread's work
+   ========================================================================== */
+
+.handoff-sheet {
+  width: min(520px, 92vw);
+  /* Same stretch-guard as the archive sheet: hug the content. */
+  align-self: flex-start;
+}
+
+.handoff-sheet .sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding-bottom: var(--s3);
+}
+
+.handoff-empty {
+  margin: var(--s3) var(--s2) var(--s4);
+  max-width: 46ch;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+/* The source, as name-then-title: the name is the address the new thread's
+   opening task will cite, so it leads. */
+.handoff-source {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: 0;
+  min-width: 0;
+}
+
+.handoff-source-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.handoff-source-title {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.handoff-note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.handoff-task {
+  width: 100%;
+  resize: vertical;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.handoff-task:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.handoff-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
 }

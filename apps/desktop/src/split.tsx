@@ -49,6 +49,8 @@ export function SplitPane(props: {
   first: ReactNode;
   second: ReactNode;
   className?: string;
+  /** What the handle resizes, for the accessible name. */
+  label?: string;
 }): ReactNode {
   const { id, direction, initial, min, max } = props;
   const fixed = props.fixed ?? "second";
@@ -56,6 +58,9 @@ export function SplitPane(props: {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState(() => loadSize(id, initial));
   const drag = useRef<{ startPos: number; startSize: number; limit: number } | null>(null);
+  // Mirrors `size` for handlers that fire faster than a render.
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
 
   // Re-clamp when the id changes (view switches reuse the component).
   useEffect(() => setSize(loadSize(id, initial)), [id, initial]);
@@ -115,6 +120,48 @@ export function SplitPane(props: {
     saveSize(id, initial);
   }, [id, initial]);
 
+  /**
+   * Keyboard resize, because a separator that only answers to a pointer is a
+   * pane the keyboard cannot reach the far side of.
+   *
+   * The arrow keys that move it are the ones that point along the axis it
+   * travels, and the sign follows the same rule the drag does: which side the
+   * sized pane sits on decides whether "away" grows or shrinks it.
+   */
+  const onKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "Home" || event.key === "Enter") {
+        event.preventDefault();
+        reset();
+        return;
+      }
+      const decrease = isRow ? "ArrowLeft" : "ArrowUp";
+      const increase = isRow ? "ArrowRight" : "ArrowDown";
+      if (event.key !== decrease && event.key !== increase) return;
+      event.preventDefault();
+      const container = containerRef.current;
+      const span =
+        container === null
+          ? Infinity
+          : isRow
+            ? container.getBoundingClientRect().width
+            : container.getBoundingClientRect().height;
+      const limit = span - Math.max(160, span * 0.25);
+      // Coarse by default, fine with Shift, the way a Mac slider behaves.
+      const step = event.shiftKey ? 1 : 16;
+      const toward = event.key === increase ? 1 : -1;
+      const delta = (fixed === "second" ? -toward : toward) * step;
+      // Read through the ref, not the closed-over `size`: key repeat fires
+      // faster than React re-renders, and three presses against one stale
+      // value moved the pane once instead of three times.
+      const next = clamp(sizeRef.current + delta, limit);
+      sizeRef.current = next;
+      setSize(next);
+      saveSize(id, next);
+    },
+    [clamp, fixed, id, isRow, reset],
+  );
+
   return (
     <div
       ref={containerRef}
@@ -131,12 +178,18 @@ export function SplitPane(props: {
       <div
         className="split-handle"
         role="separator"
+        tabIndex={0}
         aria-orientation={isRow ? "vertical" : "horizontal"}
+        aria-label={props.label ?? "Resize panes"}
+        aria-valuenow={Math.round(size)}
+        aria-valuemin={min}
+        aria-valuemax={max}
         title="drag to resize · double-click to reset"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onDoubleClick={reset}
+        onKeyDown={onKeyDown}
       />
       <div
         className="split-second"

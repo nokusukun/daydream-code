@@ -125,6 +125,13 @@ describe("ApiClient", () => {
       url: "http://127.0.0.1:4870/api/sessions/s_1/stop",
       method: "POST",
     });
+
+    await api.undoModelChange("s 1");
+    expect(calls[8]).toMatchObject({
+      url: "http://127.0.0.1:4870/api/sessions/s%201/model/undo",
+      method: "POST",
+      body: JSON.stringify({}),
+    });
   });
 
   it("encodes search queries", async () => {
@@ -132,6 +139,14 @@ describe("ApiClient", () => {
     await client(f).search("hello world&x=1", { limit: 10 });
     expect(calls[0]?.url).toBe(
       "http://127.0.0.1:4870/api/journal/search?q=hello%20world%26x%3D1&limit=10",
+    );
+  });
+
+  it("asks for the selected driver's skills", async () => {
+    const { fetch: f, calls } = fakeFetch(() => ({ json: [] }));
+    await client(f).skills("claude/opus");
+    expect(calls[0]?.url).toBe(
+      "http://127.0.0.1:4870/api/skills?driver=claude%2Fopus",
     );
   });
 

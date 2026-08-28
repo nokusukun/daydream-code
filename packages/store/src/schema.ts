@@ -66,6 +66,7 @@ export const sessions = sqliteTable(
     task: text("task").notNull(),
     driver: text("driver").notNull(),
     modelId: text("model_id"),
+    effort: text("effort"),
     // No migration accompanies `waiting`: the column is a bare `TEXT NOT NULL`
     // in every shipped migration, so this enum is a compile-time narrowing
     // only and widening it needs no DDL.

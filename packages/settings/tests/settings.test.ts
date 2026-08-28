@@ -92,6 +92,7 @@ describe("settings view", () => {
       "label",
       "description",
       "isDefault",
+      "efforts",
     ]);
   });
 

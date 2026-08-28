@@ -295,6 +295,14 @@ export const migrations: readonly Migration[] = [
   CREATE UNIQUE INDEX IF NOT EXISTS quick_actions_project_command
     ON quick_actions (project_id, command);
   `,
+
+  // v6 — reasoning effort, pinned per session the way model_id is. Nullable
+  // TEXT rather than an enum CHECK: the valid level set belongs to whichever
+  // driver dispatched the session ("xhigh" is Claude's, "minimal" is Codex's),
+  // and a constraint baked into shipped DDL would outlive both catalogs.
+  `
+  ALTER TABLE sessions ADD COLUMN effort TEXT;
+  `,
 ];
 
 /** Bring the database up to the current schema version. Safe to call on every open. */

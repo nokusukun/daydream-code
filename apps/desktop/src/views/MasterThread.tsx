@@ -64,7 +64,7 @@ export function MasterThread(props: { showAll: boolean }): ReactNode {
             <p className="empty-title">The thread is empty</p>
             <p className="empty-body">
               Every dispatch, turn end and summary lands here as it happens, and
-              every session forks from it. Start a run and this fills in.
+              every thread forks from it. Start a thread and this fills in.
             </p>
           </div>
         )}
@@ -184,8 +184,8 @@ export function Digest(props: { text: string }): ReactNode {
         </button>
       )}
       <p className="entry-aside">
-        The entries this replaces are superseded, not deleted — switch the bar
-        to full history to read them verbatim.
+        The entries this replaces are superseded, not deleted. Switch the bar to
+        full history to read them verbatim.
       </p>
     </>
   );

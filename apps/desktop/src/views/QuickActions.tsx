@@ -30,7 +30,7 @@ import {
   SOURCE_YOU,
 } from "@daydream-code/actions";
 import { useQuickActionsLive, type QuickActionRecord } from "../quick-actions.js";
-import { useDismiss } from "./ActivityMenu.js";
+import { useDismiss } from "../overlay.js";
 
 /** What the last click did, held until the next one. */
 interface Outcome {

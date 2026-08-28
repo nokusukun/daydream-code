@@ -65,7 +65,7 @@ describe("<ProjectGroup>", () => {
     const html = render(only!, () => undefined);
     expect(html).toContain("beta");
     expect(html).toContain("idle");
-    expect(html).toContain("no runs yet");
+    expect(html).toContain("no threads yet");
     // A quiet project keeps its track: a row with no meter reads as a row
     // that failed to draw, not as one with nothing to report.
     expect(html).toContain("sweep-idle");
@@ -82,7 +82,7 @@ describe("<ProjectGroup>", () => {
       ],
       "/projects/alpha",
     );
-    expect(render(only!)).toContain("last run failed · old title");
+    expect(render(only!)).toContain("last thread failed · old title");
   });
 
   it("says it is still checking a project whose core has not answered", () => {
@@ -97,7 +97,7 @@ describe("<ProjectGroup>", () => {
     // answers "what happened last", which is not a question this project can
     // answer yet.
     expect(html.match(/checking\u2026/g)).toHaveLength(1);
-    expect(html).not.toContain("no runs yet");
+    expect(html).not.toContain("no threads yet");
     expect(html).toContain("sweep-unknown");
   });
 
@@ -160,7 +160,7 @@ describe("<Summary>", () => {
       { connection: alpha, session: session("one", "running") },
       { connection: alpha, session: session("two", "running") },
     ]);
-    expect(html).toContain("2 agents running");
+    expect(html).toContain("2 threads running");
   });
 
   it("names the projects, and their counts, once work is spread across them", () => {
@@ -170,7 +170,7 @@ describe("<Summary>", () => {
       { connection: beta, session: session("three", "running") },
     ]);
     expect(html).toContain("alpha 2 · beta 1");
-    expect(html).not.toContain("3 agents");
+    expect(html).not.toContain("3 threads");
   });
 
   it("puts a run blocked on you ahead of the tally, wherever it is", () => {
@@ -189,7 +189,7 @@ describe("<Summary>", () => {
           session: session("old", "failed", "2026-08-01T01:00:00.000Z"),
         },
       ]),
-    ).toContain("Last run failed · old title · beta");
+    ).toContain("Last thread failed · old title · beta");
     expect(summary([])).toContain("Idle");
   });
 

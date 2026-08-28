@@ -15,12 +15,13 @@
  * decides when it is done — so a percentage would be a number the harness
  * invented. A sweep says "working" without claiming to know how much is left.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useHarness } from "../harness.js";
-import { ApiClient } from "../api.js";
+import { useDismiss } from "../overlay.js";
+import { ApiClient, ApiError } from "../api.js";
 import { elapsedMs, fmtElapsed } from "../sessions.js";
 import { NEW_SESSION_DRAFT, draftPreview, useDrafts } from "../drafts.js";
-import { StatusGlyph, fmtAgo } from "../ui.js";
+import { StatusGlyph, StopIcon, fmtAgo } from "../ui.js";
 import {
   busyProjects,
   everyProjectKnown,
@@ -53,7 +54,6 @@ function useTicker(active: boolean): number {
   }, [active]);
   return now;
 }
-
 export function ActivityMenu(props: {
   onOpenProject?: ((rootPath: string) => void) | undefined;
   onOpenProjectSession?: ((rootPath: string, sessionId: string) => void) | undefined;
@@ -147,7 +147,7 @@ export function ActivityMenu(props: {
             pending.length === 0 &&
             everyProjectKnown(projects) && (
               <p className="pop-empty">
-                Nothing running. <kbd>⌘N</kbd> starts a run.
+                Nothing running. <kbd>⌘N</kbd> starts a thread.
               </p>
             )}
 
@@ -192,12 +192,12 @@ export function Summary(props: {
         <StatusGlyph status="waiting" />
         <span className="activity-text">
           {waiting === 1
-            ? `${first?.session.title ?? "A run"}${
+            ? `${first?.session.title ?? "A thread"}${
                 first !== undefined && first.connection.rootPath !== currentRootPath
                   ? ` · ${first.connection.name}`
                   : ""
               }, waiting on you`
-            : `${waiting} runs waiting on you`}
+            : `${waiting} threads waiting on you`}
         </span>
       </>
     );
@@ -223,7 +223,7 @@ export function Summary(props: {
         <span className="activity-text">
           {busy.length > 1
             ? projectTally(projects, TRIGGER_PROJECTS)
-            : `${live.length} agents running`}
+            : `${live.length} threads running`}
         </span>
       </>
     );
@@ -244,8 +244,8 @@ export function Summary(props: {
         <StatusGlyph status={lastDone.session.status} />
         <span className="activity-text">
           {lastDone.session.status === "completed"
-            ? "Last run finished"
-            : `Last run ${lastDone.session.status}`}
+            ? "Last thread finished"
+            : `Last thread ${lastDone.session.status}`}
           {" · "}
           {lastDone.session.title ?? lastDone.session.name}
           {lastDone.connection.rootPath !== currentRootPath
@@ -313,8 +313,8 @@ export function ProjectGroup(props: {
       {project.live.length === 0 && project.known && (
         <p className="pop-project-quiet">
           {project.lastDone === undefined
-            ? "no runs yet"
-            : `last run ${project.lastDone.session.status} · ${
+            ? "no threads yet"
+            : `last thread ${project.lastDone.session.status} · ${
                 project.lastDone.session.title ?? project.lastDone.session.name
               }${
                 project.lastDone.session.endedAt === null
@@ -346,6 +346,23 @@ function ActivityRow(props: {
     [connection.token, connection.url],
   );
 
+  // Stopping another project's thread is destructive, fires from a popover
+  // that is about to close, and used to discard its own failure. A refusal
+  // that nobody prints reads exactly like a thread ignoring you.
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
+  const stop = useCallback(() => {
+    setStopping(true);
+    setStopError(null);
+    api
+      .stop(id)
+      .catch((cause: unknown) => {
+        const detail = cause instanceof ApiError ? cause.detail : undefined;
+        setStopError(detail ?? `could not stop ${session.name}`);
+      })
+      .finally(() => setStopping(false));
+  }, [api, id, session.name]);
+
   return (
     <div
       className={`pop-run${
@@ -356,6 +373,7 @@ function ActivityRow(props: {
       <button
         type="button"
         className="pop-run-main"
+        title={`${session.title ?? session.name} · ${session.status}`}
         onClick={() => props.onOpen(props.activity)}
       >
         <span className="pop-run-top">
@@ -380,36 +398,20 @@ function ActivityRow(props: {
         className="pop-stop"
         title={`Stop ${session.name}`}
         aria-label={`Stop ${session.name}`}
-        onClick={() => void api.stop(id).catch(() => undefined)}
+        onClick={stop}
+        disabled={stopping}
+        aria-busy={stopping}
       >
-        ■
+        {/* The drawn glyph, not the ■ character — a text glyph takes the row's
+            font metrics and drifts off optical centre; the SVG is the same
+            mark the composer's stop wears. */}
+        <StopIcon />
       </button>
+      {stopError !== null && (
+        <p className="pop-run-error" role="alert">
+          {stopError}
+        </p>
+      )}
     </div>
   );
-}
-
-/** Close on an outside click or Escape — the two ways a Mac menu goes away. */
-export function useDismiss(
-  ref: React.RefObject<HTMLElement | null>,
-  open: boolean,
-  close: () => void,
-): void {
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent): void => {
-      if (!ref.current?.contains(event.target as Node)) close();
-    };
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        close();
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [ref, open, close]);
 }

@@ -5,7 +5,7 @@
  * activity menu, the command palette and the master timeline — and none of
  * them should own the list the others depend on.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { compareSessionRecency, type SessionRecord } from "@daydream-code/shared";
 import { ApiError } from "./api.js";
 import { useHarness } from "./harness.js";
@@ -13,19 +13,30 @@ import { useHarness } from "./harness.js";
 export function useSessions(): {
   sessions: SessionRecord[];
   loading: boolean;
+  /** Why the list could not be read, or null. Empty is not a synonym. */
+  error: string | null;
 } {
   const { api, subscribe, resyncTick } = useHarness();
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     api
       .sessions()
       .then((list) => {
-        if (!cancelled) setSessions(list);
+        if (cancelled) return;
+        setError(null);
+        setSessions(list);
       })
-      .catch(() => {
-        if (!cancelled) setSessions([]);
+      .catch((cause: unknown) => {
+        if (cancelled) return;
+        // A failed read used to resolve to `[]`, which four surfaces then
+        // reported as a project with no runs: the app confidently telling you
+        // your work is gone because one fetch failed. The list stays null so
+        // nothing downstream can mistake "not read" for "nothing there".
+        const detail = cause instanceof ApiError ? cause.detail : undefined;
+        setError(detail ?? "could not read this project's threads");
       });
     return () => {
       cancelled = true;
@@ -56,7 +67,9 @@ export function useSessions(): {
     [subscribe],
   );
 
-  return { sessions: sessions ?? [], loading: sessions === null };
+  // Loading is "no answer yet", which a failed read is not. Keeping them
+  // apart is what lets a consumer show the reason instead of an empty list.
+  return { sessions: sessions ?? [], loading: sessions === null && error === null, error };
 }
 
 /**
@@ -82,23 +95,6 @@ export function isArchived(session: SessionRecord): boolean {
 /** Still in flight: the driver process is up and the row must not be reaped. */
 export function isLive(session: SessionRecord): boolean {
   return session.status === "running" || session.status === "waiting";
-}
-
-/**
- * The live runs, blocked-on-you first.
- *
- * `waiting` outranks `running` everywhere this order is used: both are live,
- * but only one of them cannot proceed without the person reading the screen.
- */
-export function useLiveSessions(): SessionRecord[] {
-  const { sessions } = useSessions();
-  return useMemo(() => {
-    const byRecency = [...sessions].sort(compareSessionRecency);
-    return [
-      ...byRecency.filter((s) => s.status === "waiting"),
-      ...byRecency.filter((s) => s.status === "running"),
-    ];
-  }, [sessions]);
 }
 
 /** Milliseconds a session has been going, or ran for once it ended. */

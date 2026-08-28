@@ -22,8 +22,8 @@ import { QuestionPrompt } from "./QuestionPrompt.js";
 import { PanelHead } from "./PanelHead.js";
 import { ChangesView } from "./ChangesView.js";
 import { UsageView } from "./UsageView.js";
-import { MessageComposer } from "./Composer.js";
-import { StatusGlyph, fmtDateTime, fmtTime, peek, short } from "../ui.js";
+import { MessageComposer, pendingContextRebuild } from "./Composer.js";
+import { StatusGlyph, compact, fmtDateTime, fmtTime, fullText, peek, short } from "../ui.js";
 import { ProviderIcon } from "../provider-icon.js";
 import { Code, Fence, Markdown, Output } from "../prose.js";
 import { Entry as Row } from "./Entry.js";
@@ -38,6 +38,8 @@ import {
   type ToolCard,
 } from "../tool-view.js";
 import { useWorkspace } from "../workspace.js";
+import { digestChunks } from "../master.js";
+import { elapsedMs, fmtElapsed, isLive } from "../sessions.js";
 import type { ChangedFile } from "../api.js";
 import { openTextContextMenu } from "../text-context.js";
 
@@ -108,11 +110,13 @@ export function SessionPanel(props: { id: string }): ReactNode {
   }, [events, view]);
 
   const running = session?.status === "running";
-  // The fold takes `running` because it treats the call in flight differently,
-  // and only a live session has one.
+  // Waiting is live too: question tools switch the record to `waiting` while
+  // their call is still the current work. Narrowing this to `running` made the
+  // call disappear into its group at the exact moment the question opened.
+  const live = session !== null && isLive(session);
   const grouped = useMemo(
-    () => groupEvents(events ?? [], { live: running }),
-    [events, running],
+    () => groupEvents(events ?? [], { live }),
+    [events, live],
   );
   // Claude's tool results carry the call id and no name, so the name has to
   // come from the call that opened it.
@@ -144,20 +148,25 @@ export function SessionPanel(props: { id: string }): ReactNode {
   // A `question_asked` that has scrolled out of the window belongs to a turn
   // that kept running — i.e. one already settled.
   const pending = useMemo(() => pendingQuestionFrom(events ?? []), [events]);
+  const contextRebuild = useMemo(
+    () => (live ? null : pendingContextRebuild(events ?? [])),
+    [events, live],
+  );
   const changed = useMemo(
     () => new Map(status.files.map((f) => [f.path, f])),
     [status.files],
   );
 
   return (
-    <main className={`panel${nextMessages.length === 0 ? "" : " panel-has-next-message"}`}>
+    <main
+      className={`panel${
+        nextMessages.length === 0 && contextRebuild === null
+          ? ""
+          : " panel-has-composer-banner"
+      }`}
+    >
       <div className="panel-top">
-        <Head
-          session={session}
-          id={id}
-          reportedModel={reportedModel}
-          onError={setError}
-        />
+        <Head session={session} reportedModel={reportedModel} />
         {error !== null && (
           <div className="error-bar">
             {error}
@@ -185,8 +194,8 @@ export function SessionPanel(props: { id: string }): ReactNode {
               <div className="empty">
                 <p className="empty-title">Nothing journaled yet</p>
                 <p className="empty-body">
-                  Every turn, thought and tool call this run makes lands here the
-                  moment it is committed.
+                  Every turn, thought and tool call this thread makes lands here as it
+                  happens.
                 </p>
               </div>
             )}
@@ -210,11 +219,8 @@ export function SessionPanel(props: { id: string }): ReactNode {
             )}
             {running && (
               <p className="live-hint" aria-live="polite">
-                <i />
-                <i />
-                <i />
-                {/* The label is for screen readers only: the dots carry the
-                    meaning visually, and the word next to them read as noise. */}
+                {/* The label is for screen readers only: the activity ring carries the
+                    meaning visually, and the word next to it reads as noise. */}
                 <span className="live-hint-label">working</span>
               </p>
             )}
@@ -229,7 +235,7 @@ export function SessionPanel(props: { id: string }): ReactNode {
               paths={touched}
               note={
                 <>
-                  Files this run wrote that still differ from <code>HEAD</code>.
+                  Files this thread wrote that still differ from <code>HEAD</code>.
                   Anything it changed through the shell shows up on the master
                   thread's Changes tab, which reads the whole tree.
                 </>
@@ -242,10 +248,18 @@ export function SessionPanel(props: { id: string }): ReactNode {
       {view === "usage" && (
         <div className="panel-scroll">
           <div className="column">
-            <UsageView
-              sessions={session === null ? [] : [session]}
-              events={events ?? []}
-            />
+            {/* Passing an empty list while the record is still in flight made
+                this report "nothing spent yet" about a thread that had spent
+                plenty. No record, no claim. */}
+            {session === null ? (
+              <div aria-busy="true" style={{ display: "grid", gap: 12 }}>
+                <div className="skeleton skeleton-row" />
+                <div className="skeleton skeleton-row" style={{ opacity: 0.6 }} />
+                <div className="skeleton skeleton-row" style={{ opacity: 0.3 }} />
+              </div>
+            ) : (
+              <UsageView sessions={[session]} events={events ?? []} />
+            )}
           </div>
         </div>
       )}
@@ -263,6 +277,7 @@ export function SessionPanel(props: { id: string }): ReactNode {
           session={session}
           id={id}
           nextMessages={nextMessages}
+          contextRebuild={contextRebuild}
           onNextMessages={setNextMessages}
           onError={setError}
         />
@@ -308,12 +323,6 @@ export function nextMessagesAfter(
 }
 
 /** 56.6k — the bar has room for a number, not for six digits. */
-function compact(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  return `${(n / 1_000_000).toFixed(1)}m`;
-}
-
 /**
  * One strip, not two bands. Identity on the left, the numbers that change
  * while you watch in the middle, the view tabs at the end. Everything that is
@@ -322,21 +331,42 @@ function compact(n: number): string {
  */
 function Head(props: {
   session: SessionRecord | null;
-  id: string;
   /** Model the driver actually ran, when the session pinned none. */
   reportedModel: string | null;
-  onError(message: string): void;
 }): ReactNode {
-  const { api, modelLabel } = useHarness();
-  const { session, id } = props;
+  const { modelLabel } = useHarness();
+  const { session } = props;
+  const live =
+    session !== null &&
+    (session.status === "running" || session.status === "waiting");
+  const [now, setNow] = useState(() => Date.now());
 
-  const stop = useCallback(() => {
-    api
-      .stop(id)
-      .catch((e: unknown) => props.onError(e instanceof Error ? e.message : String(e)));
-  }, [api, id, props]);
+  // Elapsed time is useful precisely while nothing else changes. Journal and
+  // session frames cannot keep this display moving, so the selected live
+  // thread owns a small clock and completed threads pay no timer cost.
+  useEffect(() => {
+    if (!live) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [live]);
 
-  if (session === null) return <PanelHead title={id} />;
+  // The raw id is not the thread's name, and printing it here is
+  // indistinguishable from a thread actually called that. A title-shaped
+  // skeleton says "not yet" without asserting anything.
+  if (session === null) {
+    return (
+      <PanelHead
+        title={
+          <span
+            className="skeleton skeleton-row"
+            style={{ display: "block", width: "18ch" }}
+            aria-label="loading thread"
+          />
+        }
+      />
+    );
+  }
 
   const { usage } = session;
   // A session that pinned no model still ran on one; the driver reports which
@@ -344,6 +374,7 @@ function Head(props: {
   const effective = session.modelId ?? props.reportedModel;
   const model = modelLabel(session.driver, effective);
   const usedTokens = usage.tokensIn + usage.tokensOut;
+  const elapsed = fmtElapsed(elapsedMs(session, now));
   const when =
     session.endedAt !== null
       ? `${fmtDateTime(session.startedAt)} → ${fmtDateTime(session.endedAt)}`
@@ -374,22 +405,16 @@ function Head(props: {
               {compact(usage.tokensIn)} <i>in</i> {compact(usage.tokensOut)} <i>out</i>
             </span>
           )}
-          {usage.costUsd > 0 && (
-            <span className="bar-fact" title={`$${usage.costUsd.toFixed(4)}`}>
-              ${usage.costUsd.toFixed(2)}
-            </span>
-          )}
+          <span
+            className="bar-fact"
+            title={`Elapsed ${elapsed}`}
+            aria-label={`Elapsed ${elapsed}`}
+          >
+            {elapsed}
+          </span>
         </span>
       }
-    >
-      {/* `waiting` is stoppable too — a session blocked on a question you do
-          not want to answer is exactly one you might want to kill. */}
-      {(session.status === "running" || session.status === "waiting") && (
-        <button type="button" className="btn btn-danger" onClick={stop}>
-          stop
-        </button>
-      )}
-    </PanelHead>
+    />
   );
 }
 
@@ -497,6 +522,41 @@ function openCalls(run: readonly JournalEvent[]): JournalEvent[] {
 }
 
 /**
+ * The newest settled call and the event that closed it.
+ *
+ * A fast tool can open and close between two paints. Pinning only `openCalls`
+ * therefore made the row appear for a frame and immediately vanish into the
+ * group, even though it was still the newest activity in a live thread. The
+ * closing event stays beside the call so the visible pair remains meaningful.
+ */
+function latestSettledCall(run: readonly JournalEvent[]): JournalEvent[] {
+  let callAt = -1;
+  for (let i = run.length - 1; i >= 0; i -= 1) {
+    if (run[i]!.type === "tool_call") {
+      callAt = i;
+      break;
+    }
+  }
+  if (callAt < 0) return [];
+
+  const call = run[callAt]!;
+  if (isTerminalCall(call)) return [call];
+
+  const id = callIdOf(call);
+  let closedBy: JournalEvent | undefined;
+  for (let i = callAt + 1; i < run.length; i += 1) {
+    const event = run[i]!;
+    if (event.type === "tool_call") continue;
+    if (id !== null && callIdOf(event) !== id) continue;
+    // Id-less providers close calls FIFO. Once every call is settled, the
+    // newest result belongs to the newest call, so keep the last candidate.
+    closedBy = event;
+    if (id !== null) break;
+  }
+  return closedBy === undefined ? [call] : [call, closedBy];
+}
+
+/**
  * Consecutive tool traffic collapses into one row; anything else breaks the
  * run. A run of a single call stays inline, because wrapping one quiet row in
  * a second layer buys nothing.
@@ -505,12 +565,12 @@ function openCalls(run: readonly JournalEvent[]): JournalEvent[] {
  * one pure function with tests, instead of a rule the feed re-derives while
  * drawing.
  *
- * `live` exempts the calls the session is *inside right now* from the fold.
- * Watching a running session is the one case where the collapsed row answers
- * the wrong question: it says what already happened, and folding away the call
- * in flight hides the only line that says what is happening. It takes a flag
- * rather than inferring liveness from a dangling call, because a session that
- * died mid-call leaves one behind and that call is not running.
+ * `live` pins the calls the session is inside right now. If the newest call
+ * already settled, it and its result remain pinned until another visible event
+ * takes focus. Otherwise a fast call is shown for one paint and immediately
+ * swallowed by the group. It takes a flag rather than inferring liveness from
+ * a dangling call, because a session that died mid-call leaves one behind and
+ * that call is not running.
  */
 export function groupEvents(
   events: readonly JournalEvent[],
@@ -531,11 +591,25 @@ export function groupEvents(
   const flush = (tail: boolean): void => {
     if (run.length === 0) return;
     const inFlight = tail && options.live === true ? openCalls(run) : [];
-    const settled = inFlight.length === 0 ? run : run.filter((e) => !inFlight.includes(e));
+    const pinned =
+      tail && options.live === true
+        ? inFlight.length > 0
+          ? inFlight
+          : latestSettledCall(run)
+        : [];
+    const pinnedSet = new Set(pinned);
+    const inFlightSet = new Set(inFlight);
+    const settled = pinned.length === 0 ? run : run.filter((e) => !pinnedSet.has(e));
     const calls = settled.filter((event) => event.type === "tool_call").length;
     if (calls >= 2) out.push({ kind: "tools", key: settled[0]!.id, events: settled });
     else for (const event of settled) out.push({ kind: "event", event });
-    for (const event of inFlight) out.push({ kind: "event", event, running: true });
+    for (const event of pinned) {
+      out.push({
+        kind: "event",
+        event,
+        ...(inFlightSet.has(event) ? { running: true } : {}),
+      });
+    }
     run = [];
   };
 
@@ -645,7 +719,7 @@ function metaLabel(event: JournalEvent): string | null {
   switch (event.type) {
     case "session_started":
       return [
-        "session started",
+        "thread started",
         typeof p.driver === "string" ? p.driver : null,
         p.resumed === true ? "resumed" : null,
       ]
@@ -658,13 +732,34 @@ function metaLabel(event: JournalEvent): string | null {
         .join(" · ");
     }
     case "session_ended":
-      return `session ended${typeof p.status === "string" ? ` · ${p.status}` : ""}`;
+      return `thread ended${typeof p.status === "string" ? ` · ${p.status}` : ""}`;
     case "images_attached": {
       // The images themselves are drawn on the message above this row; all
       // this line owes is the fact that they were stored, not their ids.
       const count = Array.isArray(p.images) ? p.images.length : 0;
       return `${count} image${count === 1 ? "" : "s"} attached`;
     }
+    case "model_changed": {
+      const to =
+        typeof p.to === "object" && p.to !== null
+          ? (p.to as Record<string, unknown>)
+          : {};
+      return [
+        p.undo === true ? "agent switch undone" : "agent switched",
+        typeof to.driver === "string" ? to.driver : null,
+        typeof to.modelId === "string" ? to.modelId : null,
+        typeof to.effort === "string" ? to.effort : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    }
+    case "handoff":
+      return [
+        `handed off to ${typeof p.toName === "string" ? p.toName : "a new thread"}`,
+        p.mode === "summary" ? "summary" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
     default:
       return null;
   }
@@ -674,6 +769,58 @@ function payloadOf(event: JournalEvent): Record<string, unknown> {
   return typeof event.payload === "object" && event.payload !== null
     ? (event.payload as Record<string, unknown>)
     : {};
+}
+
+/**
+ * A prose body past this renders clamped behind "read more" — one timeline
+ * row must not dwarf the rest of the feed. The clamp lives in the view, not
+ * in `short()`: cutting the data loses the tail mid-word with no way back,
+ * and hands right-click copy the cut instead of the message.
+ */
+export const PROSE_CLAMP_CHARS = 4_000;
+
+/**
+ * A body within this of the limit renders whole: a "read more" that reveals
+ * two lines is noise, so a clamp must always be hiding something worth the
+ * click.
+ */
+const PROSE_CLAMP_SLACK = 2_000;
+
+export function proseChunks(text: string): string[] {
+  if (text.length <= PROSE_CLAMP_CHARS + PROSE_CLAMP_SLACK) return [text];
+  // `digestChunks` splits at line boundaries and carries open fences across
+  // the cut, so the clamped head is valid markdown even when the split lands
+  // inside a code block.
+  return digestChunks(text, PROSE_CLAMP_CHARS);
+}
+
+/**
+ * Prose that opens all at once rather than a chunk at a time like the master
+ * digest: a reply is one thing being read, not an archive being paged. The
+ * chunking still matters open — each chunk is its own `Markdown` call over
+ * its own slice, so parse work stays flat as the message grows.
+ */
+function ClampedProse(props: { text: string; quiet?: boolean }): ReactNode {
+  const chunks = useMemo(() => proseChunks(props.text), [props.text]);
+  const [open, setOpen] = useState(false);
+  const visible = open ? chunks : chunks.slice(0, 1);
+  const hidden = props.text.length - (chunks[0]?.length ?? 0);
+  return (
+    <div className={`entry-prose${props.quiet === true ? " entry-prose-quiet" : ""}`}>
+      {visible.map((chunk, i) => (
+        <Markdown key={i} text={chunk} />
+      ))}
+      {chunks.length > 1 && (
+        <button
+          type="button"
+          className="entry-more"
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "show less" : `read more · ~${Math.round(hidden / 1000)}k characters`}
+        </button>
+      )}
+    </div>
+  );
 }
 
 export function Event(props: {
@@ -694,16 +841,12 @@ export function Event(props: {
 
   switch (event.type) {
     case "session_started": {
-      const text = short(payload.task ?? "");
+      const text = fullText(payload.task ?? "");
       return (
         <>
           {(text.trim().length > 0 || images.length > 0) && (
             <Row kind="you" label="you" time={fmtTime(event.ts)} copyText={text}>
-              {text.trim().length > 0 && (
-                <div className="entry-prose">
-                  <Markdown text={text} />
-                </div>
-              )}
+              {text.trim().length > 0 && <ClampedProse text={text} />}
               <Attachments images={images} />
             </Row>
           )}
@@ -711,7 +854,7 @@ export function Event(props: {
             arrow="·"
             meta
             card={{
-              name: metaLabel(event) ?? "session started",
+              name: metaLabel(event) ?? "thread started",
               preview: fmtTime(event.ts),
               caption: null,
               body: { kind: "code", lang: "json", text: short(event.payload) },
@@ -722,17 +865,15 @@ export function Event(props: {
       );
     }
     case "turn": {
-      const text = short(payload.text ?? "");
+      const text = fullText(payload.text ?? "");
       return (
         <Row kind="reply" label="reply" time={fmtTime(event.ts)} copyText={text}>
-          <div className="entry-prose">
-            <Markdown text={text} />
-          </div>
+          <ClampedProse text={text} />
         </Row>
       );
     }
     case "user_message_queued": {
-      const text = short(payload.text ?? "");
+      const text = fullText(payload.text ?? "");
       return (
         <Row
           kind="you"
@@ -742,30 +883,22 @@ export function Event(props: {
           className="entry-pending"
           copyText={text}
         >
-          {text.trim().length > 0 && (
-            <div className="entry-prose">
-              <Markdown text={text} />
-            </div>
-          )}
+          {text.trim().length > 0 && <ClampedProse text={text} />}
           <Attachments images={images} />
         </Row>
       );
     }
     case "user_injected": {
-      const text = short(payload.text ?? "");
+      const text = fullText(payload.text ?? "");
       return (
         <Row kind="you" label="you" time={fmtTime(event.ts)} copyText={text}>
-          {text.trim().length > 0 && (
-            <div className="entry-prose">
-              <Markdown text={text} />
-            </div>
-          )}
+          {text.trim().length > 0 && <ClampedProse text={text} />}
           <Attachments images={images} />
         </Row>
       );
     }
     case "master_injected": {
-      const text = short(payload.text ?? payload);
+      const text = fullText(payload.text ?? payload);
       return (
         <Row
           kind="master"
@@ -773,21 +906,17 @@ export function Event(props: {
           time={fmtTime(event.ts)}
           copyText={text}
         >
-          <div className="entry-prose">
-            <Markdown text={text} />
-          </div>
+          <ClampedProse text={text} />
         </Row>
       );
     }
     case "thinking": {
-      const text = short(payload.text ?? "");
+      const text = fullText(payload.text ?? "");
       // No timestamp: thinking is the one row that should recede, and the turn
       // it belongs to is timestamped a few rows down.
       return (
         <Row kind="thinking" label="thinking" copyText={text}>
-          <div className="entry-prose entry-prose-quiet">
-            <Markdown text={text} />
-          </div>
+          <ClampedProse text={text} quiet />
         </Row>
       );
     }
@@ -859,7 +988,7 @@ export function Event(props: {
           : kind === "replied"
             ? short(payload.text)
             : kind === "declined"
-              ? "you decide — proceeding on its own recommendation"
+              ? "you decide · proceeding on its own recommendation"
               : `cancelled: ${short(payload.reason)}`;
       return (
         <Row kind="answer" label="answer" time={fmtTime(event.ts)} copyText={said}>

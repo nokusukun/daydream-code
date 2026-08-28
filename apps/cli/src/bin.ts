@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { boot, type PatchRow } from "@daydream-code/boot";
+import type { FiberDump } from "@daydream-code/kernel";
 import { sessionActivityAt, type JournalEvent } from "@daydream-code/shared";
 import type {} from "@daydream-code/session";
 import type {} from "@daydream-code/driver";
@@ -29,6 +30,7 @@ options:
   --project <path>   project root (default: cwd)
   --driver <id>      driver for this dispatch (claude, codex, mock)
   --model <id>       model id passed to the driver
+  --effort <level>   reasoning effort passed to the driver (e.g. low, high, xhigh)
   --name <name>      name for this session (default: derived from the task)
   --image <path>     attach an image (png/jpeg/gif/webp; repeatable)
   --enable <id>      enable a config row (repeatable)
@@ -109,6 +111,57 @@ function attachQuestionPrompt(ctx: {
   };
 }
 
+/**
+ * A plugin that fails to load leaves its service unprovided, and the first
+ * thing a command does with it is read a property off `undefined` — so the
+ * last line the user reads is a TypeError from this file rather than the
+ * failure that caused it. The cause is already sitting in `app.dumpState()`.
+ *
+ * Only a fiber that actually threw counts as fatal. A `pending` fiber with
+ * unmet `inject` names can be a legitimately-disabled optional row, and
+ * refusing to run over one would break healthy trees; those are reported as
+ * context instead.
+ */
+const NATIVE_ABI = /NODE_MODULE_VERSION|ERR_DLOPEN_FAILED/;
+
+export function bootDiagnosis(fibers: readonly FiberDump[]): string | null {
+  const failed = fibers.filter((fiber) => fiber.error !== undefined);
+  if (failed.length === 0) return null;
+
+  const lines = [
+    "this command has nothing to run against: the harness did not finish booting.",
+    "",
+  ];
+  for (const fiber of failed) {
+    const first = (fiber.error ?? "").split("\n")[0] ?? "";
+    lines.push(`  ${fiber.name} failed: ${first.slice(0, 160)}`);
+  }
+  // Everything downstream of a failed provider is missing too. Enumerating the
+  // cascade buries the one line that matters, so it is counted, not listed.
+  const waiting = fibers.filter(
+    (fiber) => fiber.error === undefined && fiber.missing.length > 0,
+  );
+  if (waiting.length > 0) {
+    lines.push(
+      `  ${waiting.length} more plugin(s) never loaded as a result.`,
+    );
+  }
+  // This repo's most common broken state, and the one that reads as five
+  // unrelated bugs: `pnpm dev` builds better-sqlite3 against Electron's ABI,
+  // then the CLI runs under plain node and cannot load it.
+  if (failed.some((fiber) => NATIVE_ABI.test(fiber.error ?? ""))) {
+    lines.push(
+      "",
+      "better-sqlite3 is built for Electron's ABI; this command runs under node.",
+      "  rebuild it:  pnpm -C apps/desktop rebuild:node",
+      "`pnpm dev` and `pnpm start` swap it back to Electron on their own, so",
+      "expect to alternate if you are running the desktop app and the CLI.",
+    );
+  }
+  lines.push("", "full plugin state:  daydream-code fiber-state");
+  return lines.join("\n");
+}
+
 function fmtEvent(event: JournalEvent): string {
   const payload = event.payload as Record<string, unknown> | null;
   const short = (value: unknown, n = 160): string => {
@@ -160,6 +213,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       project: { type: "string" },
       driver: { type: "string" },
       model: { type: "string" },
+      effort: { type: "string" },
       name: { type: "string" },
       image: { type: "string", multiple: true },
       enable: { type: "string", multiple: true },
@@ -192,6 +246,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   const result = await boot({ projectRoot, overrides, resolutionPaths: [appDir] });
   const { ctx, app } = result;
+
+  // `fiber-state` is the tool for reading a broken boot, so it must survive one.
+  const diagnosis = command === "fiber-state" ? null : bootDiagnosis(app.dumpState());
+  if (diagnosis !== null) {
+    console.error(diagnosis);
+    await app.dispose(app.rootFiber).catch(() => undefined);
+    return 1;
+  }
 
   try {
     switch (command) {
@@ -295,6 +357,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
             task,
             ...(values.driver ? { driver: values.driver } : {}),
             ...(values.model ? { modelId: values.model } : {}),
+            ...(values.effort ? { effort: values.effort } : {}),
             ...(values.name ? { name: values.name } : {}),
             ...(attachments.length > 0 ? { attachments } : {}),
           });

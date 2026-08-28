@@ -6,7 +6,7 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,6 +41,18 @@ import {
   runQuickAction,
   type QuickActionResult,
 } from "./quick-actions.js";
+import {
+  TerminalSessions,
+  parseOpenRequest,
+  parseResizeRequest,
+  parseTerminalId,
+  parseWriteRequest,
+  spawnHelperCandidates,
+  type PtyProcess,
+  type PtySpawnOptions,
+  type TerminalEvent,
+  type TerminalSnapshot,
+} from "./terminal.js";
 
 /**
  * `home` travels with the list so the renderer can print `~/projects` the way
@@ -83,7 +95,13 @@ type CodeContextMenuRequest =
     }
   | { kind: "file"; path: string; dir: boolean; expanded?: boolean };
 
-type SessionMenuAction = "open" | "archive" | "unarchive" | "delete";
+type SessionMenuAction =
+  | "open"
+  | "archive"
+  | "unarchive"
+  | "delete"
+  | "handoff"
+  | "summarize";
 
 interface SessionMenuRequest {
   id: string;
@@ -125,10 +143,62 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Terminals
+//
+// node-pty is loaded through `require` rather than imported, and lazily: it is
+// a native addon, and a machine where the binding will not load should lose the
+// terminal rather than fail to start the app.
+
+let ptyModule: typeof import("node-pty") | null = null;
+let ptyLoadError: string | null = null;
+
+/**
+ * node-pty forks through a small `spawn-helper` binary on POSIX, and pnpm's
+ * store extraction does not preserve its executable bit — so a fresh install
+ * yields `posix_spawnp failed` on the first terminal and nothing else to go on.
+ * Restoring the bit here keeps that fix in the code rather than in a README.
+ */
+function loadPty(): typeof import("node-pty") | null {
+  if (ptyModule !== null || ptyLoadError !== null) return ptyModule;
+  try {
+    const require = createRequire(import.meta.url);
+    const packageDir = dirname(require.resolve("node-pty/package.json"));
+    if (process.platform !== "win32") {
+      for (const helper of spawnHelperCandidates(packageDir, process.platform, process.arch)) {
+        if (!existsSync(helper)) continue;
+        try {
+          chmodSync(helper, 0o755);
+        } catch (error) {
+          console.error(`[desktop] could not make ${helper} executable:`, error);
+        }
+      }
+    }
+    ptyModule = require("node-pty") as typeof import("node-pty");
+    return ptyModule;
+  } catch (error) {
+    ptyLoadError = error instanceof Error ? error.message : String(error);
+    console.error("[desktop] node-pty failed to load; terminals are unavailable:", error);
+    return null;
+  }
+}
+
+const terminals = new TerminalSessions({
+  platform: process.platform,
+  env: process.env,
+  isDirectory: (path: string) => existsSync(path) && statSync(path).isDirectory(),
+  spawn: (file: string, args: readonly string[], options: PtySpawnOptions): PtyProcess => {
+    const pty = loadPty();
+    if (pty === null) throw new Error(ptyLoadError ?? "node-pty is unavailable");
+    return pty.spawn(file, [...args], options) as unknown as PtyProcess;
+  },
+});
+
 async function disposeProjects(): Promise<void> {
   const open = [...projects.values()];
   projects.clear();
   activeRootPath = null;
+  terminals.disposeAll();
   await Promise.all(
     open.map(async ({ result, connection }) => {
       const { app } = result;
@@ -352,6 +422,18 @@ function showSessionContextMenu(
     },
     { label: "Copy Name", click: () => clipboard.writeText(name) },
     { type: "separator" },
+    // Both open a renderer sheet to pick the new thread's agent — the ellipsis
+    // is the promise that nothing is dispatched by the click alone. Available
+    // for live runs too: a handoff only *reads* the source's journal.
+    {
+      label: "Handoff to New Thread…",
+      click: () => { action = "handoff"; },
+    },
+    {
+      label: "Summarize to New Thread…",
+      click: () => { action = "summarize"; },
+    },
+    { type: "separator" },
     {
       label: archived ? "Move to Sessions" : "Archive",
       // A live run is refused by the seam anyway; greying it out here explains
@@ -535,6 +617,104 @@ function registerIpc(): void {
       });
     },
   );
+
+  /**
+   * Terminals, addressed the same way quick actions are: the request names a
+   * terminal, main supplies the project it belongs to.
+   *
+   * Output flows the other way on `daydream:terminal-event`, sent to the one
+   * webContents that attached rather than broadcast — the settings window has
+   * no business receiving a shell's bytes.
+   */
+  const attached = new Map<string, () => void>();
+  const attachKey = (webContentsId: number, terminalId: string): string =>
+    `${String(webContentsId)}\u0000${terminalId}`;
+
+  // A closed window never sends `terminal-detach`, so its subscriptions would
+  // otherwise be held by the session for the life of the process.
+  electronApp.on("web-contents-created", (_event, contents) => {
+    contents.once("destroyed", () => {
+      const prefix = `${String(contents.id)}\u0000`;
+      for (const [key, detach] of [...attached]) {
+        if (!key.startsWith(prefix)) continue;
+        detach();
+        attached.delete(key);
+      }
+    });
+  });
+
+  ipcMain.handle(
+    "daydream:terminal-open",
+    (event, input: unknown): { ok: true; snapshot: TerminalSnapshot } | { ok: false; error: string } => {
+      const request = parseOpenRequest(input);
+      if (request === null) return { ok: false, error: "invalid terminal request" };
+      const active = activeProject();
+      if (active === null) return { ok: false, error: "no project is open" };
+
+      const sender = event.sender;
+      const key = attachKey(sender.id, request.terminalId);
+      attached.get(key)?.();
+      attached.delete(key);
+
+      const opened = terminals.open(request, active.connection.rootPath, (payload: TerminalEvent) => {
+        // A window can be torn down between a pty chunk and its delivery.
+        if (sender.isDestroyed()) return;
+        sender.send("daydream:terminal-event", payload);
+      });
+      if (!opened.ok) return { ok: false, error: opened.error };
+      attached.set(key, opened.value.detach);
+      return { ok: true, snapshot: opened.value.snapshot };
+    },
+  );
+
+  ipcMain.handle("daydream:terminal-write", (_event, input: unknown) => {
+    const request = parseWriteRequest(input);
+    if (request === null) return { ok: false, error: "invalid terminal write" };
+    const active = activeProject();
+    if (active === null) return { ok: false, error: "no project is open" };
+    const written = terminals.write(request, active.connection.rootPath);
+    return written.ok ? { ok: true } : { ok: false, error: written.error };
+  });
+
+  ipcMain.handle("daydream:terminal-resize", (_event, input: unknown) => {
+    const request = parseResizeRequest(input);
+    if (request === null) return { ok: false, error: "invalid terminal resize" };
+    const active = activeProject();
+    if (active === null) return { ok: false, error: "no project is open" };
+    terminals.resize(request, active.connection.rootPath);
+    return { ok: true };
+  });
+
+  ipcMain.handle("daydream:terminal-close", (event, input: unknown) => {
+    const terminalId = parseTerminalId(input);
+    if (terminalId === null) return { ok: false, error: "invalid terminal id" };
+    const active = activeProject();
+    if (active === null) return { ok: false, error: "no project is open" };
+    const key = attachKey(event.sender.id, terminalId);
+    attached.get(key)?.();
+    attached.delete(key);
+    terminals.close(terminalId, active.connection.rootPath);
+    return { ok: true };
+  });
+
+  /**
+   * Detach without closing: the view is going away, the shell is not. This is
+   * what makes hiding the terminal mode free — the pty keeps running and its
+   * scrollback keeps accumulating in main, ready for the next attach.
+   */
+  ipcMain.handle("daydream:terminal-detach", (event, input: unknown) => {
+    const terminalId = parseTerminalId(input);
+    if (terminalId === null) return { ok: false, error: "invalid terminal id" };
+    const key = attachKey(event.sender.id, terminalId);
+    attached.get(key)?.();
+    attached.delete(key);
+    return { ok: true };
+  });
+
+  ipcMain.handle("daydream:terminal-list", () => {
+    const active = activeProject();
+    return active === null ? [] : terminals.list(active.connection.rootPath);
+  });
 
   ipcMain.handle("daydream:open-settings", () => {
     openSettingsWindow();

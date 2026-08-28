@@ -270,20 +270,3 @@ export function mergeDiff(text: string, diff: readonly DiffLine[]): EditorLine[]
   for (const at of [...deletions.keys()].sort((a, b) => a - b)) flush(at);
   return out;
 }
-
-/** `+18 −6`, or "" when nothing changed. Callers style the halves. */
-export function diffStat(file: Pick<ChangedFile, "added" | "removed">): {
-  added: string;
-  removed: string;
-} {
-  return { added: `+${file.added}`, removed: `−${file.removed}` };
-}
-
-/** Changed files keyed by path, for annotating a list the caller already has. */
-export function useChangedByPath(): ReadonlyMap<string, ChangedFile> {
-  const { status } = useWorkspace();
-  return useMemo(
-    () => new Map(status.files.map((f) => [f.path, f])),
-    [status.files],
-  );
-}

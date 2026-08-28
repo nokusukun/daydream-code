@@ -135,20 +135,59 @@ describe("groupEvents", () => {
     expect(items[1]).toEqual({ kind: "event", event: open, running: true });
   });
 
-  it("a live run whose calls have all returned folds whole", () => {
+  it("keeps the newest settled call visible while the thread stays live", () => {
+    const latestCall = ev("tool_call", { name: "bash", id: "t2" });
+    const latestResult = ev("tool_result", { toolCallId: "t2" });
     const items = groupEvents(
       [
         ev("tool_call", { name: "bash", id: "t1" }),
         ev("tool_result", { toolCallId: "t1" }),
-        ev("tool_call", { name: "bash", id: "t2" }),
-        ev("tool_result", { toolCallId: "t2" }),
+        latestCall,
+        latestResult,
       ],
       { live: true },
     );
-    expect(items.map((i) => i.kind)).toEqual(["tools"]);
+    expect(items.map((i) => i.kind)).toEqual(["event", "event", "event", "event"]);
+    expect(items.at(-2)).toEqual({ kind: "event", event: latestCall });
+    expect(items.at(-1)).toEqual({ kind: "event", event: latestResult });
   });
 
-  it("folds terminal file changes whose completion lives on the call", () => {
+  it("pins the latest settled call beside an older collapsed chain", () => {
+    const latestCall = ev("tool_call", { name: "grep", id: "t3" });
+    const latestResult = ev("tool_result", { toolCallId: "t3" });
+    const items = groupEvents(
+      [
+        ev("tool_call", { name: "bash", id: "t1" }),
+        ev("tool_result", { toolCallId: "t1" }),
+        ev("tool_call", { name: "write", id: "t2" }),
+        ev("tool_result", { toolCallId: "t2" }),
+        latestCall,
+        latestResult,
+      ],
+      { live: true },
+    );
+
+    expect(items.map((item) => item.kind)).toEqual(["tools", "event", "event"]);
+    expect(items[1]).toEqual({ kind: "event", event: latestCall });
+    expect(items[2]).toEqual({ kind: "event", event: latestResult });
+  });
+
+  it("folds the previously pinned call when another visible event takes focus", () => {
+    const items = groupEvents(
+      [
+        ev("tool_call", { name: "bash", id: "t1" }),
+        ev("tool_result", { toolCallId: "t1" }),
+        ev("tool_call", { name: "write", id: "t2" }),
+        ev("tool_result", { toolCallId: "t2" }),
+        ev("turn", { text: "done" }),
+      ],
+      { live: true },
+    );
+
+    expect(items.map((item) => item.kind)).toEqual(["tools", "event"]);
+  });
+
+  it("pins the latest terminal file change outside the older chain", () => {
     // Codex emits file-change items only after the patch finishes, so there is
     // no separate tool_result row to close either call.
     const items = groupEvents(
@@ -161,13 +200,17 @@ describe("groupEvents", () => {
         ev("tool_call", {
           id: "patch-2",
           name: "file_change",
+          status: "completed",
+        }),
+        ev("tool_call", {
+          id: "patch-3",
+          name: "file_change",
           status: "failed",
         }),
       ],
       { live: true },
     );
-    expect(items.map((i) => i.kind)).toEqual(["tools"]);
-    expect(items[0]!.kind === "tools" && items[0]!.events).toHaveLength(2);
+    expect(items.map((i) => i.kind)).toEqual(["tools", "event"]);
   });
 
   it("keeps a call with an in-progress status unfolded", () => {
@@ -210,16 +253,22 @@ describe("groupEvents", () => {
    * report every one of their calls as still running.
    */
   it("pairs id-less results with the oldest open call", () => {
+    const latestCall = ev("tool_call", { name: "c" });
+    const latestResult = ev("tool_result", { name: "c" });
     const items = groupEvents(
       [
         ev("tool_call", { name: "a" }),
         ev("tool_result", { name: "a" }),
         ev("tool_call", { name: "b" }),
         ev("tool_result", { name: "b" }),
+        latestCall,
+        latestResult,
       ],
       { live: true },
     );
-    expect(items.map((i) => i.kind)).toEqual(["tools"]);
+    expect(items.map((i) => i.kind)).toEqual(["tools", "event", "event"]);
+    expect(items[1]).toEqual({ kind: "event", event: latestCall });
+    expect(items[2]).toEqual({ kind: "event", event: latestResult });
   });
 
   it("only the run at the end of the feed can hold a running call", () => {
@@ -331,7 +380,7 @@ describe("Event", () => {
 
     expect(html).toContain("entry-mark-you");
     expect(html).toContain("<strong>this flow</strong>");
-    expect(html).toContain("session started · mock");
+    expect(html).toContain("thread started · mock");
     expect(html.indexOf("entry-mark-you")).toBeLessThan(
       html.indexOf("entry-mark-meta"),
     );

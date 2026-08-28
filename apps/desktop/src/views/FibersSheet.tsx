@@ -3,9 +3,10 @@
  * answers "which plugin is silently PENDING" and nothing else, so it earns an
  * overlay rather than permanent space in the workspace.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { FiberDump } from "../api.js";
 import { useHarness } from "../harness.js";
+import { useDismiss, useInitialFocus } from "../overlay.js";
 
 export function FibersSheet(): ReactNode {
   const { api, setOverlay } = useHarness();
@@ -28,6 +29,10 @@ export function FibersSheet(): ReactNode {
   }, [api]);
 
   const stuck = fibers?.filter((f) => f.state !== "active").length ?? 0;
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOverlay(null), [setOverlay]);
+  useDismiss(sheetRef, true, close);
+  useInitialFocus(sheetRef);
 
   return (
     <div
@@ -38,13 +43,12 @@ export function FibersSheet(): ReactNode {
       }}
     >
       <div
+        ref={sheetRef}
         className="sheet glass-strong"
         role="dialog"
         aria-modal="true"
         aria-label="Plugin fibers"
-        onKeyDown={(e) => {
-          if (e.key === "Escape") setOverlay(null);
-        }}
+        tabIndex={-1}
       >
         <header className="sheet-head">
           <h2>plugin fibers</h2>

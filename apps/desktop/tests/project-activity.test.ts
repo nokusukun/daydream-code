@@ -202,7 +202,7 @@ describe("per-project progress", () => {
       alpha.rootPath,
     );
     expect(projectsTooltip(progress)).toBe(
-      "alpha — 1 running (here)\nbeta — idle",
+      "alpha · 1 running (here)\nbeta · idle",
     );
   });
 

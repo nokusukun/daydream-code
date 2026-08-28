@@ -4,8 +4,10 @@ import {
   createSdkMcpServer,
   query,
   tool,
+  type EffortLevel,
   type Options,
   type SDKUserMessage,
+  type SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Context } from "@daydream-code/kernel";
 import { zeroUsage, type ImagePart, type Usage } from "@daydream-code/shared";
@@ -15,6 +17,7 @@ import {
   type DriverModel,
   type DriverRunInput,
   type DriverSessionResult,
+  type AgentSkill,
   type SessionDriver,
 } from "./index.js";
 import { injectedPayload } from "./index.js";
@@ -248,17 +251,45 @@ function harnessMcpServer(input: DriverRunInput) {
 // Driver
 
 /**
+ * The levels the Agent SDK accepts, typed against its union so a rename in
+ * the SDK breaks the build here rather than a session at runtime.
+ */
+const CLAUDE_EFFORTS: readonly EffortLevel[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+/** Narrow a stored effort string to the SDK's union, loudly. */
+function claudeEffort(level: string): EffortLevel {
+  if (!(CLAUDE_EFFORTS as readonly string[]).includes(level)) {
+    throw new Error(
+      `unknown effort "${level}" — claude accepts ${CLAUDE_EFFORTS.join(", ")}`,
+    );
+  }
+  return level as EffortLevel;
+}
+
+/**
  * Baked-in catalog (config-replaceable). No `isDefault`: an unset modelId
  * defers to the user's own Claude Code default model.
+ *
+ * `efforts` per model rather than per driver: the 4.6 generation predates
+ * `xhigh`, and Haiku 4.5 rejects the effort parameter outright, so its list
+ * is absent and the picker offers nothing. The SDK silently downgrades a
+ * level the selected model lacks, so an over-claim here degrades rather than
+ * errors — but the catalog should still not offer what cannot run.
  */
 const CLAUDE_MODELS: DriverModel[] = [
-  { id: "claude-fable-5", label: "Claude Fable 5", description: "most capable, Mythos-class" },
-  { id: "claude-opus-5", label: "Claude Opus 5" },
-  { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
-  { id: "claude-opus-4-7", label: "Claude Opus 4.7" },
-  { id: "claude-opus-4-6", label: "Claude Opus 4.6" },
-  { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
-  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { id: "claude-fable-5", label: "Claude Fable 5", description: "most capable, Mythos-class", efforts: [...CLAUDE_EFFORTS] },
+  { id: "claude-opus-5", label: "Claude Opus 5", efforts: [...CLAUDE_EFFORTS] },
+  { id: "claude-opus-4-8", label: "Claude Opus 4.8", efforts: [...CLAUDE_EFFORTS] },
+  { id: "claude-opus-4-7", label: "Claude Opus 4.7", efforts: [...CLAUDE_EFFORTS] },
+  { id: "claude-opus-4-6", label: "Claude Opus 4.6", efforts: ["low", "medium", "high", "max"] },
+  { id: "claude-sonnet-5", label: "Claude Sonnet 5", efforts: [...CLAUDE_EFFORTS] },
+  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", efforts: ["low", "medium", "high", "max"] },
   { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", description: "fast and cheap" },
 ];
 
@@ -268,11 +299,34 @@ export class ClaudeDriver implements SessionDriver {
     readonly models: readonly DriverModel[] = CLAUDE_MODELS,
   ) {}
 
+  async skills(workdir: string): Promise<AgentSkill[]> {
+    // A prompt that never produces a turn lets the SDK initialise its native
+    // skill registry without spending a model call. `return()` below closes
+    // the subprocess as soon as the control response arrives.
+    const idlePrompt: AsyncIterable<SDKUserMessage> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => new Promise<IteratorResult<SDKUserMessage>>(() => undefined),
+        };
+      },
+    };
+    const session = query({ prompt: idlePrompt, options: { cwd: workdir } });
+    try {
+      const response = await session.reloadSkills();
+      return response.skills.map(claudeSkill);
+    } finally {
+      await session.return();
+    }
+  }
+
   async run(input: DriverRunInput): Promise<DriverSessionResult> {
+    // Validated before anything is journaled or spawned: a bad level should
+    // fail the dispatch, not a turn that already cost tokens.
+    const effort = input.effort !== null ? claudeEffort(input.effort) : null;
     const prompt = new AsyncPushQueue<SDKUserMessage>();
     prompt.push(
       userMessage(
-        renderInitialPrompt(input.context, input.task),
+        renderInitialPrompt(input.context, input.task, input.transcript ?? []),
         imageBlocks(input.taskImages, input),
       ),
     );
@@ -285,6 +339,7 @@ export class ClaudeDriver implements SessionDriver {
       abortController: controller,
       mcpServers: { daydream: harnessMcpServer(input) },
       ...(input.modelId !== null ? { model: input.modelId } : {}),
+      ...(effort !== null ? { effort } : {}),
       ...(input.resumeToken != null ? { resume: input.resumeToken } : {}),
       ...permissionOptions(input.permissionMode),
     };
@@ -414,6 +469,20 @@ export class ClaudeDriver implements SessionDriver {
   }
 }
 
+/** Claude appends a source label for display; scope is not a separate field. */
+function claudeSkill(skill: SlashCommand): AgentSkill {
+  const description = skill.description.replace(
+    /\s+\((?:user|project|local|plugin|policy)\)$/,
+    "",
+  );
+  return {
+    name: skill.name,
+    invocation: "/",
+    description,
+    ...(skill.argumentHint.length > 0 ? { argumentHint: skill.argumentHint } : {}),
+  };
+}
+
 export const name = "driver-claude";
 export const inject = ["drivers"] as const;
 
@@ -432,6 +501,15 @@ export const { Config, settings } = defineConfig({
       label: field.string({ label: "shown as" }),
       description: field.string({ label: "description", optional: true }),
       isDefault: field.boolean({ label: "preselected", optional: true }),
+      // Declared here or it is stripped: the list item validates-and-strips,
+      // so a key missing from this shape never reaches the catalog — not even
+      // from the baked-in default above.
+      efforts: field.json({
+        label: "effort levels",
+        help: "reasoning-effort levels the picker offers for this model. Omit for none.",
+        schema: z.array(z.string()),
+        optional: true,
+      }),
     },
     default: CLAUDE_MODELS,
   }),

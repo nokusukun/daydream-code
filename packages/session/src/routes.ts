@@ -24,6 +24,7 @@ const DispatchBody = z.object({
   task: z.string(),
   driver: z.string().optional(),
   modelId: z.string().optional(),
+  effort: z.string().optional(),
   name: z.string().optional(),
   attachments: z.array(AttachmentBody).optional(),
 });
@@ -39,6 +40,25 @@ const MessageBody = z.object({
  * wants.
  */
 const ArchiveBody = z.object({ archived: z.boolean() });
+
+/**
+ * A mid-thread agent switch. Partial on purpose — absent means "keep",
+ * explicit null means "back to the driver's default" — which is why the two
+ * nullable fields are `.nullable().optional()` rather than plain optional.
+ */
+const ModelBody = z.object({
+  driver: z.string().optional(),
+  modelId: z.string().nullable().optional(),
+  effort: z.string().nullable().optional(),
+});
+
+const HandoffBody = z.object({
+  mode: z.enum(["transcript", "summary"]),
+  task: z.string().optional(),
+  driver: z.string().optional(),
+  modelId: z.string().optional(),
+  effort: z.string().optional(),
+});
 
 /**
  * An answer to a blocking question. `answers` maps question id (which is the
@@ -106,6 +126,7 @@ const sessionRoutes = {
             task: body.task,
             ...(body.driver !== undefined ? { driver: body.driver } : {}),
             ...(body.modelId !== undefined ? { modelId: body.modelId } : {}),
+            ...(body.effort !== undefined ? { effort: body.effort } : {}),
             ...(body.name !== undefined ? { name: body.name } : {}),
             ...(body.attachments !== undefined
               ? { attachments: body.attachments }
@@ -203,6 +224,56 @@ const sessionRoutes = {
             req.params.deliveryId!,
           ),
         }),
+      },
+      {
+        method: "POST",
+        path: "/api/sessions/:id/model",
+        handle: (req: RouteRequest) => {
+          const session = resolve(req);
+          const body = ModelBody.parse(req.body);
+          // 409 for a live thread (same shape as archive/delete: well-formed
+          // request, busy run, remedy is to wait or stop) and for an unknown
+          // driver — both come out of the seam as refusals.
+          try {
+            return ctx.sessions.setModel(session.id, {
+              ...(body.driver !== undefined ? { driver: body.driver } : {}),
+              ...(body.modelId !== undefined ? { modelId: body.modelId } : {}),
+              ...(body.effort !== undefined ? { effort: body.effort } : {}),
+            });
+          } catch (error) {
+            throw new HttpError(409, String((error as Error).message ?? error));
+          }
+        },
+      },
+      {
+        method: "POST",
+        path: "/api/sessions/:id/model/undo",
+        handle: (req: RouteRequest) => {
+          const session = resolve(req);
+          try {
+            return ctx.sessions.undoModelChange(session.id);
+          } catch (error) {
+            throw new HttpError(409, String((error as Error).message ?? error));
+          }
+        },
+      },
+      {
+        method: "POST",
+        path: "/api/sessions/:id/handoff",
+        handle: async (req: RouteRequest) => {
+          const session = resolve(req);
+          const body = HandoffBody.parse(req.body);
+          const handle = await ctx.sessions.handoff(session.id, {
+            mode: body.mode,
+            ...(body.task !== undefined ? { task: body.task } : {}),
+            ...(body.driver !== undefined ? { driver: body.driver } : {}),
+            ...(body.modelId !== undefined ? { modelId: body.modelId } : {}),
+            ...(body.effort !== undefined ? { effort: body.effort } : {}),
+          });
+          // The caller gets the new record now; the run outlives the request.
+          void handle.done.catch(() => {});
+          return handle.record;
+        },
       },
       {
         method: "POST",

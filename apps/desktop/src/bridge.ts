@@ -91,7 +91,13 @@ export interface SessionMenuRequest {
  * `null` means the person dismissed the menu, or cancelled the delete
  * confirmation — indistinguishable on purpose, since both mean do nothing.
  */
-export type SessionMenuAction = "open" | "archive" | "unarchive" | "delete";
+export type SessionMenuAction =
+  | "open"
+  | "archive"
+  | "unarchive"
+  | "delete"
+  | "handoff"
+  | "summarize";
 
 /**
  * A quick action, as asked for. It never carries a path: the main process runs
@@ -107,6 +113,55 @@ export type QuickActionRequest =
 export type QuickActionResult =
   | { ok: true; detail?: string }
   | { ok: false; error: string };
+
+export interface TerminalOpenRequest {
+  terminalId: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalWriteRequest {
+  terminalId: string;
+  data: string;
+}
+
+export interface TerminalResizeRequest {
+  terminalId: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalSnapshot {
+  terminalId: string;
+  pid: number;
+  cols: number;
+  rows: number;
+  /** Scrollback to replay, already stripped of sequences that would reply. */
+  history: string;
+  sequence: number;
+  status: "running" | "exited";
+}
+
+export type TerminalOpenResult =
+  | { ok: true; snapshot: TerminalSnapshot }
+  | { ok: false; error: string };
+
+export type TerminalAck = { ok: true } | { ok: false; error: string };
+
+/**
+ * Main describes these as a discriminated union, but this is the wire: the
+ * fields are optional here because a payload from an older core is a value we
+ * receive, not a type we control. Reading `data` off an `output` event is the
+ * only thing the view does with it.
+ */
+export interface TerminalEvent {
+  type: "output" | "exit";
+  terminalId: string;
+  sequence: number;
+  data?: string;
+  exitCode?: number;
+  signal?: number | null;
+}
 
 export interface DaydreamBridge {
   getState(): Promise<{ connection: ConnectionInfo | null; recent: RegistryEntry[] }>;
@@ -139,6 +194,19 @@ export interface DaydreamBridge {
   ): Promise<SessionMenuAction | null>;
   /** Reveal, open a terminal, or run a saved command at the project root. */
   runQuickAction(request: QuickActionRequest): Promise<QuickActionResult>;
+  /**
+   * Open a terminal at the project root, or adopt the one already running under
+   * this id. The snapshot carries the scrollback to replay before live output.
+   */
+  openTerminal(request: TerminalOpenRequest): Promise<TerminalOpenResult>;
+  writeTerminal(request: TerminalWriteRequest): Promise<TerminalAck>;
+  resizeTerminal(request: TerminalResizeRequest): Promise<TerminalAck>;
+  /** End the shell and discard its scrollback. */
+  closeTerminal(terminalId: string): Promise<TerminalAck>;
+  /** Stop receiving output without ending the shell. */
+  detachTerminal(terminalId: string): Promise<TerminalAck>;
+  listTerminals(): Promise<string[]>;
+  onTerminalEvent(callback: (event: TerminalEvent) => void): () => void;
 }
 
 declare global {

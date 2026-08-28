@@ -35,7 +35,7 @@ const SECTIONS: Section[] = [
   {
     id: "general",
     label: "general",
-    blurb: "what a new session starts with.",
+    blurb: "what a new thread starts with.",
     rows: [],
   },
   {
@@ -47,7 +47,7 @@ const SECTIONS: Section[] = [
   {
     id: "drivers",
     label: "drivers",
-    blurb: "the agents that run sessions, and the models they offer.",
+    blurb: "the drivers that run threads, and the models they offer.",
     rows: ["drivers", "driver-claude", "driver-codex", "driver-mock"],
   },
   {
@@ -59,7 +59,7 @@ const SECTIONS: Section[] = [
   {
     id: "coordination",
     label: "coordination",
-    blurb: "how sessions reach each other and ask you questions.",
+    blurb: "how threads reach each other and ask you questions.",
     rows: [
       "sessions",
       "asks",

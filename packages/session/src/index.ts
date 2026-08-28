@@ -80,7 +80,42 @@ export interface DispatchRequest {
   name?: string;
   driver?: string;
   modelId?: string;
+  /**
+   * Reasoning-effort level in the chosen driver's own vocabulary. Omit for
+   * the driver default. Passed through unjudged, like `modelId`: the driver
+   * validates it at run start, since the valid set is per provider.
+   */
+  effort?: string;
   permissionMode?: "auto" | "ask" | "readonly";
+}
+
+/**
+ * A change to the agent behind an existing thread. Partial: absent fields keep
+ * their current value; `null` clears model or effort back to the driver's own
+ * default. Applies from the thread's next run — a live driver process has its
+ * model fixed for the run it is in, which is why the seam refuses live
+ * sessions rather than pretending the switch took effect.
+ */
+export interface ModelChange {
+  driver?: string;
+  modelId?: string | null;
+  effort?: string | null;
+}
+
+/**
+ * Spin the rest of a thread's work off into a new thread, optionally under a
+ * different agent. `transcript` seeds the new thread with the source's own
+ * replayed conversation; `summary` seeds it with the summarizer's digest —
+ * the right choice when the source is long and the point is the conclusions,
+ * not the turns.
+ */
+export interface HandoffRequest {
+  mode: "transcript" | "summary";
+  /** Instruction for the new thread. Omit for a generic "take over". */
+  task?: string;
+  driver?: string;
+  modelId?: string;
+  effort?: string;
 }
 
 /**
@@ -178,6 +213,28 @@ export abstract class Sessions extends Service {
     options?: { kind?: Injection["kind"] },
   ): Promise<DeliveryOutcome>;
   abstract stop(id: SessionId): Promise<void>;
+  /**
+   * Re-point an idle thread at a different agent, model, or effort. The next
+   * `continueSession` runs under the new binding. Changing the *driver* also
+   * sets aside the provider-native resume token — the old provider's handle is
+   * unredeemable by the new one — which makes the runner replay the thread's
+   * journal on the next run while leaving a short window to undo the switch.
+   */
+  abstract setModel(id: SessionId, change: ModelChange): SessionRecord;
+  /**
+   * Reverse the most recent cross-driver switch before another run starts.
+   * The runner keeps the previous provider resume token only for this short
+   * window, so undo restores the actual provider context rather than merely
+   * changing the row back and rebuilding it a second time.
+   */
+  abstract undoModelChange(id: SessionId): SessionRecord;
+  /**
+   * Dispatch a new thread seeded with this one's work — its replayed
+   * transcript or its summary — so the rest of the task can continue under a
+   * different agent (or just in a fresh context). The source is left exactly
+   * as it is; reading its journal is safe even while it runs.
+   */
+  abstract handoff(id: SessionId, request: HandoffRequest): Promise<SessionHandle>;
   /**
    * Shelve a finished run, or put it back.
    *

@@ -20,10 +20,10 @@ import { NEW_SESSION_DRAFT } from "../drafts.js";
 import { mergeDiff, useFile, useWorkspace } from "../workspace.js";
 import { highlightLines, langOfPath, type Token } from "../highlight.js";
 import { Tokens } from "../prose.js";
-import { compact } from "./ThreadRail.js";
+import { compact } from "../ui.js";
 
 export function CodeView(): ReactNode {
-  const { openFiles, file, openFile, closeFile, setMode } = useHarness();
+  const { openFiles, file, openFile, closeFile } = useHarness();
   const { status } = useWorkspace();
   const changed = useMemo(
     () => new Map(status.files.map((f) => [f.path, f])),
@@ -42,7 +42,7 @@ export function CodeView(): ReactNode {
             <button
               type="button"
               className="tab-main"
-              title={path}
+              title={`${path}${changed.has(path) ? " · changed" : ""}`}
               onClick={() => openFile(path)}
             >
               <span
@@ -62,17 +62,14 @@ export function CodeView(): ReactNode {
           </div>
         ))}
         <span className="tabs-spacer" />
-        <button type="button" className="tab-back" onClick={() => setMode("agent")}>
-          ← Back to thread
-        </button>
       </div>
 
       {file === null ? (
         <div className="empty">
           <p className="empty-title">No file open</p>
           <p className="empty-body">
-            Pick a file on the left, or open one from a run's Changes tab to see
-            what it did to it.
+            Pick a file on the left, or open one from a thread's Changes tab to see
+            what that thread changed.
           </p>
         </div>
       ) : (
@@ -86,7 +83,7 @@ function FileBody(props: { path: string }): ReactNode {
   const { path } = props;
   const { drafts, newSession } = useHarness();
   const { file, loading, error } = useFile(path);
-  const { status } = useWorkspace();
+  const { status, loading: treeLoading } = useWorkspace();
 
   const lang = useMemo(() => langOfPath(path), [path]);
   const lines = useMemo(
@@ -243,9 +240,8 @@ function FileBody(props: { path: string }): ReactNode {
             {status.branch}
           </span>
         )}
-        <span>
-          {status.files.length} changed in tree
-        </span>
+        {/* Zero is a claim about the tree; withhold it until the tree answers. */}
+        {!treeLoading && <span>{status.files.length} changed in tree</span>}
       </div>
     </>
   );

@@ -4,12 +4,12 @@ import { ArchiveSheet } from "../../views/ArchiveSheet.js";
 
 const archive: DesktopModule<DesktopHost> = {
   id: "archive",
-  name: "Session archive",
+  name: "Thread archive",
   activate(context) {
     context.registerOverlay({
       id: "archive",
       Component: ArchiveSheet,
-      command: { label: "Show archived runs", order: 10 },
+      command: { label: "Show archived threads", order: 10 },
     });
   },
 };

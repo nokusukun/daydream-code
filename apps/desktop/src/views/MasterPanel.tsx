@@ -43,7 +43,7 @@ export function MasterPanel(): ReactNode {
               ? "loading…"
               : `${entries.length} ${entries.length === 1 ? "entry" : "entries"} · ${
                   sessions.length
-                } run${sessions.length === 1 ? "" : "s"}${live > 0 ? ` · ${live} live` : ""}`
+                } thread${sessions.length === 1 ? "" : "s"}${live > 0 ? ` · ${live} live` : ""}`
           }
         >
           {view === "thread" && (
@@ -85,11 +85,11 @@ export function MasterPanel(): ReactNode {
                 status.branch !== null ? (
                   <>
                     The working tree against <code>HEAD</code> on{" "}
-                    <code>{status.branch}</code> — every run's edits, in one tree.
+                    <code>{status.branch}</code>, every thread's edits in one tree.
                   </>
                 ) : (
                   <>
-                    The working tree against <code>HEAD</code> — every run's
+                    The working tree against <code>HEAD</code>: every thread's
                     edits, in one tree.
                   </>
                 )

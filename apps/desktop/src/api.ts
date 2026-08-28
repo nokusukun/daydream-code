@@ -5,6 +5,7 @@
  */
 import type { QuickActionRecord } from "@daydream-code/actions";
 import type { BlobRef } from "@daydream-code/blobs";
+import type { AgentSkill } from "@daydream-code/driver";
 import type { AttachmentInput, NextMessage } from "@daydream-code/session";
 import type { SettingsView, WriteRequest, WriteResult } from "@daydream-code/settings";
 import type {
@@ -22,6 +23,7 @@ import type {
 } from "@daydream-code/shared";
 
 export type { QuickActionRecord } from "@daydream-code/actions";
+export type { AgentSkill } from "@daydream-code/driver";
 export type { SettingsView, EntryView, SettingDescriptor, WriteResult } from "@daydream-code/settings";
 export type {
   ChangedFile,
@@ -45,8 +47,29 @@ export interface DispatchInput {
   task: string;
   driver?: string;
   modelId?: string;
+  /** Reasoning-effort level in the driver's vocabulary; omit for default. */
+  effort?: string;
   name?: string;
   attachments?: AttachmentInput[];
+}
+
+/**
+ * A mid-thread agent switch: absent keeps the current value, null clears
+ * model or effort back to the driver's own default.
+ */
+export interface ModelChangeInput {
+  driver?: string;
+  modelId?: string | null;
+  effort?: string | null;
+}
+
+/** Spin a thread's work off to a new thread, optionally under a new agent. */
+export interface HandoffInput {
+  mode: "transcript" | "summary";
+  task?: string;
+  driver?: string;
+  modelId?: string;
+  effort?: string;
 }
 
 /** A stored blob plus its bytes, which is the only way JSON can carry them. */
@@ -60,6 +83,8 @@ export interface DriverModel {
   label: string;
   description?: string;
   isDefault?: boolean;
+  /** Effort levels this model accepts, in display order; absent = default only. */
+  efforts?: string[];
 }
 
 export interface DriverCatalogEntry {
@@ -207,12 +232,28 @@ export class ApiClient {
     return this.#request("/api/models");
   }
 
+  skills(driver: string): Promise<AgentSkill[]> {
+    return this.#request("/api/skills", { driver });
+  }
+
   session(id: string, limit = 500): Promise<SessionDetail> {
     return this.#request(`/api/sessions/${encodeURIComponent(id)}`, { limit });
   }
 
   dispatch(input: DispatchInput): Promise<SessionRecord> {
     return this.#post("/api/sessions", input);
+  }
+
+  setModel(id: string, change: ModelChangeInput): Promise<SessionRecord> {
+    return this.#post(`/api/sessions/${encodeURIComponent(id)}/model`, change);
+  }
+
+  undoModelChange(id: string): Promise<SessionRecord> {
+    return this.#post(`/api/sessions/${encodeURIComponent(id)}/model/undo`, {});
+  }
+
+  handoff(id: string, input: HandoffInput): Promise<SessionRecord> {
+    return this.#post(`/api/sessions/${encodeURIComponent(id)}/handoff`, input);
   }
 
   message(

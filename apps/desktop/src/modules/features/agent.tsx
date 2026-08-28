@@ -13,11 +13,11 @@ function AgentPanel(): ReactNode {
 
 const agent: DesktopModule<DesktopHost> = {
   id: "agent",
-  name: "Agent workspace",
+  name: "Thread workspace",
   activate(context) {
     context.registerMode({
       id: "agent",
-      label: "Agent",
+      label: "Threads",
       order: 0,
       splitId: "shell-rail",
       sidebar: ThreadRail,

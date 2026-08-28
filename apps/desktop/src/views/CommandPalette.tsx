@@ -15,7 +15,7 @@ import {
   compareSessionRecency,
   sessionActivityAt,
 } from "@daydream-code/shared";
-import type { SearchHit } from "../api.js";
+import { ApiError, type SearchHit } from "../api.js";
 import { bridge } from "../bridge.js";
 import { useHarness } from "../harness.js";
 import { runPaletteAction } from "../palette-actions.js";
@@ -47,9 +47,29 @@ export function CommandPalette(props: {
 
   const searching = query.startsWith(SEARCH_PREFIX);
   const term = searching ? query.slice(1).trim() : query.trim();
-  const hits = useJournalSearch(searching ? term : "");
+  const { hits, loading: searchLoading, error: searchError } = useJournalSearch(
+    searching ? term : "",
+  );
+
+  // Captured during the first render, not in an effect: the focus effect below
+  // runs first and would otherwise make the palette's own input the "opener".
+  const openerRef = useRef<Element | null>(
+    typeof document === "undefined" ? null : document.activeElement,
+  );
 
   useEffect(() => inputRef.current?.focus(), []);
+
+  // The palette is opened by a shortcut from wherever you were, and closing it
+  // used to leave focus on <body>, which is the one place Tab cannot resume
+  // from.
+  useEffect(() => {
+    const opener = openerRef.current;
+    return () => {
+      if (!(opener instanceof HTMLElement) || !opener.isConnected) return;
+      const active = document.activeElement;
+      if (active === null || active === document.body) opener.focus();
+    };
+  }, []);
   useEffect(() => setActive(0), [query]);
 
   const close = useCallback(() => setOverlay(null), [setOverlay]);
@@ -62,7 +82,7 @@ export function CommandPalette(props: {
         label: hit.type,
         snippet: hit.snippet,
         hint: fmtAgo(hit.ts),
-        run: () => select(hit.sessionId as unknown as string),
+        run: () => select(hit.sessionId),
       }));
     }
 
@@ -83,7 +103,7 @@ export function CommandPalette(props: {
       .slice(0, 8)
       .map((s) => ({
         key: `session-${s.id as string}`,
-        group: "sessions",
+        group: "threads",
         label: s.name ?? (s.id as string),
         hint: `${isArchived(s) ? "archived · " : ""}${s.status} · ${fmtAgo(sessionActivityAt(s))}`,
         run: () => select(s.id as string),
@@ -194,6 +214,13 @@ export function CommandPalette(props: {
     [items, active, choose, close],
   );
 
+  // Arrowing past the visible window moved a highlight nobody could see.
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const row = listRef.current?.querySelector<HTMLElement>('[data-active="true"]');
+    row?.scrollIntoView({ block: "nearest" });
+  }, [active, items]);
+
   let index = -1;
   let lastGroup = "";
 
@@ -216,15 +243,20 @@ export function CommandPalette(props: {
           ref={inputRef}
           type="text"
           value={query}
-          placeholder="Jump to a session, or type ? to search the journal"
+          aria-label="Jump to a thread, or search the journal"
+          placeholder="Jump to a thread, or type ? to search the journal"
           onChange={(e) => setQuery(e.target.value)}
         />
-        <div className="palette-list">
+        <div className="palette-list" ref={listRef}>
           {items.length === 0 && (
-            <p className="palette-empty">
+            <p className="palette-empty" role={searchError !== null ? "alert" : undefined}>
               {searching && term.length === 0
                 ? "Type to search every journaled event."
-                : "Nothing matches."}
+                : searchError !== null
+                  ? searchError
+                  : searchLoading
+                    ? "Searching the journal…"
+                    : "Nothing matches."}
             </p>
           )}
           {items.map((item) => {
@@ -259,25 +291,46 @@ export function CommandPalette(props: {
   );
 }
 
-/** Debounced journal search; empty term clears without hitting the server. */
-function useJournalSearch(term: string): SearchHit[] {
+export interface JournalSearch {
+  hits: SearchHit[];
+  /** Debounced or in flight. Not the same as having found nothing. */
+  loading: boolean;
+  error: string | null;
+}
+
+/**
+ * Debounced journal search; empty term clears without hitting the server.
+ *
+ * Three states rather than one list, because collapsing them made the palette
+ * assert "Nothing matches" over a request that was still open, and again over
+ * one that had failed. Searching a 40k-event journal is slow enough that the
+ * first case was the common one.
+ */
+function useJournalSearch(term: string): JournalSearch {
   const { api } = useHarness();
-  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [state, setState] = useState<JournalSearch>({
+    hits: [],
+    loading: false,
+    error: null,
+  });
 
   useEffect(() => {
     if (term.length === 0) {
-      setHits([]);
+      setState({ hits: [], loading: false, error: null });
       return;
     }
     let cancelled = false;
+    setState((prev) => ({ ...prev, loading: true, error: null }));
     const timer = setTimeout(() => {
       api
         .search(term, { limit: 30 })
         .then((list) => {
-          if (!cancelled) setHits(list);
+          if (!cancelled) setState({ hits: list, loading: false, error: null });
         })
-        .catch(() => {
-          if (!cancelled) setHits([]);
+        .catch((cause: unknown) => {
+          if (cancelled) return;
+          const detail = cause instanceof ApiError ? cause.detail : undefined;
+          setState({ hits: [], loading: false, error: detail ?? "could not search the journal" });
         });
     }, 140);
     return () => {
@@ -286,5 +339,5 @@ function useJournalSearch(term: string): SearchHit[] {
     };
   }, [api, term]);
 
-  return hits;
+  return state;
 }

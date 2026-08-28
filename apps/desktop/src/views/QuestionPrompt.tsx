@@ -162,6 +162,7 @@ export function QuestionPrompt(props: {
           className="question-custom"
           type="text"
           value={custom}
+          aria-label="Answer in your own words"
           placeholder="or answer in your own words…"
           disabled={busy}
           onChange={(e) =>
@@ -182,7 +183,7 @@ export function QuestionPrompt(props: {
           <span className="question-hint">
             {questions.length > 1 && index < questions.length - 1
               ? "press a number, or type your own"
-              : "the session is waiting on this"}
+              : "the thread is waiting on this"}
           </span>
           <div className="question-actions">
             <button
@@ -190,7 +191,7 @@ export function QuestionPrompt(props: {
               className="btn"
               disabled={busy}
               onClick={() => submit({ decline: true })}
-              title="Proceed without answering; the session takes its own recommendation and records it as an assumption."
+              title="Proceed without answering; the thread takes its own recommendation and records it as an assumption"
             >
               you decide
             </button>

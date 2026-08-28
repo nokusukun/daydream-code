@@ -263,7 +263,7 @@ export function projectsTooltip(
   return projects
     .map(
       (project) =>
-        `${project.connection.name} — ${projectStatusLabel(project)}${
+        `${project.connection.name} · ${projectStatusLabel(project)}${
           project.current ? " (here)" : ""
         }`,
     )

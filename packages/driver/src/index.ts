@@ -26,6 +26,14 @@ export const DriverModelSchema = z.object({
   description: z.string().optional(),
   /** Preselected in pickers; omitting `modelId` on dispatch means "driver default". */
   isDefault: z.boolean().optional(),
+  /**
+   * Reasoning-effort levels this model accepts, in the provider's own
+   * vocabulary and in display order. Empty or absent means "default only" —
+   * the picker offers no effort control for this model. Dispatching a level a
+   * model does not support is the driver's error to raise, not the catalog's
+   * to prevent: the list here is advisory, same as the model ids themselves.
+   */
+  efforts: z.array(z.string()).optional(),
 });
 
 export type DriverModel = z.infer<typeof DriverModelSchema>;
@@ -34,6 +42,19 @@ export type DriverModel = z.infer<typeof DriverModelSchema>;
 export interface DriverCatalogEntry {
   driver: string;
   models: DriverModel[];
+}
+
+/** One provider-native skill shown by the composer's leading-slash picker. */
+export interface AgentSkill {
+  /** Invocation name, without Claude's `/` or Codex's `$` prefix. */
+  name: string;
+  /** Provider-native syntax inserted when the user chooses this skill. */
+  invocation: "/" | "$";
+  description: string;
+  /** Provider-supplied argument shape, when the skill declares one. */
+  argumentHint?: string;
+  /** Where the provider found it. Codex supplies this; Claude currently does not. */
+  scope?: "user" | "repo" | "system" | "admin";
 }
 
 /**
@@ -99,6 +120,13 @@ export interface DriverRunInput {
    */
   taskImages?: ImagePart[];
   modelId: string | null;
+  /**
+   * Reasoning-effort level, or null for the provider default. Each driver
+   * validates against its own vocabulary at the top of `run` — loudly, before
+   * any turn spends tokens — because the level sets differ per provider and a
+   * silently ignored setting would read as the model underthinking.
+   */
+  effort: string | null;
   tools: HarnessToolDefinition[];
   /**
    * Journal sink. Persisted before the driver continues (DB-first). `usage`
@@ -117,6 +145,14 @@ export interface DriverRunInput {
   permissionMode: PermissionMode;
   /** Provider-native resume handle from a previous run of this session. */
   resumeToken?: string | null;
+  /**
+   * This session's own earlier turns, rebuilt from the journal. Supplied only
+   * when the thread has history but no resume token — the agent driving it
+   * changed, or the previous driver kept no provider-side state — so the new
+   * process starts as a continuation rather than with amnesia. Rendered in its
+   * own delimited block, after `context` and before the task.
+   */
+  transcript?: ModelMessage[];
 }
 
 export interface DriverSessionResult extends SessionResult {
@@ -128,6 +164,8 @@ export interface SessionDriver {
   readonly id: string;
   /** Models this driver can dispatch with; empty/absent means "default only". */
   readonly models?: readonly DriverModel[];
+  /** Skills this provider would make available from the given project root. */
+  skills?(workdir: string): Promise<AgentSkill[]>;
   /**
    * Run one session turn-loop until the agent finishes the task (or the
    * signal aborts). Must journal every model-visible thing through onEvent.
@@ -167,5 +205,14 @@ export class SessionDrivers extends Service {
       driver: driver.id,
       models: [...(driver.models ?? [])],
     }));
+  }
+
+  /** Ask the selected provider, rather than mirroring its discovery rules. */
+  skills(id: string, workdir: string): Promise<AgentSkill[]> {
+    const driver = this.#drivers.get(id);
+    if (driver === undefined) {
+      throw new Error(`driver "${id}" is not registered`);
+    }
+    return driver.skills?.(workdir) ?? Promise.resolve([]);
   }
 }

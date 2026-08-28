@@ -25,7 +25,7 @@ interface Row {
 export function FileTree(): ReactNode {
   const { file, openFile } = useHarness();
   const { children, load } = useTree();
-  const { status } = useWorkspace();
+  const { status, loading } = useWorkspace();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 
   // The root is always listed; everything below it waits to be asked for.
@@ -85,13 +85,18 @@ export function FileTree(): ReactNode {
     <div className="rail">
       <header className="rail-head">
         project
-        <span className="rail-count">
-          {status.files.length > 0
-            ? `${status.files.length} changed`
-            : status.repo
-              ? "clean"
-              : "no repo"}
-        </span>
+        {/* "no repo" is a finding, not a default. Until the read returns there
+            is nothing to report, and a repo that is merely slow to answer must
+            not be described as absent. */}
+        {!loading && (
+          <span className="rail-count">
+            {status.files.length > 0
+              ? `${status.files.length} changed`
+              : status.repo
+                ? "clean"
+                : "no repo"}
+          </span>
+        )}
       </header>
 
       <div className="tree">
@@ -106,7 +111,7 @@ export function FileTree(): ReactNode {
             type="button"
             key={entry.path}
             className="tree-row"
-            aria-current={entry.path === file}
+            aria-current={entry.path === file || undefined}
             style={{ paddingLeft: 8 + depth * 13 }}
             title={entry.path}
             onClick={() => (entry.dir ? toggle(entry.path) : openFile(entry.path))}
@@ -130,7 +135,7 @@ export function FileTree(): ReactNode {
               </span>
             )}
             {entry.changed === true && !open && (
-              <span className="tree-dot" aria-label="contains changes" />
+              <span className="tree-dot" role="img" aria-label="contains changes" />
             )}
           </button>
         ))}

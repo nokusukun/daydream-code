@@ -23,6 +23,7 @@ import {
   type ReactNode,
 } from "react";
 import { bridge, type ProjectSummary } from "../bridge.js";
+import { useDismiss } from "../overlay.js";
 import { displayParent, projectActivityAt, projectFacts, rankProjects } from "../projects.js";
 import { useWorkspace } from "../workspace.js";
 import { fmtAgo, fmtDateTime } from "../ui.js";
@@ -109,7 +110,7 @@ export function ProjectRow(props: {
     >
       <span className="proj-check" aria-hidden="true">
         {isCurrent && (
-          <svg viewBox="0 0 10 10" width="10" height="10" focusable="false">
+          <svg viewBox="0 0 10 10" width="18" height="18" focusable="false">
             <path
               d="M1.6 5.3 3.9 7.6 8.4 2.6"
               fill="none"
@@ -165,18 +166,16 @@ export function ProjectSwitcher(props: {
 
   useEffect(() => setActive(0), [query, open]);
 
+  // Outside-click, Escape and focus restore all come from the shared hook. The
+  // hand-rolled version listened for Escape on the popover itself, so one Tab
+  // past the last row left Escape dead while the popover stayed open.
+  const close = useCallback(() => onOpenChange(false), [onOpenChange]);
+  useDismiss(rootRef, open, close);
+
   useEffect(() => {
     if (!open) return;
     searchRef.current?.focus();
-    const onDown = (event: MouseEvent): void => {
-      const root = rootRef.current;
-      if (root !== null && event.target instanceof Node && !root.contains(event.target)) {
-        onOpenChange(false);
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open, onOpenChange]);
+  }, [open]);
 
   const choose = useCallback(
     (project: ProjectSummary | undefined) => {
@@ -191,11 +190,6 @@ export function ProjectSwitcher(props: {
 
   const onKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onOpenChange(false);
-        return;
-      }
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         if (rows.length === 0) return;
@@ -208,7 +202,7 @@ export function ProjectSwitcher(props: {
         choose(rows[active]);
       }
     },
-    [rows, active, choose, onOpenChange],
+    [rows, active, choose],
   );
 
   return (
@@ -277,6 +271,7 @@ export function ProjectSwitcher(props: {
             <input
               ref={searchRef}
               type="text"
+              aria-label="Filter projects"
               placeholder="Filter projects"
               value={query}
               onChange={(e) => setQuery(e.target.value)}

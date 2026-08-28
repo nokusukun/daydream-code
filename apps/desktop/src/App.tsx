@@ -372,6 +372,7 @@ function Workspace(props: {
           className="body"
           direction="row"
           fixed="first"
+          label="Resize sidebar"
           initial={268}
           min={180}
           max={520}

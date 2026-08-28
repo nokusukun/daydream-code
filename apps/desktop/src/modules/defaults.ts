@@ -9,13 +9,18 @@ import type { DesktopHost } from "./host.js";
 export const defaultModuleLoaders: readonly DesktopModuleLoader<DesktopHost>[] = [
   {
     id: "agent",
-    name: "Agent workspace",
+    name: "Thread workspace",
     load: () => import("./features/agent.js"),
   },
   {
     id: "code",
     name: "Code workspace",
     load: () => import("./features/code.js"),
+  },
+  {
+    id: "terminal",
+    name: "Terminal",
+    load: () => import("./features/terminal.js"),
   },
   {
     id: "activity",
@@ -44,7 +49,12 @@ export const defaultModuleLoaders: readonly DesktopModuleLoader<DesktopHost>[] =
   },
   {
     id: "archive",
-    name: "Session archive",
+    name: "Thread archive",
     load: () => import("./features/archive.js"),
+  },
+  {
+    id: "handoff",
+    name: "Thread handoff",
+    load: () => import("./features/handoff.js"),
   },
 ];

@@ -44,6 +44,32 @@ type QuickActionRequest =
   | { kind: "terminal" }
   | { kind: "command"; command: string };
 
+interface TerminalOpenRequest {
+  terminalId: string;
+  cols: number;
+  rows: number;
+}
+
+interface TerminalWriteRequest {
+  terminalId: string;
+  data: string;
+}
+
+interface TerminalResizeRequest {
+  terminalId: string;
+  cols: number;
+  rows: number;
+}
+
+interface TerminalEventPayload {
+  type: "output" | "exit";
+  terminalId: string;
+  sequence: number;
+  data?: string;
+  exitCode?: number;
+  signal?: number | null;
+}
+
 contextBridge.exposeInMainWorld("daydream", {
   getState: () => ipcRenderer.invoke("daydream:get-state"),
   getProjectCores: () => ipcRenderer.invoke("daydream:get-project-cores"),
@@ -90,4 +116,24 @@ contextBridge.exposeInMainWorld("daydream", {
     ipcRenderer.invoke("daydream:session-context-menu", request),
   runQuickAction: (request: QuickActionRequest) =>
     ipcRenderer.invoke("daydream:quick-action", request),
+  openTerminal: (request: TerminalOpenRequest) =>
+    ipcRenderer.invoke("daydream:terminal-open", request),
+  writeTerminal: (request: TerminalWriteRequest) =>
+    ipcRenderer.invoke("daydream:terminal-write", request),
+  resizeTerminal: (request: TerminalResizeRequest) =>
+    ipcRenderer.invoke("daydream:terminal-resize", request),
+  closeTerminal: (terminalId: string) =>
+    ipcRenderer.invoke("daydream:terminal-close", terminalId),
+  detachTerminal: (terminalId: string) =>
+    ipcRenderer.invoke("daydream:terminal-detach", terminalId),
+  listTerminals: () => ipcRenderer.invoke("daydream:terminal-list"),
+  onTerminalEvent: (callback: (event: TerminalEventPayload) => void) => {
+    const listener = (_event: unknown, payload: TerminalEventPayload): void => {
+      callback(payload);
+    };
+    ipcRenderer.on("daydream:terminal-event", listener);
+    return () => {
+      ipcRenderer.removeListener("daydream:terminal-event", listener);
+    };
+  },
 });

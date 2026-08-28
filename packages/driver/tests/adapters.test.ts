@@ -2,13 +2,17 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { App } from "@daydream-code/kernel";
 import type { ModelMessage } from "@daydream-code/shared";
+import HttpRoutes from "@daydream-code/routes/registry";
 import SessionDrivers from "@daydream-code/driver/registry";
+import driverRoutes from "@daydream-code/driver/routes";
 import claudePlugin, {
   ClaudeDriver,
   jsonSchemaToZodShape,
   renderInitialPrompt,
 } from "@daydream-code/driver/claude";
 import codexPlugin, { CodexDriver } from "@daydream-code/driver/codex";
+import type { DriverRunInput } from "@daydream-code/driver";
+import { SessionId } from "@daydream-code/shared";
 
 // NOTE: no network calls anywhere in this file — adapters are only mounted,
 // never run.
@@ -70,6 +74,76 @@ describe("adapter plugins mount", () => {
     const codex = catalog.find((entry) => entry.driver === "codex");
     expect(codex?.models).toEqual([
       { id: "custom-1", label: "Custom One", isDefault: true },
+    ]);
+  });
+
+  it("delegates skill discovery to the selected driver and project root", async () => {
+    const app = new App();
+    const ctx = app.rootCtx;
+    ctx.plugin(SessionDrivers);
+    await app.settle();
+    const calls: string[] = [];
+    ctx.drivers.register(ctx, {
+      id: "skilled",
+      skills: async (workdir) => {
+        calls.push(workdir);
+        return [{
+          name: "verify",
+          invocation: "/",
+          description: "Prove the change works",
+        }];
+      },
+      run: async () => {
+        throw new Error("not used");
+      },
+    });
+
+    await expect(ctx.drivers.skills("skilled", "/project")).resolves.toEqual([
+      { name: "verify", invocation: "/", description: "Prove the change works" },
+    ]);
+    expect(calls).toEqual(["/project"]);
+    expect(() => ctx.drivers.skills("missing", "/project")).toThrow(
+      'driver "missing" is not registered',
+    );
+  });
+
+  it("serves provider skills from the current project root", async () => {
+    const app = new App();
+    const ctx = app.rootCtx;
+    ctx.plugin(HttpRoutes);
+    ctx.plugin(SessionDrivers);
+    ctx.plugin((owner) => {
+      owner.provide("store", { rootPath: "/current/project" } as never);
+    });
+    ctx.plugin(driverRoutes);
+    await app.settle();
+    ctx.drivers.register(ctx, {
+      id: "skilled",
+      skills: async (workdir) => [
+        { name: "root", invocation: "/", description: `Works in ${workdir}` },
+      ],
+      run: async () => {
+        throw new Error("not used");
+      },
+    });
+
+    const match = ctx.routes.match("GET", "/api/skills");
+    expect(match).toBeDefined();
+    await expect(
+      match!.route.handle({
+        method: "GET",
+        path: "/api/skills",
+        params: {},
+        query: { driver: "skilled" },
+        headers: {},
+        body: undefined,
+      }),
+    ).resolves.toEqual([
+      {
+        name: "root",
+        invocation: "/",
+        description: "Works in /current/project",
+      },
     ]);
   });
 });
@@ -166,5 +240,82 @@ describe("renderInitialPrompt", () => {
     expect(prompt).toContain("[tool_result search_journal []]");
     expect(prompt).toContain("[image omitted]");
     expect(prompt.endsWith("task")).toBe(true);
+  });
+});
+
+describe("reasoning effort", () => {
+  /**
+   * The minimum input a driver's validation path needs. Events are collected
+   * so a test can assert a rejection happened *before* anything was journaled
+   * — the property the validate-first comments in both adapters promise.
+   */
+  function makeRunInput(overrides: Partial<DriverRunInput> = {}) {
+    const events: unknown[] = [];
+    const input: DriverRunInput = {
+      sessionId: SessionId("s_effort"),
+      workdir: "/tmp/project",
+      context: [],
+      task: "do the thing",
+      modelId: null,
+      effort: null,
+      tools: [],
+      onEvent: (event) => events.push(event),
+      drainInjections: () => [],
+      resolveImage: () => {
+        throw new Error("no blobs in this test");
+      },
+      signal: new AbortController().signal,
+      permissionMode: "auto",
+      ...overrides,
+    };
+    return { input, events };
+  }
+
+  it("claude rejects a level outside the SDK union before any event or spawn", async () => {
+    const driver = new ClaudeDriver("claude");
+    const { input, events } = makeRunInput({ effort: "turbo" });
+    await expect(driver.run(input)).rejects.toThrow(/unknown effort "turbo"/);
+    expect(events).toEqual([]);
+  });
+
+  it("codex rejects a level outside the SDK union before any event or spawn", async () => {
+    const driver = new CodexDriver("codex");
+    const { input, events } = makeRunInput({ effort: "hyper" });
+    await expect(driver.run(input)).rejects.toThrow(/unknown effort "hyper"/);
+    expect(events).toEqual([]);
+  });
+
+  it("bakes per-model effort levels into the claude catalog", () => {
+    const models = new ClaudeDriver("claude").models;
+    const byId = new Map(models.map((m) => [m.id, m.efforts]));
+    // Current generation carries the full union...
+    expect(byId.get("claude-opus-5")).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    // ...the 4.6 generation predates xhigh...
+    expect(byId.get("claude-opus-4-6")).not.toContain("xhigh");
+    expect(byId.get("claude-sonnet-4-6")).not.toContain("xhigh");
+    // ...and haiku rejects the parameter outright, so it offers none.
+    expect(byId.get("claude-haiku-4-5")).toBeUndefined();
+  });
+
+  it("keeps efforts through the config layer instead of stripping them", async () => {
+    // The list-item schema validates-and-strips: a key missing from the
+    // config shape would vanish from the catalog even when present in the
+    // baked-in default. This pins that `efforts` is declared in the shape.
+    const app = new App();
+    const ctx = app.rootCtx;
+    ctx.plugin(SessionDrivers);
+    ctx.plugin(claudePlugin);
+    ctx.plugin(codexPlugin, {
+      id: "codex",
+      models: [{ id: "custom-1", label: "Custom One", efforts: ["low", "high"] }],
+    });
+    await app.settle();
+
+    const catalog = ctx.drivers.catalog();
+    const claude = catalog.find((entry) => entry.driver === "claude");
+    const opus = claude?.models.find((m) => m.id === "claude-opus-5");
+    expect(opus?.efforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    const codex = catalog.find((entry) => entry.driver === "codex");
+    expect(codex?.models[0]?.efforts).toEqual(["low", "high"]);
   });
 });

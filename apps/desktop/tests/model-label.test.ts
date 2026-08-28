@@ -56,7 +56,7 @@ describe("labelForModel", () => {
 
   it("says so plainly when the driver advertises no default", () => {
     expect(labelForModel(catalog, "mock", null)).toEqual({
-      label: "default model",
+      label: "Default model",
     });
   });
 

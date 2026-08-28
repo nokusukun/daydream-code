@@ -150,7 +150,7 @@ export function activityOf(event: JournalEvent): Activity | null {
       return make(
         "you",
         "you",
-        task || (count > 0 ? imageLabel(count) : "session started"),
+        task || (count > 0 ? imageLabel(count) : "thread started"),
       );
     }
     case "turn":

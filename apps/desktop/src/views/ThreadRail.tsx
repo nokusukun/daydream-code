@@ -13,13 +13,14 @@ import { sessionActivityAt, type SessionRecord } from "@daydream-code/shared";
 import { useHarness } from "../harness.js";
 import { bridge } from "../bridge.js";
 import { useMaster, clip, lede } from "../master.js";
+import { stageHandoff } from "../handoff.js";
 import {
   NEW_SESSION_DRAFT,
   draftPreview,
   useDrafts,
   type Draft,
 } from "../drafts.js";
-import { StatusGlyph, fmtAgo, fmtTime, messageText } from "../ui.js";
+import { StatusGlyph, compact, fmtAgo, fmtTime, messageText } from "../ui.js";
 import {
   RAIL_PAGE,
   isArchived,
@@ -40,13 +41,6 @@ function runFacts(session: SessionRecord, model: string): string[] {
   return facts;
 }
 
-/** 56.6k — a rail row has space for a number, not for six digits. */
-export function compact(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  return `${(n / 1_000_000).toFixed(1)}m`;
-}
-
 export function ThreadRail(): ReactNode {
   const {
     selected,
@@ -57,7 +51,7 @@ export function ThreadRail(): ReactNode {
     modelLabel,
     setOverlay,
   } = useHarness();
-  const { sessions, loading } = useSessions();
+  const { sessions, loading, error: listError } = useSessions();
   const { entries } = useMaster();
   // What each run did most recently: replies, tool calls, questions and other
   // meaningful journal activity all share this one live map.
@@ -105,10 +99,16 @@ export function ThreadRail(): ReactNode {
         select(id);
         return;
       }
+      if (action === "handoff" || action === "summarize") {
+        // Stage first, then open: the sheet reads the slot once on mount.
+        stageHandoff(session, action === "handoff" ? "transcript" : "summary");
+        setOverlay("handoff");
+        return;
+      }
       if (action === "delete") await remove(session);
       else await setArchived(session, action === "archive");
     },
-    [selected, select, remove, setArchived],
+    [selected, select, remove, setArchived, setOverlay],
   );
 
   const row = useCallback(
@@ -132,34 +132,47 @@ export function ThreadRail(): ReactNode {
 
   const last = entries?.[entries.length - 1];
   const pending = draftPreview(drafts.get(NEW_SESSION_DRAFT));
+  // A count is a claim. Until the list has been read there is no number to
+  // report, and "0 threads" is the wrong thing to say about a project whose
+  // threads simply have not arrived yet.
   const railSummary =
-    waiting.length > 0
-      ? `${waiting.length} waiting on you`
-      : live.length > 0
-        ? `${live.length} running`
-        : `${sessions.length} run${sessions.length === 1 ? "" : "s"}`;
+    loading || listError !== null
+      ? null
+      : waiting.length > 0
+        ? `${waiting.length} waiting on you`
+        : live.length > 0
+          ? `${live.length} running`
+          : `${sessions.length} thread${sessions.length === 1 ? "" : "s"}`;
   const masterTitle =
     last !== undefined
       ? lede(messageText(last.message).replace(/\s+/g, " ").trim())
-      : "Nothing on the thread yet.";
+      : entries === null
+        ? ""
+        : "Nothing on the thread yet.";
+  // The spawned count is a second claim on a second list, so it waits for that
+  // list rather than reporting the zero it starts at.
+  const spawned =
+    loading || listError !== null ? "" : ` · ${sessions.length} spawned`;
   const masterMeta =
     entries === null
       ? "loading…"
-      : `${entries.length} ${entries.length === 1 ? "entry" : "entries"} · ${sessions.length} spawned`;
+      : `${entries.length} ${entries.length === 1 ? "entry" : "entries"}${spawned}`;
 
   return (
     <div className="rail">
       <header className="rail-head">
         threads
-        <span key={railSummary} className="rail-count sidebar-change">
-          {railSummary}
-        </span>
+        {railSummary !== null && (
+          <span key={railSummary} className="rail-count sidebar-change">
+            {railSummary}
+          </span>
+        )}
         <button
           type="button"
           className="rail-add"
           onClick={newSession}
-          aria-label="New session"
-          title="New session (⌘N)"
+          aria-label="New thread"
+          title="New thread (⌘N)"
         >
           +
         </button>
@@ -192,7 +205,7 @@ export function ThreadRail(): ReactNode {
         </span>
       </button>
 
-      <div className="rail-label">Active Threads</div>
+      <div className="rail-label">active threads</div>
 
       {loading && (
         <div className="runs" aria-busy="true">
@@ -202,12 +215,22 @@ export function ThreadRail(): ReactNode {
         </div>
       )}
 
-      {!loading && sessions.length === 0 && !draft && pending.length === 0 && (
-        <p className="rail-empty">
-          No runs yet. Press <kbd>+</kbd> to start one; it forks the master
-          thread at its current state.
+      {listError !== null && (
+        <p className="rail-error" role="alert">
+          {listError}
         </p>
       )}
+
+      {!loading &&
+        listError === null &&
+        sessions.length === 0 &&
+        !draft &&
+        pending.length === 0 && (
+          <p className="rail-empty">
+            No threads yet. Press <kbd>+</kbd> to start one; it forks the master
+            thread at its current state.
+          </p>
+        )}
       {!loading && (sessions.length > 0 || draft || pending.length > 0) && (
         <div className="runs">
           {/* The row outlives the view: an undispatched task you clicked away
@@ -216,7 +239,7 @@ export function ThreadRail(): ReactNode {
             <button
               type="button"
               className="run-card run-card-draft"
-              aria-current={draft}
+              aria-current={draft || undefined}
               onClick={newSession}
             >
               {/* The one card that keeps a word beside its mark: a draft has
@@ -228,7 +251,7 @@ export function ThreadRail(): ReactNode {
                 <span className="run-card-time">—</span>
               </span>
               <span className="run-card-said">
-                {pending.length > 0 ? pending : "New session"}
+                {pending.length > 0 ? pending : "New thread"}
               </span>
               <span className="run-card-facts">not dispatched yet</span>
             </button>
@@ -322,7 +345,7 @@ function RunCard(props: {
     <button
       type="button"
       className={`run-card run-${session.status}${archived ? " run-card-archived" : ""}`}
-      aria-current={current}
+      aria-current={current || undefined}
       title={`${session.name} · ${session.status} · ${session.driver}${
         archived ? " · archived" : ""
       }${preview.length > 0 ? `\nunsent draft: ${preview}` : ""}`}
