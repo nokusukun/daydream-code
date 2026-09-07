@@ -42,6 +42,8 @@ export type DriverModel = z.infer<typeof DriverModelSchema>;
 export interface DriverCatalogEntry {
   driver: string;
   models: DriverModel[];
+  /** Whether this provider accepts the lower-latency fast-mode setting. */
+  supportsFastMode: boolean;
 }
 
 /** One provider-native skill shown by the composer's leading-slash picker. */
@@ -127,6 +129,8 @@ export interface DriverRunInput {
    * silently ignored setting would read as the model underthinking.
    */
   effort: string | null;
+  /** Request the provider's lower-latency service tier for this run. */
+  fastMode: boolean;
   tools: HarnessToolDefinition[];
   /**
    * Journal sink. Persisted before the driver continues (DB-first). `usage`
@@ -164,6 +168,8 @@ export interface SessionDriver {
   readonly id: string;
   /** Models this driver can dispatch with; empty/absent means "default only". */
   readonly models?: readonly DriverModel[];
+  /** Whether this driver can request its provider's lower-latency service tier. */
+  readonly supportsFastMode?: boolean;
   /** Skills this provider would make available from the given project root. */
   skills?(workdir: string): Promise<AgentSkill[]>;
   /**
@@ -204,6 +210,7 @@ export class SessionDrivers extends Service {
     return [...this.#drivers.values()].map((driver) => ({
       driver: driver.id,
       models: [...(driver.models ?? [])],
+      supportsFastMode: driver.supportsFastMode === true,
     }));
   }
 

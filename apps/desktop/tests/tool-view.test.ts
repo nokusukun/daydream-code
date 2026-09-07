@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeTool, toolNames } from "../src/tool-view.js";
+import { describeTool, relativeTo, toolNames } from "../src/tool-view.js";
 
 describe("shell calls", () => {
   it("reads a Claude Bash call, keeping its description", () => {
@@ -40,6 +40,15 @@ describe("shell calls", () => {
 });
 
 describe("file calls", () => {
+  it("renders Windows paths relative to the active project", () => {
+    expect(
+      relativeTo(
+        "C:\\Users\\noku\\projects\\daydream\\apps\\web\\src\\styles.css",
+        "C:\\Users\\noku\\projects\\daydream",
+      ),
+    ).toBe("apps/web/src/styles.css");
+  });
+
   it("shows a write as code in the language of its path", () => {
     const card = describeTool("tool_call", {
       name: "Write",
@@ -74,6 +83,31 @@ describe("file calls", () => {
   it("falls back to pretty json for a tool it does not know", () => {
     const card = describeTool("tool_call", { name: "Weird", args: { a: 1 } });
     expect(card.body).toEqual({ kind: "code", lang: "json", text: '{\n  "a": 1\n}' });
+  });
+
+  it("turns Codex file changes into a readable file list", () => {
+    const card = describeTool("tool_call", {
+      id: "item_29",
+      name: "file_change",
+      changes: [
+        { path: "C:\\repo\\src\\a.ts", kind: "update" },
+        { path: "C:\\repo\\src\\b.ts", kind: "update" },
+      ],
+      status: "completed",
+    });
+
+    expect(card).toMatchObject({
+      name: "file_change",
+      preview: "2 files updated",
+      body: {
+        kind: "files",
+        changes: [
+          { path: "C:\\repo\\src\\a.ts", kind: "update" },
+          { path: "C:\\repo\\src\\b.ts", kind: "update" },
+        ],
+      },
+    });
+    expect(card.body.kind === "files" && card.body.text).toContain('"status": "completed"');
   });
 });
 

@@ -27,7 +27,12 @@ function event(type: string, payload: unknown): JournalEvent {
 }
 
 describe("next message composer", () => {
-  const ordinary = { canDefer: true, canEditPrevious: false, editing: false };
+  const ordinary = {
+    canDefer: true,
+    canEditPrevious: false,
+    editing: false,
+    canStop: false,
+  };
 
   it("reserves shift-command-enter for queueing another message", () => {
     expect(
@@ -62,6 +67,25 @@ describe("next message composer", () => {
         { key: "Escape", metaKey: false, ctrlKey: false, shiftKey: false },
         { ...ordinary, editing: true },
       ),
+    ).toBe("cancelEdit");
+  });
+
+  it("uses escape to stop unless an edit owns it", () => {
+    const escape = {
+      key: "Escape",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+    };
+    expect(composerKeyAction(escape, { ...ordinary, canStop: true })).toBe(
+      "stop",
+    );
+    expect(
+      composerKeyAction(escape, {
+        ...ordinary,
+        canStop: true,
+        editing: true,
+      }),
     ).toBe("cancelEdit");
   });
 

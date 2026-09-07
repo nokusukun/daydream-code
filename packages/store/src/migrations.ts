@@ -303,6 +303,13 @@ export const migrations: readonly Migration[] = [
   `
   ALTER TABLE sessions ADD COLUMN effort TEXT;
   `,
+
+  // v7 — provider fast mode is a durable per-thread choice. SQLite stores
+  // booleans as 0/1; the default keeps every existing session on standard
+  // speed until the person explicitly opts in.
+  `
+  ALTER TABLE sessions ADD COLUMN fast_mode INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 /** Bring the database up to the current schema version. Safe to call on every open. */

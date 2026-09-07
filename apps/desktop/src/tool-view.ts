@@ -17,7 +17,13 @@ export type ToolBody =
   | { kind: "shell"; text: string }
   | { kind: "code"; lang: Language; text: string }
   | { kind: "output"; text: string }
+  | { kind: "files"; changes: readonly ToolFileChange[]; text: string }
   | { kind: "empty" };
+
+export interface ToolFileChange {
+  readonly path: string;
+  readonly kind: string;
+}
 
 export interface ToolCard {
   /** Tool name for the row label: "Bash", "Read", "command". */
@@ -153,6 +159,51 @@ function contentOf(args: Record<string, unknown>): string | null {
   return null;
 }
 
+/** A Codex `file_change` item, normalized without exposing its SDK envelope. */
+function fileChanges(payload: Record<string, unknown>): ToolFileChange[] | null {
+  const args = asRecord(payload.args);
+  const value = payload.changes ?? args.changes;
+  if (!Array.isArray(value)) return null;
+
+  return value.flatMap((item) => {
+    const change = asRecord(item);
+    const path = asString(change.path);
+    if (path === null) return [];
+    return [{ path, kind: asString(change.kind) ?? "change" }];
+  });
+}
+
+function describeFileChanges(
+  name: string,
+  payload: Record<string, unknown>,
+  changes: readonly ToolFileChange[],
+): ToolCard {
+  const counts = new Map<string, number>();
+  for (const change of changes) {
+    const kind = change.kind.toLowerCase();
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  }
+
+  const total = changes.length;
+  const only = counts.size === 1 ? [...counts.keys()][0] : undefined;
+  const action =
+    only === "update"
+      ? "updated"
+      : only === "add" || only === "create"
+        ? "added"
+        : only === "delete" || only === "remove"
+          ? "deleted"
+          : "changed";
+
+  return {
+    name,
+    preview: total === 0 ? "No files changed" : `${total} file${total === 1 ? "" : "s"} ${action}`,
+    caption: null,
+    body: { kind: "files", changes, text: clamp(json(payload), BODY_MAX) },
+    shell: false,
+  };
+}
+
 function describeCall(name: string, payload: Record<string, unknown>): ToolCard {
   const command = shellCommand(payload);
   if (command !== null) {
@@ -172,6 +223,11 @@ function describeCall(name: string, payload: Record<string, unknown>): ToolCard 
       body: { kind: "shell", text: clamp(command.trimEnd(), BODY_MAX) },
       shell: true,
     };
+  }
+
+  const changes = fileChanges(payload);
+  if (changes !== null && /^(file_?change|apply_?patch)$/i.test(name)) {
+    return describeFileChanges(name, payload, changes);
   }
 
   const args = asRecord(payload.args);

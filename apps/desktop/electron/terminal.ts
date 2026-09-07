@@ -71,8 +71,15 @@ export type TerminalResult<T> = { ok: true; value: T } | { ok: false; error: str
 
 export interface TerminalOpenRequest {
   terminalId: string;
+  /** Identifies this renderer mount so stale cleanup cannot detach its successor. */
+  attachmentId: string;
   cols: number;
   rows: number;
+}
+
+export interface TerminalAttachmentRequest {
+  terminalId: string;
+  attachmentId: string;
 }
 
 export interface TerminalWriteRequest {
@@ -348,6 +355,15 @@ export function parseTerminalId(input: unknown): string | null {
   return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) ? id : null;
 }
 
+export function parseAttachmentRequest(input: unknown): TerminalAttachmentRequest | null {
+  if (typeof input !== "object" || input === null) return null;
+  const record = input as Record<string, unknown>;
+  const terminalId = parseTerminalId(record.terminalId);
+  const attachmentId = parseTerminalId(record.attachmentId);
+  if (terminalId === null || attachmentId === null) return null;
+  return { terminalId, attachmentId };
+}
+
 function parseSize(cols: unknown, rows: unknown): { cols: number; rows: number } | null {
   if (!Number.isInteger(cols) || !Number.isInteger(rows)) return null;
   const c = cols as number;
@@ -359,11 +375,11 @@ function parseSize(cols: unknown, rows: unknown): { cols: number; rows: number }
 export function parseOpenRequest(input: unknown): TerminalOpenRequest | null {
   if (typeof input !== "object" || input === null) return null;
   const record = input as Record<string, unknown>;
-  const terminalId = parseTerminalId(record.terminalId);
-  if (terminalId === null) return null;
+  const attachment = parseAttachmentRequest(record);
+  if (attachment === null) return null;
   const size = parseSize(record.cols, record.rows);
   if (size === null) return null;
-  return { terminalId, ...size };
+  return { ...attachment, ...size };
 }
 
 export function parseWriteRequest(input: unknown): TerminalWriteRequest | null {

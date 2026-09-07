@@ -7,10 +7,15 @@ import SessionDrivers from "@daydream-code/driver/registry";
 import driverRoutes from "@daydream-code/driver/routes";
 import claudePlugin, {
   ClaudeDriver,
+  claudeFastSettings,
   jsonSchemaToZodShape,
   renderInitialPrompt,
 } from "@daydream-code/driver/claude";
-import codexPlugin, { CodexDriver } from "@daydream-code/driver/codex";
+import codexPlugin, {
+  CodexDriver,
+  codexErrorMessage,
+  codexServiceTier,
+} from "@daydream-code/driver/codex";
 import type { DriverRunInput } from "@daydream-code/driver";
 import { SessionId } from "@daydream-code/shared";
 
@@ -71,7 +76,9 @@ describe("adapter plugins mount", () => {
     const catalog = ctx.drivers.catalog();
     const claude = catalog.find((entry) => entry.driver === "claude");
     expect(claude?.models.map((m) => m.id)).toContain("claude-opus-5");
+    expect(claude?.supportsFastMode).toBe(true);
     const codex = catalog.find((entry) => entry.driver === "codex");
+    expect(codex?.supportsFastMode).toBe(true);
     expect(codex?.models).toEqual([
       { id: "custom-1", label: "Custom One", isDefault: true },
     ]);
@@ -258,6 +265,7 @@ describe("reasoning effort", () => {
       task: "do the thing",
       modelId: null,
       effort: null,
+      fastMode: false,
       tools: [],
       onEvent: (event) => events.push(event),
       drainInjections: () => [],
@@ -317,5 +325,35 @@ describe("reasoning effort", () => {
     expect(opus?.efforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
     const codex = catalog.find((entry) => entry.driver === "codex");
     expect(codex?.models[0]?.efforts).toEqual(["low", "high"]);
+  });
+});
+
+describe("Codex runtime error payloads", () => {
+  it("treats a nullable MCP error as absent", () => {
+    expect(codexErrorMessage(null)).toBeUndefined();
+    expect(codexErrorMessage(undefined)).toBeUndefined();
+  });
+
+  it("preserves object and string error messages", () => {
+    expect(codexErrorMessage({ message: "browser failed" })).toBe("browser failed");
+    expect(codexErrorMessage("transport failed")).toBe("transport failed");
+  });
+
+  it("ignores malformed error payloads", () => {
+    expect(codexErrorMessage({ message: null })).toBeUndefined();
+    expect(codexErrorMessage({ message: 500 })).toBeUndefined();
+  });
+
+  it("maps the shared fast flag to each provider's native setting", () => {
+    expect(claudeFastSettings(true)).toEqual({
+      fastMode: true,
+      fastModePerSessionOptIn: true,
+    });
+    expect(claudeFastSettings(false)).toEqual({
+      fastMode: false,
+      fastModePerSessionOptIn: true,
+    });
+    expect(codexServiceTier(true)).toBe("fast");
+    expect(codexServiceTier(false)).toBe("default");
   });
 });

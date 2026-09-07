@@ -19,6 +19,7 @@ export interface HandoffStage {
   driver: string;
   modelId: string | null;
   effort: string | null;
+  fastMode: boolean;
   mode: HandoffMode;
 }
 
@@ -32,6 +33,7 @@ export function stageHandoff(session: SessionRecord, mode: HandoffMode): void {
     driver: session.driver,
     modelId: session.modelId,
     effort: session.effort,
+    fastMode: session.fastMode,
     mode,
   };
 }

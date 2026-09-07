@@ -66,9 +66,8 @@ describe("<ProjectGroup>", () => {
     expect(html).toContain("beta");
     expect(html).toContain("idle");
     expect(html).toContain("no threads yet");
-    // A quiet project keeps its track: a row with no meter reads as a row
-    // that failed to draw, not as one with nothing to report.
-    expect(html).toContain("sweep-idle");
+    // The text is the complete status; a decorative idle track repeated it.
+    expect(html).not.toContain("sweep");
   });
 
   it("reports the outcome of the last run when nothing is live", () => {
@@ -98,7 +97,7 @@ describe("<ProjectGroup>", () => {
     // answer yet.
     expect(html.match(/checking\u2026/g)).toHaveLength(1);
     expect(html).not.toContain("no threads yet");
-    expect(html).toContain("sweep-unknown");
+    expect(html).not.toContain("sweep");
   });
 
   it("offers the switch only for a project you are not already in", () => {

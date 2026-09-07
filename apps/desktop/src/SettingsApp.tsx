@@ -11,6 +11,7 @@ import { bridge, connectionFromQuery, type ConnectionInfo } from "./bridge.js";
 import { useAppearance } from "./appearance.js";
 import { HarnessProvider } from "./harness.js";
 import { SettingsWindow } from "./views/SettingsWindow.js";
+import { WindowControls } from "./WindowControls.js";
 
 export function SettingsApp(): ReactNode {
   const [connection, setConnection] = useState<ConnectionInfo | null>(null);
@@ -37,11 +38,18 @@ export function SettingsApp(): ReactNode {
     return api.onConnection(setConnection);
   }, []);
 
-  if (!ready) return <div className="settings settings-booting" aria-busy="true" />;
+  if (!ready) {
+    return (
+      <div className="settings settings-booting" aria-busy="true">
+        <WindowControls />
+      </div>
+    );
+  }
 
   if (connection === null) {
     return (
       <div className="settings settings-booting">
+        <WindowControls />
         <p className="settings-empty">
           no project is open. open one in the main window, then come back.
         </p>

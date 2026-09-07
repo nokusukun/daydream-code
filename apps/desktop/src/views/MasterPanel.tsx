@@ -12,13 +12,13 @@ import { useHarness } from "../harness.js";
 import { useMaster } from "../master.js";
 import { useSessions } from "../sessions.js";
 import { useWorkspace } from "../workspace.js";
-import { PanelHead } from "./PanelHead.js";
+import { PanelHead, type PanelCloseAction } from "./PanelHead.js";
 import { MasterThread } from "./MasterThread.js";
 import { ChangesView } from "./ChangesView.js";
 import { UsageView } from "./UsageView.js";
 import { DispatchComposer } from "./Composer.js";
 
-export function MasterPanel(): ReactNode {
+export function MasterPanel(props: { close?: PanelCloseAction }): ReactNode {
   const { view, draft } = useHarness();
   const { sessions } = useSessions();
   const { status } = useWorkspace();
@@ -38,6 +38,7 @@ export function MasterPanel(): ReactNode {
       <div className="panel-top">
         <PanelHead
           title="Master thread"
+          {...(props.close === undefined ? {} : { close: props.close })}
           sub={
             entries === null
               ? "loading…"

@@ -21,8 +21,10 @@ import { bridge, connectionFromQuery, type ConnectionInfo } from "./bridge.js";
 import { useAppearance, type ThemeState } from "./appearance.js";
 import { HarnessProvider, useHarness } from "./harness.js";
 import { WorkspaceProvider, useWorkspace } from "./workspace.js";
+import { WindowControls } from "./WindowControls.js";
 import { useDismiss } from "./overlay.js";
 import { SplitPane } from "./split.js";
+import { loadWindowLayout, saveWindowLayout } from "./window-layout.js";
 import { ProjectPicker } from "./views/ProjectPicker.js";
 import { ProjectSwitcher, useSwitcherHotkey } from "./views/ProjectSwitcher.js";
 import { ProjectFanoutProvider } from "./project-fanout.js";
@@ -165,11 +167,16 @@ function Workspace(props: {
     setOverlay,
     mode,
     setMode,
+    split: threadSplit,
+    closeSplit: closeThreadSplit,
     sidebar,
     toggleSidebar,
   } = useHarness();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [splitMode, setSplitMode] = useState<string | null>(
+    () => loadWindowLayout().splitMode,
+  );
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const modules = useDesktopModules<DesktopHost>();
   const moduleRuntime = useDesktopModuleRuntime<DesktopHost>();
@@ -179,6 +186,8 @@ function Workspace(props: {
   }, [hasSwitcher]);
   useSwitcherHotkey(toggleSwitcher);
   useDismiss(modeMenuRef, modeMenuOpen, () => setModeMenuOpen(false));
+
+  useEffect(() => saveWindowLayout({ splitMode }), [splitMode]);
 
   const openSwitcher = useCallback(() => {
     if (hasSwitcher) setSwitcherOpen(true);
@@ -193,6 +202,7 @@ function Workspace(props: {
   );
 
   const activeMode = modules.modes.find((entry) => entry.id === mode);
+  const splitModeEntry = modules.modes.find((entry) => entry.id === splitMode);
   const loadingModules = modules.statuses.some(
     (entry) => entry.state === "loading",
   );
@@ -215,6 +225,34 @@ function Workspace(props: {
       setMode(modules.modes[0].id);
     }
   }, [activeMode, loadingModules, modules.modes, setMode]);
+
+  // Thread comparison and workspace-view comparison both own the canvas.
+  // Opening one closes the other so a Shift+click can never create an
+  // unreadable third pane. Programmatic jumps to the second view promote it
+  // naturally by collapsing the now-duplicate split.
+  useEffect(() => {
+    if (
+      threadSplit !== null ||
+      splitMode === mode ||
+      (splitMode !== null && !loadingModules && splitModeEntry === undefined)
+    ) {
+      setSplitMode(null);
+    }
+  }, [loadingModules, mode, splitMode, splitModeEntry, threadSplit]);
+
+  const chooseMode = useCallback(
+    (nextMode: string, beside: boolean) => {
+      setModeMenuOpen(false);
+      if (!beside || nextMode === "agent" || nextMode === mode) {
+        setMode(nextMode);
+        setSplitMode(null);
+        return;
+      }
+      closeThreadSplit();
+      setSplitMode((current) => (current === nextMode ? null : nextMode));
+    },
+    [closeThreadSplit, mode, setMode],
+  );
 
   // App-level shortcuts, bound here rather than per-view because none of them
   // belongs to a view: ⌘K and ⌘N reach the whole window, ⌘, is the platform's
@@ -267,6 +305,64 @@ function Workspace(props: {
       </ModuleBoundary>
     );
   const Sidebar = activeMode?.sidebar;
+  const splitPanel =
+    splitModeEntry === undefined ? (
+      panel
+    ) : (
+      <SplitPane
+        id="workspace-view-split"
+        className="workspace-view-split"
+        direction="row"
+        fixed="second"
+        label="Resize workspace views"
+        initial={640}
+        min={360}
+        max={1400}
+        first={
+          <section
+            className="workspace-view-pane"
+            aria-label={`${activeMode?.label ?? "Current"} pane`}
+          >
+            {panel}
+            <button
+              type="button"
+              className="panel-close workspace-view-close"
+              aria-label={`Close ${activeMode?.label ?? "current"} pane`}
+              title={`Close ${activeMode?.label ?? "current"} pane`}
+              onClick={() => {
+                setMode(splitModeEntry.id);
+                setSplitMode(null);
+              }}
+            >
+              <svg viewBox="0 0 12 12" aria-hidden="true">
+                <path d="m3 3 6 6M9 3l-6 6" />
+              </svg>
+            </button>
+          </section>
+        }
+        second={
+          <section
+            className="workspace-view-pane"
+            aria-label={`${splitModeEntry.label} pane`}
+          >
+            <ModuleBoundary moduleId={splitModeEntry.id} surface="panel">
+              <splitModeEntry.panel />
+            </ModuleBoundary>
+            <button
+              type="button"
+              className="panel-close workspace-view-close"
+              aria-label={`Close ${splitModeEntry.label} pane`}
+              title={`Close ${splitModeEntry.label} pane`}
+              onClick={() => setSplitMode(null)}
+            >
+              <svg viewBox="0 0 12 12" aria-hidden="true">
+                <path d="m3 3 6 6M9 3l-6 6" />
+              </svg>
+            </button>
+          </section>
+        }
+      />
+    );
 
   return (
     <DesktopHostProvider value={host}>
@@ -298,6 +394,7 @@ function Workspace(props: {
           <div
             className="segmented segmented-mode"
             role="tablist"
+            aria-multiselectable={splitModeEntry !== undefined || undefined}
             aria-label="Mode"
           >
             {modules.modes.map((entry) => (
@@ -305,9 +402,13 @@ function Workspace(props: {
                 type="button"
                 key={entry.id}
                 role="tab"
-                aria-selected={mode === entry.id}
-                title={`${entry.label} (⌘⇧E)`}
-                onClick={() => setMode(entry.id)}
+                aria-selected={mode === entry.id || splitMode === entry.id}
+                title={`${entry.label} (⌘⇧E)${
+                  entry.id === "code" || entry.id === "terminal"
+                    ? " · Shift-click to open beside the current view"
+                    : ""
+                }`}
+                onClick={(event) => chooseMode(entry.id, event.shiftKey)}
               >
                 {entry.label}
               </button>
@@ -316,13 +417,18 @@ function Workspace(props: {
           <button
             type="button"
             className="mode-menu-trigger"
-            aria-label={`Workspace view: ${activeMode?.label ?? "View"}`}
+            aria-label={`Workspace view: ${activeMode?.label ?? "View"}${
+              splitModeEntry === undefined ? "" : ` and ${splitModeEntry.label}`
+            }`}
             aria-expanded={modeMenuOpen}
             aria-haspopup="menu"
             title="Switch workspace view (⌘⇧E)"
             onClick={() => setModeMenuOpen((open) => !open)}
           >
-            <span>{activeMode?.label ?? "View"}</span>
+            <span>
+              {activeMode?.label ?? "View"}
+              {splitModeEntry === undefined ? "" : ` + ${splitModeEntry.label}`}
+            </span>
             <svg viewBox="0 0 12 12" aria-hidden="true">
               <path d="m3.25 4.75 2.75 2.5 2.75-2.5" />
             </svg>
@@ -336,14 +442,16 @@ function Workspace(props: {
                   key={entry.id}
                   className="pop-row mode-pop-row"
                   role="menuitemradio"
-                  aria-checked={mode === entry.id}
-                  onClick={() => {
-                    setMode(entry.id);
-                    setModeMenuOpen(false);
-                  }}
+                  aria-checked={mode === entry.id || splitMode === entry.id}
+                  title={
+                    entry.id === "code" || entry.id === "terminal"
+                      ? "Shift-click to open beside the current view"
+                      : undefined
+                  }
+                  onClick={(event) => chooseMode(entry.id, event.shiftKey)}
                 >
                   <span className="mode-pop-check" aria-hidden="true">
-                    {mode === entry.id && (
+                    {(mode === entry.id || splitMode === entry.id) && (
                       <svg viewBox="0 0 12 12">
                         <path d="m2.25 6.25 2.35 2.2 5.15-5.1" />
                       </svg>
@@ -378,8 +486,6 @@ function Workspace(props: {
               <circle cx="7" cy="7" r="4.25" />
               <path d="m10.25 10.25 3 3" />
             </svg>
-            <span className="titlebar-search-label">Search or jump to…</span>
-            <kbd>⌘K</kbd>
           </button>
           <button
             type="button"
@@ -447,6 +553,7 @@ function Workspace(props: {
               </ModuleBoundary>
             ))}
         </div>
+        <WindowControls />
       </header>
 
       {/* Two ids, not one: a file tree and a run list want different widths,
@@ -471,10 +578,10 @@ function Workspace(props: {
               </ModuleBoundary>
             </aside>
           }
-          second={panel}
+          second={splitPanel}
         />
       ) : (
-        <div className="body">{panel}</div>
+        <div className="body">{splitPanel}</div>
       )}
 
       {activeOverlay !== undefined && (

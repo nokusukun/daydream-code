@@ -116,8 +116,14 @@ export type QuickActionResult =
 
 export interface TerminalOpenRequest {
   terminalId: string;
+  attachmentId: string;
   cols: number;
   rows: number;
+}
+
+export interface TerminalAttachmentRequest {
+  terminalId: string;
+  attachmentId: string;
 }
 
 export interface TerminalWriteRequest {
@@ -164,6 +170,11 @@ export interface TerminalEvent {
 }
 
 export interface DaydreamBridge {
+  getWindowState(): Promise<{ maximized: boolean }>;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<void>;
+  closeWindow(): Promise<void>;
+  onWindowState(callback: (state: { maximized: boolean }) => void): () => void;
   getState(): Promise<{ connection: ConnectionInfo | null; recent: RegistryEntry[] }>;
   /** Every project core kept alive by the desktop process. */
   getProjectCores(): Promise<ConnectionInfo[]>;
@@ -204,7 +215,7 @@ export interface DaydreamBridge {
   /** End the shell and discard its scrollback. */
   closeTerminal(terminalId: string): Promise<TerminalAck>;
   /** Stop receiving output without ending the shell. */
-  detachTerminal(terminalId: string): Promise<TerminalAck>;
+  detachTerminal(request: TerminalAttachmentRequest): Promise<TerminalAck>;
   listTerminals(): Promise<string[]>;
   onTerminalEvent(callback: (event: TerminalEvent) => void): () => void;
 }

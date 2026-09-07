@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { loadChoice, modelEfforts } from "../src/model-selector.js";
+import {
+  driverSupportsFastMode,
+  fastModeAvailable,
+  loadChoice,
+  modelEfforts,
+} from "../src/model-selector.js";
 import type { DriverCatalogEntry } from "../src/api.js";
 
 /**
@@ -29,6 +34,7 @@ describe("loadChoice", () => {
       driver: "codex",
       modelId: "gpt-5.6-sol",
       effort: null,
+      fastMode: false,
     });
   });
 
@@ -40,6 +46,24 @@ describe("loadChoice", () => {
     expect(loadChoice().effort).toBe("xhigh");
   });
 
+  it("round-trips fast mode and defaults older choices to standard speed", () => {
+    store.set(
+      "daydream.model-choice",
+      JSON.stringify({
+        driver: "codex",
+        modelId: "gpt-5.6-sol",
+        fastMode: true,
+      }),
+    );
+    expect(loadChoice().fastMode).toBe(true);
+
+    store.set(
+      "daydream.model-choice",
+      JSON.stringify({ driver: "codex", modelId: "gpt-5.6-sol" }),
+    );
+    expect(loadChoice().fastMode).toBe(false);
+  });
+
   it("degrades a non-string effort to null rather than rejecting the choice", () => {
     store.set(
       "daydream.model-choice",
@@ -49,12 +73,35 @@ describe("loadChoice", () => {
       driver: "claude",
       modelId: "claude-opus-5",
       effort: null,
+      fastMode: false,
     });
   });
 
   it("falls back to the default choice for garbage", () => {
     store.set("daydream.model-choice", "not json");
-    expect(loadChoice()).toEqual({ driver: "claude", modelId: null, effort: null });
+    expect(loadChoice()).toEqual({
+      driver: "claude",
+      modelId: null,
+      effort: null,
+      fastMode: false,
+    });
+  });
+
+  it("still loads a usable default when browser storage is unavailable", () => {
+    (globalThis as { localStorage?: unknown }).localStorage = {
+      getItem: () => {
+        throw new Error("storage blocked");
+      },
+      setItem: () => {
+        throw new Error("storage blocked");
+      },
+    };
+    expect(loadChoice()).toEqual({
+      driver: "claude",
+      modelId: null,
+      effort: null,
+      fastMode: false,
+    });
   });
 });
 
@@ -62,6 +109,7 @@ describe("modelEfforts", () => {
   const catalog: DriverCatalogEntry[] = [
     {
       driver: "claude",
+      supportsFastMode: true,
       models: [
         { id: "m-full", label: "Full", efforts: ["low", "high"] },
         { id: "m-none", label: "None" },
@@ -84,5 +132,24 @@ describe("modelEfforts", () => {
   it("returns none for a model or driver the catalog does not know", () => {
     expect(modelEfforts(catalog, "claude", "gone")).toEqual([]);
     expect(modelEfforts(catalog, "codex", "m-full")).toEqual([]);
+  });
+});
+
+describe("driverSupportsFastMode", () => {
+  const catalog: DriverCatalogEntry[] = [
+    { driver: "claude", models: [], supportsFastMode: true },
+    { driver: "mock", models: [], supportsFastMode: false },
+  ];
+
+  it("uses the driver's advertised capability, including its default model", () => {
+    expect(driverSupportsFastMode(catalog, "claude")).toBe(true);
+    expect(driverSupportsFastMode(catalog, "mock")).toBe(false);
+    expect(driverSupportsFastMode(catalog, "missing")).toBe(false);
+  });
+
+  it("waits for the live catalog before exposing an actionable Fast control", () => {
+    expect(fastModeAvailable(false, catalog, "claude")).toBe(false);
+    expect(fastModeAvailable(true, catalog, "claude")).toBe(true);
+    expect(fastModeAvailable(true, catalog, "mock")).toBe(false);
   });
 });

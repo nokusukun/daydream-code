@@ -10,8 +10,8 @@ import electronPath from "electron";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-console.log("[dev] building electron main…");
-const tsc = spawnSync("pnpm exec tsc -b tsconfig.electron.json", {
+console.log("[dev] building desktop workspace…");
+const tsc = spawnSync("pnpm exec tsc -b tsconfig.json", {
   cwd: appDir,
   stdio: "inherit",
   shell: true,
@@ -28,9 +28,13 @@ if (url === undefined) {
 }
 console.log(`[dev] renderer at ${url}`);
 
+const electronEnv = { ...process.env, ELECTRON_RENDERER_URL: url };
+// Some agent shells set this globally to use Electron as a Node runtime. The
+// desktop process must start in normal Electron mode.
+delete electronEnv.ELECTRON_RUN_AS_NODE;
 const child = spawn(String(electronPath), [join(appDir, "dist-electron", "main.js")], {
   stdio: "inherit",
-  env: { ...process.env, ELECTRON_RENDERER_URL: url },
+  env: electronEnv,
 });
 child.on("exit", (code) => {
   void server.close().finally(() => process.exit(code ?? 0));

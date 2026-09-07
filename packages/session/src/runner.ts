@@ -29,6 +29,7 @@ import {
 } from "@daydream-code/shared";
 import { schema } from "@daydream-code/store";
 import type { Injection } from "@daydream-code/driver";
+import { onAbort } from "@daydream-code/driver/abort";
 import {
   Sessions,
   type AttachmentInput,
@@ -39,7 +40,11 @@ import {
   type NextMessage,
   type SessionHandle,
 } from "./index.js";
-import { transcriptMessages, transcriptText } from "./transcript.js";
+import {
+  lastEditableMessage,
+  transcriptMessages,
+  transcriptText,
+} from "./transcript.js";
 
 interface ActiveRun {
   abort: AbortController;
@@ -58,6 +63,8 @@ interface ModelUndoState {
     driver: string;
     modelId: string | null;
     effort: string | null;
+    /** Missing only in an undo row written by a pre-fast-mode build. */
+    fastMode?: boolean;
   };
   resumeToken: string | null;
 }
@@ -75,6 +82,7 @@ function rowToRecord(row: SessionRow): SessionRecord {
     driver: row.driver,
     modelId: row.modelId,
     effort: row.effort,
+    fastMode: row.fastMode,
     status: row.status,
     lastSeenMasterSeq: row.lastSeenMasterSeq,
     startedAt: row.startedAt,
@@ -644,12 +652,16 @@ export default class SessionRunner extends Sessions {
 
   async #dispatch(request: DispatchRequest): Promise<SessionHandle> {
     const ctx = this.ctx;
+    const project = ctx.store.project;
+    const driverId = request.driver ?? project.config.defaultDriver;
+    const selectedDriver = ctx.drivers.get(driverId);
+    if (request.fastMode === true && selectedDriver?.supportsFastMode !== true) {
+      throw new Error(`driver "${driverId}" does not support fast mode`);
+    }
     const title = await this.#deriveTitle(request.task);
     const master = ctx.threads.ensureMaster();
     const fork = ctx.threads.fork(ThreadId(master.id));
     const id = newId("ses");
-    const project = ctx.store.project;
-    const driverId = request.driver ?? project.config.defaultDriver;
     const modelId = request.modelId ?? project.config.defaultModel;
     ctx.store.db
       .insert(schema.sessions)
@@ -665,6 +677,7 @@ export default class SessionRunner extends Sessions {
         // No project-level default, unlike modelId: null means the driver's
         // own default, which tracks the provider instead of freezing a level.
         effort: request.effort ?? null,
+        fastMode: request.fastMode ?? false,
         status: "running",
         // The fork saw everything up to its cut; awareness starts after it.
         lastSeenMasterSeq: fork.forkedAtSeq ?? 0,
@@ -775,7 +788,44 @@ export default class SessionRunner extends Sessions {
       driver: revived.driver,
       ...(revived.modelId ? { modelId: revived.modelId } : {}),
       ...(revived.effort ? { effort: revived.effort } : {}),
+      ...(revived.fastMode ? { fastMode: true } : {}),
     });
+  }
+
+  async checkpointSession(
+    id: SessionId,
+    fromEventId: number,
+    message: string,
+    attachments?: AttachmentInput[],
+  ): Promise<SessionHandle> {
+    this.#requireIdle(id, "checkpoint");
+    const events = this.ctx.journal.read({ sessionId: id });
+    const previous = lastEditableMessage(events);
+    if (previous === null || previous.eventId !== fromEventId) {
+      throw new Error("the message changed before it could be checkpointed");
+    }
+    if (message.trim().length === 0 && (attachments?.length ?? 0) === 0) {
+      throw new Error("a checkpoint message needs text or an image");
+    }
+
+    // A provider resume token points at the abandoned future. Retiring it
+    // forces #beginRun to rebuild from the active journal branch instead.
+    this.ctx.store.db.transaction((tx) => {
+      tx
+        .delete(schema.settings)
+        .where(eq(schema.settings.key, this.#resumeKey(id)))
+        .run();
+      tx
+        .delete(schema.settings)
+        .where(eq(schema.settings.key, this.#modelUndoKey(id)))
+        .run();
+    });
+    this.ctx.journal.append({
+      sessionId: id,
+      type: "session_checkpoint",
+      payload: { fromEventId },
+    });
+    return this.continueSession(id, message, attachments);
   }
 
   nextMessages(id: SessionId): NextMessage[] {
@@ -1046,10 +1096,10 @@ export default class SessionRunner extends Sessions {
   }
 
   /**
-   * Re-point an idle thread at a different agent/model/effort.
+   * Re-point an idle thread at a different agent/model/effort/speed.
    *
    * The row update is the whole switch: every revive rebuilds its run from
-   * `record.driver/modelId/effort`, so nothing else has to know. The one
+   * `record.driver/modelId/effort/fastMode`, so nothing else has to know. The one
    * casualty is the active resume token — it is the *old* provider's handle,
    * keyed by session id alone, and the new provider would either choke on it
    * or, worse, accept it and overwrite it. It is set aside until the new run
@@ -1061,15 +1111,9 @@ export default class SessionRunner extends Sessions {
     const driver = change.driver ?? record.driver;
     const modelId = change.modelId !== undefined ? change.modelId : record.modelId;
     const effort = change.effort !== undefined ? change.effort : record.effort;
-    if (
-      driver === record.driver &&
-      modelId === record.modelId &&
-      effort === record.effort
-    ) {
-      return record;
-    }
     const driverChanged = driver !== record.driver;
-    if (driverChanged && this.ctx.drivers.get(driver) === undefined) {
+    const target = this.ctx.drivers.get(driver);
+    if (driverChanged && target === undefined) {
       // Validated here, not left to run start: a wrong model id fails one run
       // loudly, but an unknown driver would strand the thread un-runnable with
       // the mistake already durable.
@@ -1077,19 +1121,42 @@ export default class SessionRunner extends Sessions {
         `driver "${driver}" is not registered (available: ${this.ctx.drivers.list().join(", ") || "none"})`,
       );
     }
+    if (change.fastMode === true && target?.supportsFastMode !== true) {
+      throw new Error(`driver "${driver}" does not support fast mode`);
+    }
+    // Fast mode is a provider capability, so crossing to a driver that does
+    // not advertise it clears the flag instead of preserving an invisible,
+    // ignored setting. Within one driver an omitted value keeps its state.
+    const fastMode =
+      target?.supportsFastMode === true
+        ? change.fastMode !== undefined
+          ? change.fastMode
+          : driver === record.driver
+            ? record.fastMode
+            : false
+        : false;
+    if (
+      driver === record.driver &&
+      modelId === record.modelId &&
+      effort === record.effort &&
+      fastMode === record.fastMode
+    ) {
+      return record;
+    }
     const resumeToken = driverChanged ? this.#loadResumeToken(id) : null;
     const undo: ModelUndoState = {
       from: {
         driver: record.driver,
         modelId: record.modelId,
         effort: record.effort,
+        fastMode: record.fastMode,
       },
       resumeToken,
     };
     this.ctx.store.db.transaction((tx) => {
       tx
         .update(schema.sessions)
-        .set({ driver, modelId, effort })
+        .set({ driver, modelId, effort, fastMode })
         .where(eq(schema.sessions.id, id))
         .run();
       // A model choice is one action with one undo. Any later choice replaces
@@ -1124,8 +1191,9 @@ export default class SessionRunner extends Sessions {
           driver: record.driver,
           modelId: record.modelId,
           effort: record.effort,
+          fastMode: record.fastMode,
         },
-        to: { driver, modelId, effort },
+        to: { driver, modelId, effort, fastMode },
         contextRebuilt: driverChanged,
       },
     });
@@ -1152,12 +1220,18 @@ export default class SessionRunner extends Sessions {
         undo.from.modelId === null || typeof undo.from.modelId === "string"
       ) ||
       !(undo.from.effort === null || typeof undo.from.effort === "string") ||
+      !(
+        undo.from.fastMode === undefined ||
+        typeof undo.from.fastMode === "boolean"
+      ) ||
       !(undo.resumeToken === null || typeof undo.resumeToken === "string")
     ) {
       throw new Error(`the saved context for ${record.name} cannot be restored`);
     }
 
-    const restored = undo.from;
+    // Undo rows are intentionally short-lived, but one can survive an app
+    // upgrade. A pre-fast-mode row has no key and means standard speed.
+    const restored = { ...undo.from, fastMode: undo.from.fastMode ?? false };
     this.ctx.store.db.transaction((tx) => {
       tx
         .update(schema.sessions)
@@ -1200,6 +1274,7 @@ export default class SessionRunner extends Sessions {
           driver: record.driver,
           modelId: record.modelId,
           effort: record.effort,
+          fastMode: record.fastMode,
         },
         to: restored,
         contextRebuilt: undo.resumeToken === null,
@@ -1256,7 +1331,7 @@ export default class SessionRunner extends Sessions {
     ].join("\n");
     // The unspecified agent is the *source's*, not the project default: the
     // person is handing off this thread, and "same agent, fresh thread" is
-    // the unsurprising reading. Model and effort follow only while the driver
+    // the unsurprising reading. Model, effort and speed follow only while the driver
     // does — they are meaningless in another driver's vocabulary.
     const driver = request.driver ?? source.driver;
     const inherit = driver === source.driver;
@@ -1264,11 +1339,14 @@ export default class SessionRunner extends Sessions {
       request.modelId ?? (inherit ? source.modelId ?? undefined : undefined);
     const effort =
       request.effort ?? (inherit ? source.effort ?? undefined : undefined);
+    const fastMode =
+      request.fastMode ?? (inherit ? source.fastMode : undefined);
     const handle = await this.dispatch({
       task,
       driver,
       ...(modelId !== undefined ? { modelId } : {}),
       ...(effort !== undefined ? { effort } : {}),
+      ...(fastMode !== undefined ? { fastMode } : {}),
     });
     // Recorded on the source so its transcript names where the work went;
     // the reverse direction is already in the new thread's opening task.
@@ -1425,15 +1503,14 @@ export default class SessionRunner extends Sessions {
     // the question settles, and the question would not settle until the run
     // returned. That is a deadlock, and it is why this listener exists rather
     // than relying on the release in the `finally` below.
-    (abort as unknown as { signal: AbortSignal }).signal.addEventListener(
-      "abort",
+    onAbort(
+      (abort as unknown as { signal: AbortSignal }).signal,
       () => {
         ctx.questions.cancelSession(
           record.id,
           "the session was stopped before this was answered",
         );
       },
-      { once: true },
     );
     const active: ActiveRun = {
       abort,
@@ -1514,10 +1591,15 @@ export default class SessionRunner extends Sessions {
           sessionId: record.id,
           type: "session_started",
           payload: {
+            // Snapshot the generated title with the cycle. The session row is
+            // retitled on later continues, so reading it back cannot tell the
+            // transcript what an older cycle was called.
+            title: record.title,
             task,
             driver: record.driver,
             modelId: record.modelId,
             effort: record.effort,
+            fastMode: record.fastMode,
             contextMessages: context.length,
             resumed: resumeToken !== null,
             ...(transcript.length > 0
@@ -1537,6 +1619,7 @@ export default class SessionRunner extends Sessions {
             ...(taskImages.length > 0 ? { taskImages } : {}),
             modelId: record.modelId,
             effort: record.effort,
+            fastMode: record.fastMode,
             tools: ctx.tools.list(),
             onEvent,
             drainInjections,
@@ -1643,7 +1726,10 @@ export default class SessionRunner extends Sessions {
     ctx.journal.append({
       sessionId: record.id,
       type: "session_ended",
-      payload: { status, tldr },
+      // The title can move while a run is active when the user redirects it.
+      // Persist the final value as well as the opening snapshot so both cycle
+      // boundaries remain truthful in the append-only transcript.
+      payload: { status, title: final.title, tldr },
       usage,
     });
     ctx.emit("session/updated", final);

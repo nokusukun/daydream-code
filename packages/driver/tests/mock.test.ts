@@ -18,6 +18,7 @@ function makeInput(overrides: Partial<DriverRunInput> = {}) {
     task: "do the thing",
     modelId: null,
     effort: null,
+    fastMode: false,
     tools: [],
     onEvent: (event) => events.push(event),
     drainInjections: () => injections.splice(0),

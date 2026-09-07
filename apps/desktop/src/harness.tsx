@@ -23,6 +23,7 @@ import { QuickActionStore } from "./quick-actions.js";
 import { labelForModel, type ModelLabel } from "./model-label.js";
 import { connectStream, type StreamFrame, type StreamStatus } from "./stream.js";
 import type { ConnectionInfo } from "./bridge.js";
+import { loadWindowLayout, saveWindowLayout } from "./window-layout.js";
 
 /** Overlay ids are contributed by desktop modules. */
 export type Overlay = string | null;
@@ -69,6 +70,20 @@ export interface Harness {
    */
   selected: string | null;
   select(id: string | null): void;
+  /**
+   * A second thread shown beside `selected`, or null when the view is a
+   * single pane. `{ id: null }` is the master thread, the same convention
+   * `selected` uses — the wrapper object is what distinguishes "master in the
+   * second pane" from "no second pane".
+   */
+  split: { id: string | null } | null;
+  /**
+   * Open a thread beside the current one, or close the second pane if that
+   * thread is already in it. Callers guard against splitting the thread the
+   * first pane is showing — the same transcript twice is not a comparison.
+   */
+  toggleSplit(id: string | null): void;
+  closeSplit(): void;
   mode: Mode;
   setMode(mode: Mode): void;
   view: PanelView;
@@ -152,14 +167,24 @@ export function HarnessProvider(props: {
   const [selected, setSelected] = useState<string | null>(
     props.initialSelected ?? null,
   );
-  const [mode, setMode] = useState<Mode>("agent");
+  const [split, setSplit] = useState<{ id: string | null } | null>(null);
+  const [mode, setModeState] = useState<Mode>(() =>
+    props.initialSelected === null || props.initialSelected === undefined
+      ? loadWindowLayout().mode
+      : "agent",
+  );
   const [view, setView] = useState<PanelView>("thread");
-  const [sidebar, setSidebar] = useState(true);
+  const [sidebar, setSidebar] = useState(() => loadWindowLayout().sidebar);
   const [openFiles, setOpenFiles] = useState<readonly string[]>([]);
   const [file, setFile] = useState<string | null>(null);
   const [draft, setDraft] = useState(false);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [catalog, setCatalog] = useState<DriverCatalogEntry[]>([]);
+
+  const setMode = useCallback((next: Mode) => {
+    setModeState(next);
+    saveWindowLayout({ mode: next });
+  }, []);
 
   useEffect(() => {
     let stale = false;
@@ -182,12 +207,12 @@ export function HarnessProvider(props: {
 
   useEffect(() => {
     setSelected(props.initialSelected ?? null);
+    setSplit(null);
     setDraft(false);
     setOverlay(null);
     // A new connection is a new project: its paths mean nothing here.
     setOpenFiles([]);
     setFile(null);
-    setMode("agent");
     return connectStream(api.streamUrl(), {
       onFrame: (frame) => {
         if (frame.kind === "hello") setResyncTick((tick) => tick + 1);
@@ -206,6 +231,9 @@ export function HarnessProvider(props: {
 
   const select = useCallback((id: string | null) => {
     setSelected(id);
+    // Selecting the thread the second pane holds would show it twice; the
+    // split closes instead, which is also the natural "promote to main" move.
+    setSplit((cur) => (cur !== null && cur.id === id ? null : cur));
     setDraft(false);
     setOverlay(null);
     // Changes and Usage are about the thread you were on. Landing on another
@@ -215,7 +243,23 @@ export function HarnessProvider(props: {
     setMode("agent");
   }, []);
 
-  const toggleSidebar = useCallback(() => setSidebar((open) => !open), []);
+  const toggleSplit = useCallback((id: string | null) => {
+    setSplit((cur) => (cur !== null && cur.id === id ? null : { id }));
+    setOverlay(null);
+    setMode("agent");
+  }, []);
+
+  const closeSplit = useCallback(() => setSplit(null), []);
+
+  const toggleSidebar = useCallback(
+    () =>
+      setSidebar((open) => {
+        const next = !open;
+        saveWindowLayout({ sidebar: next });
+        return next;
+      }),
+    [],
+  );
 
   const openFile = useCallback((path: string) => {
     setOpenFiles((open) => (open.includes(path) ? open : [...open, path]));
@@ -257,6 +301,9 @@ export function HarnessProvider(props: {
       wsStatus,
       selected,
       select,
+      split,
+      toggleSplit,
+      closeSplit,
       mode,
       setMode,
       view,
@@ -284,6 +331,9 @@ export function HarnessProvider(props: {
       wsStatus,
       selected,
       select,
+      split,
+      toggleSplit,
+      closeSplit,
       mode,
       view,
       sidebar,

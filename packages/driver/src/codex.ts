@@ -45,6 +45,19 @@ const CODEX_EFFORTS: readonly ModelReasoningEffort[] = [
   "ultra",
 ];
 
+/**
+ * Codex CLI JSON is a runtime boundary. Some successful MCP calls currently
+ * include `error: null`, even though the SDK type models the field as an
+ * optional object. Keep malformed or nullable error payloads from taking down
+ * the whole session while still preserving useful messages when present.
+ */
+export function codexErrorMessage(value: unknown): string | undefined {
+  if (typeof value === "string") return value.length > 0 ? value : undefined;
+  if (typeof value !== "object" || value === null) return undefined;
+  const message = (value as { message?: unknown }).message;
+  return typeof message === "string" && message.length > 0 ? message : undefined;
+}
+
 /** Narrow a stored effort string to the SDK's union, loudly. */
 function codexEffort(level: string): ModelReasoningEffort {
   if (!(CODEX_EFFORTS as readonly string[]).includes(level)) {
@@ -53,6 +66,11 @@ function codexEffort(level: string): ModelReasoningEffort {
     );
   }
   return level as ModelReasoningEffort;
+}
+
+/** Codex's config sentinel for an explicit fast or standard service tier. */
+export function codexServiceTier(fastMode: boolean): "fast" | "default" {
+  return fastMode ? "fast" : "default";
 }
 
 function threadOptions(input: DriverRunInput): ThreadOptions {
@@ -90,6 +108,8 @@ const CODEX_MODELS: DriverModel[] = [
 ];
 
 export class CodexDriver implements SessionDriver {
+  readonly supportsFastMode = true;
+
   constructor(
     readonly id: string,
     readonly models: readonly DriverModel[] = CODEX_MODELS,
@@ -100,7 +120,12 @@ export class CodexDriver implements SessionDriver {
   }
 
   async run(input: DriverRunInput): Promise<DriverSessionResult> {
-    const codex = new Codex();
+    // Explicitly write the standard sentinel when off. Omitting the override
+    // would inherit a user's global `service_tier = "fast"` and make the
+    // session toggle lie about the speed actually requested.
+    const codex = new Codex({
+      config: { service_tier: codexServiceTier(input.fastMode) },
+    });
     // May throw on a bad effort level — before any thread exists, so the
     // dispatch fails rather than a turn that already cost tokens.
     const options = threadOptions(input);
@@ -163,7 +188,8 @@ export class CodexDriver implements SessionDriver {
             },
           });
           break;
-        case "mcp_tool_call":
+        case "mcp_tool_call": {
+          const error = codexErrorMessage(item.error);
           input.onEvent({
             type: "tool_call",
             payload: {
@@ -181,12 +207,11 @@ export class CodexDriver implements SessionDriver {
               name: item.tool,
               status: item.status,
               ...(item.result !== undefined ? { result: item.result } : {}),
-              ...(item.error !== undefined
-                ? { error: item.error.message }
-                : {}),
+              ...(error !== undefined ? { error } : {}),
             },
           });
           break;
+        }
         case "error":
           input.onEvent({
             type: "driver_error",
@@ -254,14 +279,21 @@ export class CodexDriver implements SessionDriver {
               payload: { reason: "completed" },
               usage: turnUsage,
             });
-            break;
+            // `turn.completed` is the provider's terminal contract. Do not
+            // wait for the transport iterator to close as well: a Codex
+            // subprocess can keep that stream open after its final event,
+            // which otherwise leaves the durable session row `running`
+            // forever. Returning from a for-await loop also calls the
+            // iterator's `return()`, so the SDK still gets a clean teardown.
+            if (thread.id !== null) resumeToken = thread.id;
+            return;
           }
           case "turn.failed":
             input.onEvent({
               type: "turn_end",
               payload: { reason: "failed" },
             });
-            throw new Error(event.error.message);
+            throw new Error(codexErrorMessage(event.error) ?? "Codex turn failed");
           case "error":
             throw new Error(event.message);
           default:
@@ -411,8 +443,8 @@ export function codexSkills(workdir: string): Promise<AgentSkill[]> {
         return;
       }
       if (message.id === 1) {
-        if (message.error !== undefined) {
-          finish(new Error(message.error.message ?? "Codex could not initialise"));
+        if (message.error != null) {
+          finish(new Error(codexErrorMessage(message.error) ?? "Codex could not initialise"));
           return;
         }
         send({ method: "initialized" });
@@ -424,8 +456,8 @@ export function codexSkills(workdir: string): Promise<AgentSkill[]> {
         return;
       }
       if (message.id !== 2) return;
-      if (message.error !== undefined) {
-        finish(new Error(message.error.message ?? "Codex could not list skills"));
+      if (message.error != null) {
+        finish(new Error(codexErrorMessage(message.error) ?? "Codex could not list skills"));
         return;
       }
       const response = message.result as CodexSkillsResponse | undefined;

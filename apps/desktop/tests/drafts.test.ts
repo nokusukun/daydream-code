@@ -115,6 +115,21 @@ describe("DraftStore", () => {
     });
   });
 
+  it("keeps a checkpoint edit through a reload", () => {
+    const storage = new FakeStorage();
+    const drafts = store(storage);
+    drafts.set("ses_1", {
+      text: "revise this",
+      attachments: [],
+      checkpointEventId: 42,
+    });
+    expect(store(storage).get("ses_1")).toEqual({
+      text: "revise this",
+      attachments: [],
+      checkpointEventId: 42,
+    });
+  });
+
   it("lists the sessions holding a draft", () => {
     const drafts = store(new FakeStorage());
     type_(drafts, "ses_1", "one");

@@ -44,6 +44,7 @@ import {
 import {
   TerminalSessions,
   parseOpenRequest,
+  parseAttachmentRequest,
   parseResizeRequest,
   parseTerminalId,
   parseWriteRequest,
@@ -590,6 +591,25 @@ function watchAppearance(): void {
 // IPC surface (mirrored by the preload bridge)
 
 function registerIpc(): void {
+  ipcMain.handle("daydream:window-state", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    return { maximized: window?.isMaximized() ?? false };
+  });
+  ipcMain.handle("daydream:window-minimize", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+  ipcMain.handle("daydream:window-toggle-maximize", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window === null) return;
+    if (window.isMaximized()) window.unmaximize();
+    else window.maximize();
+  });
+  ipcMain.handle("daydream:window-close", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window === null) return;
+    if (window === mainWindow) electronApp.quit();
+    else window.close();
+  });
   ipcMain.handle("daydream:get-appearance", () => readAppearance());
   ipcMain.handle("daydream:set-theme-source", (_event, choice: unknown) => {
     setThemeSource(choice);
@@ -626,7 +646,10 @@ function registerIpc(): void {
    * webContents that attached rather than broadcast — the settings window has
    * no business receiving a shell's bytes.
    */
-  const attached = new Map<string, () => void>();
+  const attached = new Map<
+    string,
+    { attachmentId: string; detach(): void }
+  >();
   const attachKey = (webContentsId: number, terminalId: string): string =>
     `${String(webContentsId)}\u0000${terminalId}`;
 
@@ -635,9 +658,9 @@ function registerIpc(): void {
   electronApp.on("web-contents-created", (_event, contents) => {
     contents.once("destroyed", () => {
       const prefix = `${String(contents.id)}\u0000`;
-      for (const [key, detach] of [...attached]) {
+      for (const [key, attachment] of [...attached]) {
         if (!key.startsWith(prefix)) continue;
-        detach();
+        attachment.detach();
         attached.delete(key);
       }
     });
@@ -653,7 +676,7 @@ function registerIpc(): void {
 
       const sender = event.sender;
       const key = attachKey(sender.id, request.terminalId);
-      attached.get(key)?.();
+      attached.get(key)?.detach();
       attached.delete(key);
 
       const opened = terminals.open(request, active.connection.rootPath, (payload: TerminalEvent) => {
@@ -662,7 +685,10 @@ function registerIpc(): void {
         sender.send("daydream:terminal-event", payload);
       });
       if (!opened.ok) return { ok: false, error: opened.error };
-      attached.set(key, opened.value.detach);
+      attached.set(key, {
+        attachmentId: request.attachmentId,
+        detach: opened.value.detach,
+      });
       return { ok: true, snapshot: opened.value.snapshot };
     },
   );
@@ -691,7 +717,7 @@ function registerIpc(): void {
     const active = activeProject();
     if (active === null) return { ok: false, error: "no project is open" };
     const key = attachKey(event.sender.id, terminalId);
-    attached.get(key)?.();
+    attached.get(key)?.detach();
     attached.delete(key);
     terminals.close(terminalId, active.connection.rootPath);
     return { ok: true };
@@ -703,10 +729,17 @@ function registerIpc(): void {
    * scrollback keeps accumulating in main, ready for the next attach.
    */
   ipcMain.handle("daydream:terminal-detach", (event, input: unknown) => {
-    const terminalId = parseTerminalId(input);
-    if (terminalId === null) return { ok: false, error: "invalid terminal id" };
-    const key = attachKey(event.sender.id, terminalId);
-    attached.get(key)?.();
+    const request = parseAttachmentRequest(input);
+    if (request === null) return { ok: false, error: "invalid terminal attachment" };
+    const key = attachKey(event.sender.id, request.terminalId);
+    const current = attached.get(key);
+    // Promoting a split Terminal remounts its renderer surface. A cleanup from
+    // the old mount may arrive after the new mount attached; only the mount
+    // that owns the current subscription is allowed to release it.
+    if (current === undefined || current.attachmentId !== request.attachmentId) {
+      return { ok: true };
+    }
+    current.detach();
     attached.delete(key);
     return { ok: true };
   });
@@ -789,7 +822,10 @@ function applyAppIcon(): void {
  * application menu and keep the platform-standard role menus intact.
  */
 function installApplicationMenu(): void {
-  if (!IS_MAC) return;
+  if (!IS_MAC) {
+    Menu.setApplicationMenu(null);
+    return;
+  }
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
@@ -814,6 +850,8 @@ function installApplicationMenu(): void {
   );
 }
 
+let mainWindow: import("electron").BrowserWindow | null = null;
+
 function createWindow(): void {
   const win = new BrowserWindow({
     title: APP_NAME,
@@ -821,6 +859,8 @@ function createWindow(): void {
     height: 900,
     minWidth: 880,
     minHeight: 560,
+    autoHideMenuBar: true,
+    ...(process.platform === "win32" ? { frame: false } : {}),
     // macOS: the window itself is the glass. The sidebar leaves it exposed;
     // the session panel paints an opaque surface over it. Off macOS the
     // renderer falls back to solid surfaces (see .no-vibrancy in styles.css).
@@ -843,12 +883,30 @@ function createWindow(): void {
       webSecurity: true,
     },
   });
+  mainWindow = win;
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+  trackWindowState(win);
   const devUrl = process.env.ELECTRON_RENDERER_URL;
   if (devUrl !== undefined && devUrl.length > 0) {
     void win.loadURL(devUrl);
   } else {
     void win.loadFile(join(appDir, "dist", "index.html"));
   }
+}
+
+/** Keep custom title-bar controls synchronized with native maximize changes. */
+function trackWindowState(window: import("electron").BrowserWindow): void {
+  const push = (): void => {
+    if (window.isDestroyed()) return;
+    window.webContents.send("daydream:window-state", {
+      maximized: window.isMaximized(),
+    });
+  };
+  window.on("maximize", push);
+  window.on("unmaximize", push);
+  window.webContents.on("did-finish-load", push);
 }
 
 /**
@@ -873,6 +931,8 @@ function openSettingsWindow(): void {
     minWidth: 720,
     minHeight: 480,
     title: "settings",
+    autoHideMenuBar: true,
+    ...(process.platform === "win32" ? { frame: false } : {}),
     // Narrower chrome than the workspace: no traffic-light inset to dodge,
     // because the source list starts below the toolbar rather than beside it.
     ...(IS_MAC
@@ -891,6 +951,7 @@ function openSettingsWindow(): void {
       webSecurity: true,
     },
   });
+  trackWindowState(win);
   settingsWindow = win;
   win.on("closed", () => {
     settingsWindow = null;

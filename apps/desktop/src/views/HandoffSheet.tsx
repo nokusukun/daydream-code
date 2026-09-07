@@ -25,8 +25,13 @@ export function HandoffSheet(): ReactNode {
   const [stage] = useState<HandoffStage | null>(handoffStage);
   const [choice, setChoice] = useState<ModelChoice>(() =>
     stage !== null
-      ? { driver: stage.driver, modelId: stage.modelId, effort: stage.effort }
-      : { driver: "claude", modelId: null, effort: null },
+      ? {
+          driver: stage.driver,
+          modelId: stage.modelId,
+          effort: stage.effort,
+          fastMode: stage.fastMode,
+        }
+      : { driver: "claude", modelId: null, effort: null, fastMode: false },
   );
   const [task, setTask] = useState("");
   const [busy, setBusy] = useState(false);
@@ -48,6 +53,7 @@ export function HandoffSheet(): ReactNode {
         driver: choice.driver,
         ...(choice.modelId !== null ? { modelId: choice.modelId } : {}),
         ...(choice.effort !== null ? { effort: choice.effort } : {}),
+        ...(choice.fastMode ? { fastMode: true } : {}),
       })
       .then((record) => {
         // The new thread is the thing to look at now; the source is untouched.

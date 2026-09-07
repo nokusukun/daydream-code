@@ -62,6 +62,7 @@ function TerminalSurface(props: SurfaceProps): React.ReactNode {
     if (host === null || api === undefined) return;
 
     let disposed = false;
+    const attachmentId = crypto.randomUUID();
     const resolver = createColorResolver(host);
     const term = new Terminal({
       fontFamily: window.getComputedStyle(host).fontFamily,
@@ -123,7 +124,12 @@ function TerminalSurface(props: SurfaceProps): React.ReactNode {
     });
 
     void (async () => {
-      const opened = await api.openTerminal({ terminalId, cols: term.cols, rows: term.rows });
+      const opened = await api.openTerminal({
+        terminalId,
+        attachmentId,
+        cols: term.cols,
+        rows: term.rows,
+      });
       if (disposed) return;
       if (!opened.ok) {
         setError(opened.error);
@@ -186,7 +192,7 @@ function TerminalSurface(props: SurfaceProps): React.ReactNode {
       typed.dispose();
       unsubscribe();
       // Detach, not close: the shell keeps running and main keeps its output.
-      void api.detachTerminal(terminalId);
+      void api.detachTerminal({ terminalId, attachmentId });
       term.dispose();
       resolver.dispose();
       terminal.current = null;

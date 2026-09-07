@@ -16,6 +16,7 @@ import { SettingField, SettingRow, isUserSet, layerName } from "./SettingsField.
 import type { Appearance } from "../bridge.js";
 import { bridge } from "../bridge.js";
 import { titleCaseSettingName } from "../title-case.js";
+import { WindowControls } from "../WindowControls.js";
 
 interface Section {
   id: string;
@@ -130,6 +131,7 @@ export function SettingsWindow(): ReactNode {
             </select>
           </label>
         </div>
+        <WindowControls />
       </header>
 
       <nav className="settings-rail glass" aria-label="settings sections">

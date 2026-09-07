@@ -86,6 +86,8 @@ export interface DispatchRequest {
    * validates it at run start, since the valid set is per provider.
    */
   effort?: string;
+  /** Request the provider's lower-latency service tier. Defaults to false. */
+  fastMode?: boolean;
   permissionMode?: "auto" | "ask" | "readonly";
 }
 
@@ -100,6 +102,7 @@ export interface ModelChange {
   driver?: string;
   modelId?: string | null;
   effort?: string | null;
+  fastMode?: boolean;
 }
 
 /**
@@ -116,6 +119,7 @@ export interface HandoffRequest {
   driver?: string;
   modelId?: string;
   effort?: string;
+  fastMode?: boolean;
 }
 
 /**
@@ -169,6 +173,17 @@ export abstract class Sessions extends Service {
   /** Send a message into a session; restarts the loop if it already ended. */
   abstract continueSession(
     id: SessionId,
+    message: string,
+    attachments?: AttachmentInput[],
+  ): Promise<SessionHandle>;
+  /**
+   * Replace the newest user message on an idle thread and continue from the
+   * context immediately before it. The journal remains append-only; the
+   * implementation records a branch marker and rebuilds provider context.
+   */
+  abstract checkpointSession(
+    id: SessionId,
+    fromEventId: number,
     message: string,
     attachments?: AttachmentInput[],
   ): Promise<SessionHandle>;

@@ -272,6 +272,14 @@ function claudeEffort(level: string): EffortLevel {
   return level as EffortLevel;
 }
 
+/** Session-scoped SDK settings for Daydream's explicit fast-mode choice. */
+export function claudeFastSettings(fastMode: boolean): {
+  fastMode: boolean;
+  fastModePerSessionOptIn: true;
+} {
+  return { fastMode, fastModePerSessionOptIn: true };
+}
+
 /**
  * Baked-in catalog (config-replaceable). No `isDefault`: an unset modelId
  * defers to the user's own Claude Code default model.
@@ -294,6 +302,8 @@ const CLAUDE_MODELS: DriverModel[] = [
 ];
 
 export class ClaudeDriver implements SessionDriver {
+  readonly supportsFastMode = true;
+
   constructor(
     readonly id: string,
     readonly models: readonly DriverModel[] = CLAUDE_MODELS,
@@ -338,6 +348,10 @@ export class ClaudeDriver implements SessionDriver {
       cwd: input.workdir,
       abortController: controller,
       mcpServers: { daydream: harnessMcpServer(input) },
+      // Keep speed a Daydream session choice rather than inheriting a
+      // machine-wide Claude Code preference. The per-session opt-in prevents
+      // the SDK from carrying an interactive toggle into a later run.
+      settings: claudeFastSettings(input.fastMode),
       ...(input.modelId !== null ? { model: input.modelId } : {}),
       ...(effort !== null ? { effort } : {}),
       ...(input.resumeToken != null ? { resume: input.resumeToken } : {}),
@@ -371,6 +385,10 @@ export class ClaudeDriver implements SessionDriver {
               tools: message.tools,
               session_id: message.session_id,
               cwd: message.cwd,
+              fast_mode_state: message.fast_mode_state ?? "off",
+              ...(message.fast_mode_disabled_reason !== undefined
+                ? { fast_mode_disabled_reason: message.fast_mode_disabled_reason }
+                : {}),
             },
           });
         } else if (message.type === "assistant") {

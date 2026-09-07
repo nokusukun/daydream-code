@@ -31,6 +31,8 @@ export interface Draft {
   attachments: Attachment[];
   /** Queue item currently claimed by this composer for editing. */
   queuedDeliveryId?: string;
+  /** User-message event whose abandoned tail this edit will replace. */
+  checkpointEventId?: number;
 }
 
 /** The one empty draft. Shared so "has nothing" is an identity comparison. */
@@ -41,7 +43,8 @@ export function isEmptyDraft(draft: Draft): boolean {
   return (
     draft.text.length === 0 &&
     draft.attachments.length === 0 &&
-    draft.queuedDeliveryId === undefined
+    draft.queuedDeliveryId === undefined &&
+    draft.checkpointEventId === undefined
   );
 }
 
@@ -75,6 +78,7 @@ interface Entry {
   text: string;
   attachments: Attachment[];
   queuedDeliveryId?: string;
+  checkpointEventId?: number;
   at: number;
   /** Anything a later version wrote; preserved verbatim on rewrite. */
   rest?: Record<string, unknown>;
@@ -98,7 +102,7 @@ function defaultStorage(): StorageLike | null {
  * Attachments as they were persisted, minus anything that is not one.
  *
  * A stored draft is untrusted input — it outlives the version that wrote it
- * and is editable by hand — and a malformed entry here would reach an `<img>`
+ * and is editable by hand — and a malformed entry here would reach an image element
  * and a dispatch body. A bad element is dropped rather than failing the whole
  * draft: losing one chip beats losing the paragraph it was attached to.
  */
@@ -133,6 +137,7 @@ function parseEntry(raw: string | null): Entry | null {
       at: rawAt,
       attachments: rawAttachments,
       queuedDeliveryId: rawQueuedDeliveryId,
+      checkpointEventId: rawCheckpointEventId,
       ...rest
     } = value as Record<string, unknown> & { text: string };
     const at = typeof rawAt === "number" ? rawAt : 0;
@@ -141,12 +146,19 @@ function parseEntry(raw: string | null): Entry | null {
       typeof rawQueuedDeliveryId === "string" && rawQueuedDeliveryId.length > 0
         ? rawQueuedDeliveryId
         : undefined;
+    const checkpointEventId =
+      typeof rawCheckpointEventId === "number" &&
+      Number.isInteger(rawCheckpointEventId) &&
+      rawCheckpointEventId > 0
+        ? rawCheckpointEventId
+        : undefined;
     // An image with no caption is still a draft. So is an empty queue edit:
     // clearing the field must not lose the id needed to cancel or save it.
     if (
       text.length === 0 &&
       attachments.length === 0 &&
-      queuedDeliveryId === undefined
+      queuedDeliveryId === undefined &&
+      checkpointEventId === undefined
     ) {
       return null;
     }
@@ -155,6 +167,7 @@ function parseEntry(raw: string | null): Entry | null {
       attachments,
       at,
       ...(queuedDeliveryId !== undefined ? { queuedDeliveryId } : {}),
+      ...(checkpointEventId !== undefined ? { checkpointEventId } : {}),
     };
     return Object.keys(rest).length === 0 ? own : { ...own, rest };
   } catch {
@@ -220,6 +233,7 @@ export class DraftStore {
       current !== undefined &&
       current.text === draft.text &&
       current.queuedDeliveryId === draft.queuedDeliveryId &&
+      current.checkpointEventId === draft.checkpointEventId &&
       sameAttachments(current.attachments, draft.attachments)
     ) {
       return;
@@ -229,6 +243,9 @@ export class DraftStore {
       attachments: draft.attachments,
       ...(draft.queuedDeliveryId !== undefined
         ? { queuedDeliveryId: draft.queuedDeliveryId }
+        : {}),
+      ...(draft.checkpointEventId !== undefined
+        ? { checkpointEventId: draft.checkpointEventId }
         : {}),
       at: this.#now(),
       ...(current?.rest !== undefined ? { rest: current.rest } : {}),
@@ -254,6 +271,9 @@ export class DraftStore {
       ...(draft.queuedDeliveryId !== undefined
         ? { queuedDeliveryId: draft.queuedDeliveryId }
         : {}),
+      ...(draft.checkpointEventId !== undefined
+        ? { checkpointEventId: draft.checkpointEventId }
+        : {}),
     });
   }
 
@@ -266,6 +286,9 @@ export class DraftStore {
       attachments,
       ...(draft.queuedDeliveryId !== undefined
         ? { queuedDeliveryId: draft.queuedDeliveryId }
+        : {}),
+      ...(draft.checkpointEventId !== undefined
+        ? { checkpointEventId: draft.checkpointEventId }
         : {}),
     });
   }
@@ -358,6 +381,7 @@ export class DraftStore {
         before !== undefined &&
         before.text === entry.text &&
         before.queuedDeliveryId === entry.queuedDeliveryId &&
+        before.checkpointEventId === entry.checkpointEventId &&
         sameAttachments(before.attachments, entry.attachments);
       next.set(
         key,
@@ -368,6 +392,9 @@ export class DraftStore {
               attachments: entry.attachments,
               ...(entry.queuedDeliveryId !== undefined
                 ? { queuedDeliveryId: entry.queuedDeliveryId }
+                : {}),
+              ...(entry.checkpointEventId !== undefined
+                ? { checkpointEventId: entry.checkpointEventId }
                 : {}),
             },
       );

@@ -2,8 +2,9 @@
  * t3-style model picker: one control selecting (driver, model) for a dispatch.
  * A searchable popover lists every driver's catalog (from `GET /api/models`)
  * grouped per driver, with starred favorites pinned on top. Reasoning effort
- * is a second pill beside it with its own small popup — a separate axis gets
- * a separate control. Favorites and the last choice persist in localStorage.
+ * is a second pill beside it with its own small popup; providers that expose
+ * fast mode add a one-press speed toggle. Favorites and the last choice
+ * persist in localStorage.
  */
 import {
   useCallback,
@@ -26,12 +27,19 @@ export interface ModelChoice {
   modelId: string | null;
   /** null = the driver's own default reasoning effort. */
   effort: string | null;
+  /** Request the provider's lower-latency service tier. */
+  fastMode: boolean;
 }
 
 const CHOICE_KEY = "daydream.model-choice";
 const FAVORITES_KEY = "daydream.model-favorites";
 
-const DEFAULT_CHOICE: ModelChoice = { driver: "claude", modelId: null, effort: null };
+const DEFAULT_CHOICE: ModelChoice = {
+  driver: "claude",
+  modelId: null,
+  effort: null,
+  fastMode: false,
+};
 
 /** Popover widths, mirrored from the CSS, and the viewport gutter they keep. */
 const POP_WIDTH = 320;
@@ -109,9 +117,9 @@ function usePopoverAnchor(args: {
 
 /** Shown before the catalog loads or when the endpoint is unreachable. */
 const FALLBACK_CATALOG: DriverCatalogEntry[] = [
-  { driver: "claude", models: [] },
-  { driver: "codex", models: [] },
-  { driver: "mock", models: [] },
+  { driver: "claude", models: [], supportsFastMode: true },
+  { driver: "codex", models: [], supportsFastMode: true },
+  { driver: "mock", models: [], supportsFastMode: false },
 ];
 
 /**
@@ -122,7 +130,12 @@ const FALLBACK_CATALOG: DriverCatalogEntry[] = [
  */
 function isStoredChoice(
   value: unknown,
-): value is { driver: string; modelId: string | null; effort?: unknown } {
+): value is {
+  driver: string;
+  modelId: string | null;
+  effort?: unknown;
+  fastMode?: unknown;
+} {
   if (typeof value !== "object" || value === null) return false;
   if (!("driver" in value) || !("modelId" in value)) return false;
   return (
@@ -132,9 +145,9 @@ function isStoredChoice(
 }
 
 function readJson(key: string): unknown {
-  const raw = localStorage.getItem(key);
-  if (raw === null) return undefined;
   try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return undefined;
     return JSON.parse(raw);
   } catch {
     return undefined;
@@ -148,7 +161,16 @@ export function loadChoice(): ModelChoice {
     driver: parsed.driver,
     modelId: parsed.modelId,
     effort: typeof parsed.effort === "string" ? parsed.effort : null,
+    fastMode: parsed.fastMode === true,
   };
+}
+
+/** Fast mode is a provider capability and also applies to its default model. */
+export function driverSupportsFastMode(
+  catalog: DriverCatalogEntry[],
+  driver: string,
+): boolean {
+  return catalog.find((entry) => entry.driver === driver)?.supportsFastMode === true;
 }
 
 /**
@@ -169,7 +191,12 @@ export function modelEfforts(
 }
 
 function saveChoice(choice: ModelChoice): void {
-  localStorage.setItem(CHOICE_KEY, JSON.stringify(choice));
+  try {
+    localStorage.setItem(CHOICE_KEY, JSON.stringify(choice));
+  } catch {
+    // Persistence is an enhancement. A blocked or full storage area must not
+    // turn a working model control into a button that appears to do nothing.
+  }
 }
 
 function loadFavorites(): Set<string> {
@@ -180,7 +207,20 @@ function loadFavorites(): Set<string> {
 }
 
 function saveFavorites(favorites: Set<string>): void {
-  localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites]));
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites]));
+  } catch {
+    // Keep the in-memory favorite even when this browser cannot persist it.
+  }
+}
+
+/** Never expose a speed control until the live core confirms it can honor it. */
+export function fastModeAvailable(
+  catalogReady: boolean,
+  catalog: DriverCatalogEntry[],
+  driver: string,
+): boolean {
+  return catalogReady && driverSupportsFastMode(catalog, driver);
 }
 
 /** Favorite key for a concrete model; default rows are not favoritable. */
@@ -282,6 +322,7 @@ export function ModelSelector(props: {
   const persist = props.persist !== false;
   const { api, modelLabel } = useHarness();
   const [catalog, setCatalog] = useState<DriverCatalogEntry[]>(FALLBACK_CATALOG);
+  const [catalogReady, setCatalogReady] = useState(false);
   // One slot for both popovers: they are siblings on one control cluster, and
   // a single state makes "opening one closes the other" structural rather
   // than something every handler has to remember.
@@ -334,13 +375,32 @@ export function ModelSelector(props: {
     api
       .models()
       .then((entries) => {
-        if (!stale && entries.length > 0) setCatalog(entries);
+        if (!stale && entries.length > 0) {
+          setCatalog(entries);
+          setCatalogReady(true);
+        }
       })
       .catch(() => undefined);
     return () => {
       stale = true;
     };
   }, [api]);
+
+  // A configured driver can lose the capability after a saved choice was
+  // written. Clear that stale flag once the real catalog arrives, so the next
+  // dispatch cannot carry an invisible unsupported setting.
+  useEffect(() => {
+    if (
+      !catalogReady ||
+      !value.fastMode ||
+      driverSupportsFastMode(catalog, value.driver)
+    ) {
+      return;
+    }
+    const choice = { ...value, fastMode: false };
+    if (persist) saveChoice(choice);
+    onChange(choice);
+  }, [catalog, catalogReady, onChange, persist, value]);
 
   // Focus can only land once the popover is actually visible: until the
   // anchor is measured it renders `visibility: hidden`, and a hidden element
@@ -412,13 +472,20 @@ export function ModelSelector(props: {
         value.effort !== null && efforts.includes(value.effort)
           ? value.effort
           : null;
-      const choice: ModelChoice = { driver: row.driver, modelId: row.modelId, effort };
+      const fastMode =
+        value.fastMode && driverSupportsFastMode(catalog, row.driver);
+      const choice: ModelChoice = {
+        driver: row.driver,
+        modelId: row.modelId,
+        effort,
+        fastMode,
+      };
       if (persist) saveChoice(choice);
       onChange(choice);
       close();
       setQuery("");
     },
-    [onChange, catalog, value.effort, close, persist],
+    [onChange, catalog, value.effort, value.fastMode, close, persist],
   );
 
   const selectEffort = useCallback(
@@ -438,6 +505,16 @@ export function ModelSelector(props: {
     () => modelEfforts(catalog, value.driver, value.modelId),
     [catalog, value.driver, value.modelId],
   );
+  const supportsFastMode = useMemo(
+    () => fastModeAvailable(catalogReady, catalog, value.driver),
+    [catalog, catalogReady, value.driver],
+  );
+
+  const toggleFastMode = useCallback(() => {
+    const choice = { ...value, fastMode: !value.fastMode };
+    if (persist) saveChoice(choice);
+    onChange(choice);
+  }, [onChange, persist, value]);
 
   /**
    * The levels the popup offers. A pinned effort the catalog no longer lists
@@ -619,6 +696,22 @@ export function ModelSelector(props: {
           >
             ▴
           </span>
+        </button>
+      )}
+      {supportsFastMode && (
+        <button
+          type="button"
+          className="model-trigger fast-trigger"
+          disabled={props.disabled}
+          aria-label={value.fastMode ? "Disable fast mode" : "Enable fast mode"}
+          aria-pressed={value.fastMode}
+          onClick={toggleFastMode}
+          title={`Fast mode ${value.fastMode ? "on" : "off"} · uses a lower-latency service tier`}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M9.3 1.75 3.8 9h3.55l-.7 5.25L12.2 7H8.65l.65-5.25Z" />
+          </svg>
+          <span>Fast</span>
         </button>
       )}
       {open &&

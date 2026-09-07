@@ -6,6 +6,7 @@ import {
   MAX_WRITE_BYTES,
   TerminalSessions,
   isMissingBinary,
+  parseAttachmentRequest,
   parseOpenRequest,
   parseResizeRequest,
   parseTerminalId,
@@ -80,7 +81,12 @@ function harness(
 }
 
 const ROOT = "/repo";
-const openReq = { terminalId: "term-1", cols: 80, rows: 24 };
+const openReq = {
+  terminalId: "term-1",
+  attachmentId: "mount-1",
+  cols: 80,
+  rows: 24,
+};
 
 // --------------------------------------------------------------------------
 
@@ -97,14 +103,33 @@ describe("request parsing", () => {
   });
 
   it("bounds terminal dimensions", () => {
-    expect(parseOpenRequest({ terminalId: "t", cols: 80, rows: 24 })).toEqual({
+    expect(
+      parseOpenRequest({ terminalId: "t", attachmentId: "mount-1", cols: 80, rows: 24 }),
+    ).toEqual({
       terminalId: "t",
+      attachmentId: "mount-1",
       cols: 80,
       rows: 24,
     });
-    expect(parseOpenRequest({ terminalId: "t", cols: 0, rows: 24 })).toBeNull();
-    expect(parseOpenRequest({ terminalId: "t", cols: 80, rows: 100_000 })).toBeNull();
-    expect(parseOpenRequest({ terminalId: "t", cols: 80.5, rows: 24 })).toBeNull();
+    expect(parseAttachmentRequest({ terminalId: "t", attachmentId: "mount-1" })).toEqual({
+      terminalId: "t",
+      attachmentId: "mount-1",
+    });
+    expect(parseAttachmentRequest({ terminalId: "t", attachmentId: "../old" })).toBeNull();
+    expect(
+      parseOpenRequest({ terminalId: "t", attachmentId: "mount-1", cols: 0, rows: 24 }),
+    ).toBeNull();
+    expect(
+      parseOpenRequest({
+        terminalId: "t",
+        attachmentId: "mount-1",
+        cols: 80,
+        rows: 100_000,
+      }),
+    ).toBeNull();
+    expect(
+      parseOpenRequest({ terminalId: "t", attachmentId: "mount-1", cols: 80.5, rows: 24 }),
+    ).toBeNull();
     expect(parseOpenRequest({ terminalId: "t" })).toBeNull();
     expect(parseOpenRequest(null)).toBeNull();
     expect(parseResizeRequest({ terminalId: "t", cols: 120, rows: 40 })).toEqual({

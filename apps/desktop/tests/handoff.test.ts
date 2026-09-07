@@ -13,6 +13,7 @@ function record(overrides: Partial<SessionRecord> = {}): SessionRecord {
     driver: "claude",
     modelId: "claude-opus-5",
     effort: "high",
+    fastMode: true,
     status: "completed",
     lastSeenMasterSeq: 0,
     summary: null,
@@ -36,6 +37,7 @@ describe("handoff staging", () => {
       driver: "claude",
       modelId: "claude-opus-5",
       effort: "high",
+      fastMode: true,
       mode: "transcript",
     });
   });
@@ -48,10 +50,11 @@ describe("handoff staging", () => {
     expect(stage?.mode).toBe("summary");
   });
 
-  it("keeps null model/effort as null — driver default, not a frozen string", () => {
+  it("keeps default model/effort and standard speed without freezing provider values", () => {
     stageHandoff(record({ modelId: null, effort: null } as never), "summary");
     const stage = handoffStage();
     expect(stage?.modelId).toBeNull();
     expect(stage?.effort).toBeNull();
+    expect(stage?.fastMode).toBe(true);
   });
 });

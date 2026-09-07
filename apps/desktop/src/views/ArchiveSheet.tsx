@@ -111,7 +111,8 @@ function ArchivedRow(props: {
   onDelete(): Promise<unknown>;
 }): ReactNode {
   const { session } = props;
-  const said = clip(session.tldr ?? "", 160);
+  const summary = session.tldr ?? "";
+  const said = clip(summary, 160);
   const activity = sessionActivityAt(session);
   const [busy, setBusy] = useState<"restore" | "delete" | null>(null);
 
@@ -139,12 +140,21 @@ function ArchivedRow(props: {
       >
         <span className="archive-row-top">
           <StatusGlyph status={session.status} />
-          <span className="archive-row-name">{session.title || session.name}</span>
+          <span
+            className="archive-row-name"
+            title={session.title || session.name}
+          >
+            {session.title || session.name}
+          </span>
           <span className="archive-row-time" title={fmtTime(activity)}>
             {fmtAgo(activity)}
           </span>
         </span>
-        {said.length > 0 && <span className="archive-row-said">{said}</span>}
+        {said.length > 0 && (
+          <span className="archive-row-said" title={summary}>
+            {said}
+          </span>
+        )}
         <span className="archive-row-facts">
           <span>{session.name}</span>
           <span>{props.model}</span>

@@ -8,7 +8,7 @@
  * runs sort above finished ones for the same reason the old rail did: work
  * blocked on you outranks work that is proceeding fine.
  */
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { sessionActivityAt, type SessionRecord } from "@daydream-code/shared";
 import { useHarness } from "../harness.js";
 import { bridge } from "../bridge.js";
@@ -45,6 +45,9 @@ export function ThreadRail(): ReactNode {
   const {
     selected,
     select,
+    split,
+    toggleSplit,
+    closeSplit,
     draft,
     newSession,
     drafts: draftStore,
@@ -67,6 +70,15 @@ export function ThreadRail(): ReactNode {
   // A rail line rather than a toast: a message about work that did not happen
   // should not time out before it is read.
   const { setArchived, remove, failure } = useSessionActions();
+
+  // A thread deleted out from under the second pane must not leave a dead
+  // transcript there. Master (`id: null`) always exists, and a list that has
+  // not loaded — or failed to — proves nothing about what does.
+  useEffect(() => {
+    if (split === null || split.id === null || loading || listError !== null)
+      return;
+    if (!sessions.some((s) => (s.id as string) === split.id)) closeSplit();
+  }, [split, sessions, loading, listError, closeSplit]);
 
   const { live, finished, more, archived } = useMemo(
     () => railSessions(sessions, { shown }),
@@ -111,6 +123,19 @@ export function ThreadRail(): ReactNode {
     [selected, select, remove, setArchived, setOverlay],
   );
 
+  /**
+   * Shift+click puts a thread beside the current one instead of replacing it.
+   * The thread already filling the first pane is the one thing there is no
+   * point splitting with, so that shift+click falls through to a plain select.
+   */
+  const openSplit = useCallback(
+    (id: string | null) => {
+      if (id === selected) select(id);
+      else toggleSplit(id);
+    },
+    [selected, select, toggleSplit],
+  );
+
   const row = useCallback(
     (session: SessionRecord) => {
       const model = modelLabel(session.driver, session.modelId);
@@ -119,15 +144,17 @@ export function ThreadRail(): ReactNode {
           key={session.id as string}
           session={session}
           current={(session.id as string) === selected}
+          inSplit={split !== null && split.id === (session.id as string)}
           model={model.label}
           draft={drafts.get(session.id as string)}
           activity={activities.get(session.id as string)}
           onSelect={select}
+          onSplit={openSplit}
           onMenu={openMenu}
         />
       );
     },
-    [selected, select, drafts, activities, modelLabel, openMenu],
+    [selected, select, split, openSplit, drafts, activities, modelLabel, openMenu],
   );
 
   const last = entries?.[entries.length - 1];
@@ -143,12 +170,13 @@ export function ThreadRail(): ReactNode {
         : live.length > 0
           ? `${live.length} running`
           : `${sessions.length} thread${sessions.length === 1 ? "" : "s"}`;
-  const masterTitle =
+  const masterSummary =
     last !== undefined
-      ? lede(messageText(last.message).replace(/\s+/g, " ").trim())
+      ? messageText(last.message).replace(/\s+/g, " ").trim()
       : entries === null
         ? ""
         : "Nothing on the thread yet.";
+  const masterTitle = lede(masterSummary);
   // The spawned count is a second claim on a second list, so it waits for that
   // list rather than reporting the zero it starts at.
   const spawned =
@@ -181,7 +209,9 @@ export function ThreadRail(): ReactNode {
       <button
         type="button"
         className="master-card"
-        onClick={() => select(null)}
+        onClick={(event) =>
+          event.shiftKey ? openSplit(null) : select(null)
+        }
       >
         <span className="master-card-top">
           <span className="master-card-mark" aria-hidden="true">
@@ -197,7 +227,11 @@ export function ThreadRail(): ReactNode {
         </span>
         {/* The thread has no subject line of its own, so the newest entry is
             the honest answer to "what is this about now". */}
-        <span key={masterTitle} className="master-card-title sidebar-change">
+        <span
+          key={masterTitle}
+          className="master-card-title sidebar-change"
+          title={masterSummary}
+        >
           {masterTitle}
         </span>
         <span key={masterMeta} className="master-card-meta sidebar-change">
@@ -318,12 +352,15 @@ export function ThreadRail(): ReactNode {
 function RunCard(props: {
   session: SessionRecord;
   current: boolean;
+  /** Whether this thread is the one shown in the second pane. */
+  inSplit: boolean;
   model: string;
   /** Unsent composer contents for this session, if there are any. */
   draft: Draft | undefined;
   /** Its latest meaningful journal activity, once one has been seen. */
   activity: Activity | undefined;
   onSelect(id: string): void;
+  onSplit(id: string): void;
   onMenu(session: SessionRecord): void;
 }): ReactNode {
   const { session, current, model } = props;
@@ -333,7 +370,8 @@ function RunCard(props: {
   // finished before the bounded activity window. A run that has neither gets
   // no line at all rather than a husk.
   const activity = props.activity;
-  const said = clip(activity?.text ?? session.tldr ?? "", 200);
+  const summary = activity?.text ?? session.tldr ?? "";
+  const said = clip(summary, 200);
   const activityLabel = activity?.label ?? (said.length > 0 ? "reply" : "");
   const title = session.title ?? session.name;
   const age = fmtAgo(sessionActivityAt(session));
@@ -344,12 +382,18 @@ function RunCard(props: {
   return (
     <button
       type="button"
-      className={`run-card run-${session.status}${archived ? " run-card-archived" : ""}`}
-      aria-current={current || undefined}
+      className={`run-card run-${session.status}${archived ? " run-card-archived" : ""}${
+        props.inSplit ? " run-card-in-split" : ""
+      }`}
+      aria-current={current || props.inSplit || undefined}
       title={`${session.name} · ${session.status} · ${session.driver}${
         archived ? " · archived" : ""
-      }${preview.length > 0 ? `\nunsent draft: ${preview}` : ""}`}
-      onClick={() => props.onSelect(id)}
+      }${
+        preview.length > 0 ? `\nunsent draft: ${preview}` : ""
+      }\nshift+click opens it beside the current thread`}
+      onClick={(event) =>
+        event.shiftKey ? props.onSplit(id) : props.onSelect(id)
+      }
       onContextMenu={(event) => {
         // Without a bridge (the browser dev server) let the default menu
         // through rather than swallowing the event for a menu that cannot open.
@@ -365,7 +409,11 @@ function RunCard(props: {
         >
           <StatusGlyph status={session.status} />
         </span>
-        <span key={title} className="run-card-name sidebar-change">
+        <span
+          key={title}
+          className="run-card-name sidebar-change"
+          title={title}
+        >
           {title}
         </span>
         <span key={age} className="run-card-time sidebar-change">
@@ -376,6 +424,7 @@ function RunCard(props: {
         <span
           key={`${activity?.eventId ?? "tldr"}:${activityLabel}:${said}`}
           className={`run-card-said run-card-activity-${activity?.kind ?? "reply"} sidebar-change`}
+          title={summary}
         >
           <span className="run-card-activity-label">{activityLabel}</span>
           {said}

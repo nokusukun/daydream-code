@@ -31,6 +31,7 @@ options:
   --driver <id>      driver for this dispatch (claude, codex, mock)
   --model <id>       model id passed to the driver
   --effort <level>   reasoning effort passed to the driver (e.g. low, high, xhigh)
+  --fast             request the provider's lower-latency fast mode
   --name <name>      name for this session (default: derived from the task)
   --image <path>     attach an image (png/jpeg/gif/webp; repeatable)
   --enable <id>      enable a config row (repeatable)
@@ -214,6 +215,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       driver: { type: "string" },
       model: { type: "string" },
       effort: { type: "string" },
+      fast: { type: "boolean" },
       name: { type: "string" },
       image: { type: "string", multiple: true },
       enable: { type: "string", multiple: true },
@@ -358,6 +360,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
             ...(values.driver ? { driver: values.driver } : {}),
             ...(values.model ? { modelId: values.model } : {}),
             ...(values.effort ? { effort: values.effort } : {}),
+            ...(values.fast ? { fastMode: true } : {}),
             ...(values.name ? { name: values.name } : {}),
             ...(attachments.length > 0 ? { attachments } : {}),
           });

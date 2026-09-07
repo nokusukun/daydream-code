@@ -217,6 +217,11 @@ function fakeRecord(id: string, task: string): SessionRecord {
 class FakeSessions extends Sessions {
   readonly dispatches: DispatchRequest[] = [];
   readonly continues: Array<{ id: SessionIdT; message: string }> = [];
+  readonly checkpoints: Array<{
+    id: SessionIdT;
+    fromEventId: number;
+    message: string;
+  }> = [];
   readonly stops: SessionIdT[] = [];
   readonly records = new Map<string, SessionRecord>();
   readonly next = new Map<string, NextMessage[]>();
@@ -230,6 +235,17 @@ class FakeSessions extends Sessions {
 
   async continueSession(id: SessionIdT, message: string): Promise<SessionHandle> {
     this.continues.push({ id, message });
+    const record = this.records.get(id) ?? fakeRecord(id, message);
+    this.records.set(record.id, record);
+    return { record, done: Promise.resolve(record) };
+  }
+
+  async checkpointSession(
+    id: SessionIdT,
+    fromEventId: number,
+    message: string,
+  ): Promise<SessionHandle> {
+    this.checkpoints.push({ id, fromEventId, message });
     const record = this.records.get(id) ?? fakeRecord(id, message);
     this.records.set(record.id, record);
     return { record, done: Promise.resolve(record) };
@@ -339,6 +355,7 @@ class FakeDrivers extends SessionDrivers {
     super(ctx);
     this.register(ctx, {
       id: "claude",
+      supportsFastMode: true,
       models: [{ id: "m-1", label: "Model One", isDefault: true }],
       run: () => Promise.reject(new Error("not used in server tests")),
     });
@@ -444,9 +461,10 @@ describe("FastifyServer", () => {
     expect(await res.json()).toEqual([
       {
         driver: "claude",
+        supportsFastMode: true,
         models: [{ id: "m-1", label: "Model One", isDefault: true }],
       },
-      { driver: "mock", models: [] },
+      { driver: "mock", models: [], supportsFastMode: false },
     ]);
   });
 
@@ -506,6 +524,19 @@ describe("FastifyServer", () => {
     expect(msg.status).toBe(200);
     expect(sessions.continues).toEqual([{ id: record.id, message: "keep going" }]);
 
+    const checkpoint = await fetch(
+      `${base}/api/sessions/${record.id}/checkpoint`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fromEventId: 17, message: "try this instead" }),
+      },
+    );
+    expect(checkpoint.status).toBe(200);
+    expect(sessions.checkpoints).toEqual([
+      { id: record.id, fromEventId: 17, message: "try this instead" },
+    ]);
+
     const deferred = await fetch(
       `${base}/api/sessions/${record.id}/next-messages`,
       {
@@ -521,6 +552,7 @@ describe("FastifyServer", () => {
     const detail = await fetch(`${base}/api/sessions/${record.id}`);
     expect(await detail.json()).toMatchObject({
       nextMessages: [{ message: "send this next", editing: false }],
+      editableMessage: null,
     });
 
     const deliveryId = deferredMessage.deliveryId;

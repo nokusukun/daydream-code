@@ -438,6 +438,53 @@ pre {
   -webkit-app-region: no-drag;
 }
 
+.window-controls {
+  -webkit-app-region: no-drag;
+  align-self: stretch;
+  display: flex;
+  flex: none;
+  height: var(--toolbar-h);
+  margin-right: calc(var(--s3) * -1);
+}
+
+.window-control {
+  width: 46px;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-2);
+  transition: background var(--t-instant) var(--ease-out-quart),
+    color var(--t-instant) var(--ease-out-quart);
+}
+
+.window-control svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.window-control:hover {
+  background: color-mix(in oklab, var(--text-1) 10%, transparent);
+  color: var(--text-1);
+}
+
+.window-control:active {
+  background: color-mix(in oklab, var(--text-1) 16%, transparent);
+}
+
+.window-control-close:hover,
+.window-control-close:active {
+  background: #c42b1c;
+  color: white;
+}
+
 .title-block {
   display: flex;
   flex-direction: column;
@@ -477,15 +524,16 @@ pre {
   display: none;
 }
 
-/* The palette trigger reads as a search field, the way a Mac toolbar does. */
+/* Search stays a compact toolbar action; its label and shortcut live in the
+   native tooltip so the command remains discoverable without taking space. */
 .titlebar-search {
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
+  display: grid;
+  place-items: center;
   height: var(--tb-control-h);
-  min-width: 220px;
-  padding: 0 var(--s2) 0 var(--s3);
+  width: var(--tb-control-h);
+  min-width: var(--tb-control-h);
+  padding: 0;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--tb-control);
@@ -522,10 +570,6 @@ pre {
   vector-effect: non-scaling-stroke;
 }
 
-.titlebar-search-label {
-  white-space: nowrap;
-}
-
 /*
  * Search, appearance, quick actions and settings are four segments of one
  * toolbar control. The shell owns the material and outline; each action owns
@@ -549,10 +593,6 @@ pre {
   flex: none;
 }
 
-.toolbar-actions > * + * {
-  border-left: 1px solid var(--border);
-}
-
 .toolbar-actions .titlebar-search,
 .toolbar-actions .toolbar-icon {
   height: 100%;
@@ -562,6 +602,12 @@ pre {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   box-shadow: none;
+}
+
+/* Apply segment dividers after the button reset so direct button siblings
+   keep the same line as module-wrapped actions. */
+.toolbar-actions > * + * {
+  border-left: 1px solid var(--border);
 }
 
 .toolbar-actions > .titlebar-search:first-child {
@@ -625,16 +671,6 @@ pre {
 
 .toolbar-icon:active {
   transform: scale(0.94);
-}
-
-.titlebar-search kbd {
-  margin-left: auto;
-  font-family: var(--ui);
-  font-size: var(--text-xs);
-  color: var(--text-3);
-  background: color-mix(in oklab, var(--text-3) 16%, transparent);
-  border-radius: var(--r-sm);
-  padding: 1px 5px;
 }
 
 /* -- body / panels --------------------------------------------------------- */
@@ -1796,6 +1832,100 @@ button {
   padding-bottom: var(--s3);
 }
 
+/* A run can be continued many times, so its generated title opens the chapter
+   rather than acting as another event label. The closing edge keeps only the
+   lifecycle facts; repeating the title there would duplicate the task. */
+.cycle-boundary {
+  position: relative;
+  padding-top: var(--s4);
+  margin-top: var(--s3);
+}
+
+.cycle-boundary::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--hairline);
+}
+
+.cycle-boundary-start:first-child {
+  margin-top: 0;
+}
+
+.cycle-title {
+  max-width: 32ch;
+  margin: 0;
+  color: var(--text-1);
+  font-size: var(--text-lg);
+  font-weight: 590;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.cycle-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: var(--s1);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.cycle-meta time {
+  font-variant-numeric: tabular-nums;
+}
+
+.cycle-details {
+  position: relative;
+}
+
+.cycle-details summary {
+  color: var(--text-3);
+  cursor: default;
+  list-style: none;
+}
+
+.cycle-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.cycle-details summary:hover,
+.cycle-details[open] summary {
+  color: var(--accent-ink);
+}
+
+.cycle-details summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.cycle-details[open] {
+  flex-basis: 100%;
+  width: 100%;
+}
+
+.cycle-details .fence {
+  max-height: 320px;
+  margin-top: var(--s2);
+  overflow: auto;
+}
+
+.cycle-boundary-end {
+  padding-bottom: var(--s5);
+  margin-top: var(--s4);
+}
+
+.cycle-boundary-end .cycle-meta {
+  margin-top: 0;
+}
+
 .transcript .tool > .entry-body,
 .transcript .tool-group > .entry-body {
   padding-bottom: 1px;
@@ -2142,7 +2272,6 @@ kbd {
    light travelling through the app's glass controls, while the placeholder
    itself remains an opaque content surface. */
 .skeleton,
-.sweep-unknown,
 .blob-image-pending {
   position: relative;
   overflow: hidden;
@@ -2156,7 +2285,6 @@ kbd {
 }
 
 .skeleton::before,
-.sweep-unknown::before,
 .blob-image-pending::before {
   content: "";
   position: absolute;
@@ -2753,6 +2881,30 @@ table.fibers td:first-child {
   animation: effort-in var(--t-base) var(--ease-out-expo);
 }
 
+/* Fast mode is a boolean, not another menu. It keeps the cluster's pill
+   material, with a small authored bolt and a pressed treatment that remains
+   legible without relying on color alone. */
+.fast-trigger {
+  transform-origin: left center;
+  animation: effort-in var(--t-base) var(--ease-out-expo);
+}
+
+.fast-trigger svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
+.fast-trigger[aria-pressed="true"] {
+  border-color: color-mix(in oklab, var(--accent) 54%, var(--border));
+  background: var(--accent-veil);
+  color: var(--accent-ink);
+  box-shadow: var(--glass-control-shadow-hi),
+    inset 0 1px 0 var(--glass-specular);
+  font-weight: 550;
+}
+
 .effort-kicker {
   flex: none;
   color: var(--text-3);
@@ -2817,6 +2969,12 @@ table.fibers td:first-child {
 
 .picker-drag {
   -webkit-app-region: drag;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.picker-drag .window-controls {
+  margin-right: 0;
 }
 
 .picker-inner {
@@ -2829,18 +2987,12 @@ table.fibers td:first-child {
 }
 
 .picker-mark {
-  width: 58px;
-  height: 58px;
-  border-radius: 15px;
-  display: grid;
-  place-items: center;
-  background: var(--accent-solid);
-  color: var(--accent-text);
-  font-size: 26px;
-  font-weight: 640;
-  letter-spacing: -0.04em;
-  box-shadow: 0 10px 30px -8px color-mix(in oklab, var(--accent) 60%, transparent),
-    inset 0 1px 0 var(--glass-specular);
+  display: block;
+  width: 72px;
+  height: 72px;
+  filter: drop-shadow(
+    0 8px 12px color-mix(in oklab, var(--accent) 28%, transparent)
+  );
 }
 
 .picker h1 {
@@ -3406,6 +3558,136 @@ table.fibers td:first-child {
   color: var(--bad);
 }
 
+/* Codex reports successful patches as a structured `file_change` payload.
+   Keep the raw envelope available, but let the files be the thing people see. */
+.tool-files {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 760px);
+  color: var(--text-2);
+}
+
+.tool-files-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: 0 var(--s1) var(--s2);
+  color: var(--text-1);
+  font-family: var(--ui);
+  font-size: var(--text-xs);
+  font-weight: 590;
+}
+
+.tool-files-summary-note {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.tool-file-list {
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.tool-file-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 36px;
+  padding: var(--s1) var(--s2);
+}
+
+.tool-file-row + .tool-file-row {
+  border-top: 1px solid var(--hairline);
+}
+
+.tool-file-icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--text-3);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tool-file-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-file-directory {
+  color: var(--text-3);
+}
+
+.tool-file-name {
+  font-weight: 540;
+}
+
+.tool-file-kind {
+  color: var(--text-3);
+  font-family: var(--ui);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.tool-file-kind[data-kind="update"],
+.tool-file-kind[data-kind="edit"] {
+  color: var(--accent-ink);
+}
+
+.tool-file-kind[data-kind="add"],
+.tool-file-kind[data-kind="create"] {
+  color: var(--ok);
+}
+
+.tool-file-kind[data-kind="delete"],
+.tool-file-kind[data-kind="remove"] {
+  color: var(--bad);
+}
+
+.tool-file-kind[data-kind="move"],
+.tool-file-kind[data-kind="rename"] {
+  color: var(--warn);
+}
+
+.tool-files-raw {
+  padding: var(--s2) var(--s1) 0;
+  color: var(--text-3);
+  font-family: var(--ui);
+  font-size: var(--text-xs);
+}
+
+.tool-files-raw summary {
+  width: max-content;
+  cursor: default;
+}
+
+.tool-files-raw summary:hover,
+.tool-files-raw[open] summary {
+  color: var(--accent-ink);
+}
+
+.tool-files-raw summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.tool-files-raw .fence {
+  margin-top: var(--s2);
+}
+
+.tool-files-empty {
+  padding: var(--s2);
+  color: var(--text-3);
+  font-family: var(--ui);
+}
+
 /* `$` before the command, as a terminal writes it — chrome, not argv, so it
    is dimmed and unselectable. */
 .cmd {
@@ -3947,6 +4229,18 @@ table.fibers td:first-child {
 .settings-bar-right,
 .settings-scope {
   -webkit-app-region: no-drag;
+}
+
+.settings-booting .window-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin: 0;
+}
+
+.settings-bar .window-controls {
+  margin-left: calc(var(--s4) * -1);
+  margin-right: calc(var(--s4) * -1);
 }
 
 .settings-scope {
@@ -4694,6 +4988,29 @@ table.fibers td:first-child {
   font-size: var(--text-xs);
 }
 
+/* Panel views are familiar, frequently used modes. Their labels stay in the
+   accessibility tree and native tooltip while the chrome keeps only the
+   transcript, diff, and usage marks. */
+.panel-view-tabs button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+}
+
+.panel-view-tabs svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
 /* -- activity -------------------------------------------------------------- */
 
 .activity {
@@ -4737,65 +5054,6 @@ table.fibers td:first-child {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.activity-bars {
-  flex: none;
-  display: flex;
-  gap: 3px;
-}
-
-/*
- * One bar per live run, sweeping rather than filling. A run has no total — the
- * model decides when it is done — so a determinate bar would be a number the
- * harness invented.
- */
-.mini-bar {
-  display: block;
-  width: 20px;
-  height: 3px;
-  border-radius: 3px;
-  background: color-mix(in oklab, var(--text-3) 30%, transparent);
-  overflow: hidden;
-  position: relative;
-}
-
-.mini-bar::after {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  --sweep-w: 40;
-  width: calc(var(--sweep-w) * 1%);
-  border-radius: 3px;
-  background: var(--accent-ink);
-  animation: sweep 1.6s linear infinite;
-}
-
-/*
- * The highlight crosses the whole track, once, at a constant pace.
- *
- * Both of those were wrong, and they were wrong in ways that read as the
- * animation giving up partway. `translateX` percentages are relative to the
- * *highlight*, not the track, so one hardcoded end value cannot suit two
- * highlights of different widths: measured, the toolbar bar left the track a
- * third of the way in and stayed blank for the rest of the cycle, while the
- * menu's wider bar never reached the right edge at all. `10000% / w` is the
- * track expressed in the highlight's own widths — exact for any width, and it
- * stays exact when one changes, because the same number sets both.
- *
- * The pace was the other half. An ease-out on a loop decelerates to a
- * standstill: the menu bar covered 86% of its travel in the first half of the
- * cycle and the remaining 6% in the second, so it parked near the end and
- * snapped back. Indeterminate means "still working", and constant velocity is
- * the only pace that says that for the whole cycle.
- */
-@keyframes sweep {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(calc(10000% / var(--sweep-w)));
-  }
 }
 
 .caret {
@@ -4968,58 +5226,6 @@ table.fibers td:first-child {
   color: var(--text-3);
 }
 
-.sweep {
-  flex: 1;
-  display: block;
-  height: 3px;
-  border-radius: 3px;
-  background: color-mix(in oklab, var(--text-3) 26%, transparent);
-  overflow: hidden;
-  position: relative;
-}
-
-.sweep i {
-  position: absolute;
-  inset: 0 auto 0 0;
-  --sweep-w: 22;
-  width: calc(var(--sweep-w) * 1%);
-  border-radius: 3px;
-  background: var(--accent-ink);
-  animation: sweep 1.6s linear infinite;
-}
-
-.sweep-waiting i {
-  width: 100%;
-  background: var(--warn);
-  animation: none;
-}
-
-/* A quiet project still gets a track, so the row reads as "nothing running"
-   rather than as a row that failed to draw its meter. */
-.sweep-idle i {
-  width: 0;
-  animation: none;
-}
-
-/*
- * A project that has not answered yet is not a project doing nothing, and it
- * is certainly not one that is working — but with no rule of its own it fell
- * through to the base sweep and drew the accent bar, so an unasked project
- * animated exactly like a running one while its label read "checking…".
- *
- * The track wears the skeleton instead: this is content that has not loaded,
- * which is what a skeleton is for here, and a neutral shimmer on the rail
- * cannot be mistaken for the accent bar crossing it.
- */
-.sweep-unknown {
-  background: var(--preloader-base);
-}
-
-.sweep-unknown i {
-  width: 0;
-  animation: none;
-}
-
 /* -- activity: one group per loaded project -------------------------------- */
 
 /*
@@ -5078,10 +5284,8 @@ table.fibers td:first-child {
   color: var(--accent-ink);
 }
 
-/* The header's meter is a summary, not the run's own bar: cap it so the
-   counts beside it keep their place as projects come and go. */
-.pop-project-head .sweep {
-  max-width: 88px;
+.pop-project-head > .pop-row-meta {
+  margin-left: auto;
 }
 
 .pop-project-quiet {
@@ -6247,20 +6451,6 @@ table.fibers td:first-child {
     flex-basis: 260px;
   }
 
-  .titlebar-search {
-    display: grid;
-    place-items: center;
-    width: var(--tb-control-h);
-    min-width: var(--tb-control-h);
-    padding: 0;
-    gap: 0;
-  }
-
-  .titlebar-search-label,
-  .titlebar-search kbd {
-    display: none;
-  }
-
   .segmented-mode {
     display: none;
   }
@@ -6375,32 +6565,12 @@ table.fibers td:first-child {
     animation: none;
   }
 
-  .mini-bar::after,
-  .sweep i {
-    animation: none;
-    width: 100%;
-    opacity: 0.55;
-  }
-
-  /* Except the quiet ones: a full bar here would say a project with nothing
-     running had finished everything. The same goes for one still being asked,
-     whose track also stops shimmering. */
-  .sweep-idle i,
-  .sweep-unknown i {
-    width: 0;
-  }
-
-  .sweep-unknown {
-    background: var(--preloader-base);
-  }
-
   .live-hint::before {
     animation: none;
     transform: rotate(32deg);
   }
 
   .skeleton::before,
-  .sweep-unknown::before,
   .blob-image-pending::before {
     animation: none;
     transform: translate3d(155%, 0, 0) skewX(-9deg);
@@ -7435,4 +7605,158 @@ table.fibers td:first-child {
   display: flex;
   align-items: center;
   gap: var(--s2);
+}
+
+/* ==========================================================================
+   Split thread view — shift+click a thread in the rail
+   ==========================================================================
+   Appended at the end of the file on purpose: a sibling session is editing
+   earlier sections of this file concurrently. */
+
+/* Unsplit, the canvas is deliberately edgeless. Side by side, each thread
+   becomes a floating pane of structural glass like the rail: its own edge,
+   radius and elevation, because two transcripts on one sheet read as a single
+   feed with a seam through it. */
+.thread-split {
+  padding: 0 var(--window-inset) var(--window-inset) 4px;
+}
+
+.thread-pane {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--glass-edge) 72%, var(--border));
+  border-radius: var(--r-xl);
+  box-shadow: inset 0 1px 0 var(--glass-specular),
+    inset 1px 0 0 var(--glass-specular-soft),
+    0 18px 48px -24px var(--glass-shade),
+    0 5px 16px -10px var(--glass-shade);
+}
+
+.thread-pane > .panel {
+  flex: 1;
+}
+
+/* The pane shell already supplies the trailing inset and rounded edge. Keep
+   the header flush with it instead of reserving the unsplit canvas gutter a
+   second time. */
+.thread-pane .panel-top {
+  padding-right: 0;
+}
+
+/* In split view, dismissal belongs to the same header as the thread identity
+   and view controls. A separate strip repeated information and wasted height. */
+.panel-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  transition: background var(--t-fast) var(--ease-out-quart),
+    color var(--t-fast) var(--ease-out-quart);
+}
+
+.panel-close:hover {
+  background: color-mix(in oklab, var(--text-3) 12%, transparent);
+  color: var(--text-1);
+}
+
+.panel-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.panel-close svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+/* The rail card whose thread sits in the second pane: the selected treatment
+   comes from aria-current; the split glyph says which pane it is in. */
+.run-card-in-split .run-card-name::after {
+  content: "◫";
+  margin-left: var(--s2);
+  color: var(--text-3);
+}
+
+/* A resize the handle never saw: the second pane's width persists across
+   window sizes, so a split left wide on a big window would crush the first
+   pane to a sliver on a small one. The cap re-applies the same reserve the
+   drag clamp enforces, and the first pane's flex takes the returned space. */
+.thread-split > .split-second {
+  max-width: max(340px, calc(100% - 300px));
+}
+
+/* ==========================================================================
+   Split workspace views — Shift+click Code or Terminal
+   ========================================================================== */
+
+/* The primary view keeps its navigator outside this split. The canvas alone
+   divides, so a thread rail or file tree is never duplicated just because a
+   second working surface is open. */
+.workspace-view-split {
+  padding: 0 var(--window-inset) var(--window-inset) 4px;
+}
+
+.workspace-view-pane {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--panel-surface);
+  border: 1px solid color-mix(in oklab, var(--glass-edge) 72%, var(--border));
+  border-radius: var(--r-xl);
+  box-shadow: inset 0 1px 0 var(--glass-specular),
+    inset 1px 0 0 var(--glass-specular-soft),
+    0 18px 48px -24px var(--glass-shade),
+    0 5px 16px -10px var(--glass-shade);
+}
+
+/* The pane owns the glass edge. Its content keeps its native rows but sheds
+   the outer shell and margins it uses when it fills the whole canvas. */
+.workspace-view-pane > .panel,
+.workspace-view-pane > .editor,
+.workspace-view-pane > .term-panel {
+  flex: 1;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* Dismissal sits in each surface's existing header strip. Reserve its hit area
+   so long file or terminal tabs cannot scroll underneath the close control. */
+.workspace-view-pane .panel-bar,
+.workspace-view-pane > .editor > .tabs,
+.workspace-view-pane > .term-panel > .tabs {
+  padding-right: 36px;
+}
+
+.workspace-view-close {
+  position: absolute;
+  z-index: 25;
+  top: 5px;
+  right: 8px;
+}
+
+/* Persisted widths are clamped again after a window resize, matching the
+   existing thread split's guarantee that the flexible pane stays usable. */
+.workspace-view-split > .split-second {
+  max-width: max(360px, calc(100% - 320px));
 }

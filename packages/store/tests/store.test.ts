@@ -122,6 +122,7 @@ describe("SqliteStore", () => {
       driver: "claude",
       modelId: "claude-fable-5",
       effort: "xhigh",
+      fastMode: true,
       status: "running" as const,
       lastSeenMasterSeq: 3,
       startedAt: "2026-01-01T00:00:00.000Z",

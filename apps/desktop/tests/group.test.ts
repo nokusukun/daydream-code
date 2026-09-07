@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { JournalEvent } from "@daydream-code/shared";
 import {
+  cycleTitles,
   drawsNothing,
   Event,
   groupEvents,
@@ -364,10 +365,11 @@ describe("Event", () => {
     expect(settled).not.toContain("tool-running");
   });
 
-  it("renders the opening task as a You message before session metadata", () => {
+  it("renders the generated title before the opening task", () => {
     const html = renderToStaticMarkup(
       createElement(Event, {
         event: ev("session_started", {
+          title: "Repair the compact toolbar",
           task: "Fix **this flow**",
           driver: "mock",
           contextMessages: 0,
@@ -378,12 +380,53 @@ describe("Event", () => {
       }),
     );
 
+    expect(html).toContain("cycle-boundary-start");
+    expect(html).toContain("Repair the compact toolbar");
     expect(html).toContain("entry-mark-you");
     expect(html).toContain("<strong>this flow</strong>");
     expect(html).toContain("thread started · mock");
-    expect(html.indexOf("entry-mark-you")).toBeLessThan(
-      html.indexOf("entry-mark-meta"),
+    expect(html.indexOf("cycle-boundary-start")).toBeLessThan(
+      html.indexOf("entry-mark-you"),
     );
+  });
+
+  it("keeps the closing edge compact instead of repeating the generated title", () => {
+    const html = renderToStaticMarkup(
+      createElement(Event, {
+        event: ev("session_ended", {
+          status: "completed",
+          title: "Repair the compact toolbar",
+          tldr: "done",
+        }),
+        names: new Map<string, string>(),
+        changed: new Map(),
+      }),
+    );
+
+    expect(html).toContain("cycle-boundary-end");
+    expect(html).not.toContain('<h3 class="cycle-title"');
+    expect(html).toContain("thread ended · completed");
+  });
+});
+
+describe("cycleTitles", () => {
+  it("derives an opening title for legacy events", () => {
+    const start = ev("session_started", { task: "Fix the narrow toolbar. Then test." });
+    const end = ev("session_ended", { status: "completed" });
+
+    expect([...cycleTitles([start, end]).entries()]).toEqual([
+      [start.id, "Fix the narrow toolbar"],
+    ]);
+  });
+
+  it("keeps separate titles for consecutive cycles", () => {
+    const firstStart = ev("session_started", { title: "First cycle", task: "one" });
+    const firstEnd = ev("session_ended", { title: "First cycle" });
+    const secondStart = ev("session_started", { title: "Second cycle", task: "two" });
+    const secondEnd = ev("session_ended", { title: "Updated second cycle" });
+
+    expect([...cycleTitles([firstStart, firstEnd, secondStart, secondEnd]).values()])
+      .toEqual(["First cycle", "Second cycle"]);
   });
 });
 

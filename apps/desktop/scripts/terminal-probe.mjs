@@ -80,6 +80,7 @@ const send = async (line, ms = 1300) => {
   sessions.write({ terminalId: "term-1", data: `${line}\r` }, ROOT);
   await settle(ms);
 };
+const windows = process.platform === "win32";
 
 await settle(1500);
 await send("echo PROBE_$((6*7))");
@@ -87,7 +88,11 @@ record("runs a command and streams its output", /PROBE_42/.test(output()));
 
 // Printed on its own line so the command echo (which contains the literal
 // `$ELECTRON_RUN_AS_NODE`) cannot be mistaken for the shell's answer.
-await send("printf 'RAN=[%s] TERMIS=[%s]\\n' \"$ELECTRON_RUN_AS_NODE\" \"$TERM\"");
+await send(
+  windows
+    ? "[Console]::WriteLine('RAN=[{0}] TERMIS=[{1}]', $env:ELECTRON_RUN_AS_NODE, $env:TERM)"
+    : "printf 'RAN=[%s] TERMIS=[%s]\\n' \"$ELECTRON_RUN_AS_NODE\" \"$TERM\"",
+);
 const envAnswer = /RAN=\[\] TERMIS=\[([^\]]*)\]/.exec(output());
 record(
   "child does not inherit ELECTRON_RUN_AS_NODE",
@@ -100,10 +105,15 @@ record(
   envAnswer?.[1] ?? "unset",
 );
 
-await send("command -v pnpm >/dev/null && echo PNPM_ON_PATH", 1800);
+await send(
+  windows
+    ? "if (Get-Command pnpm -ErrorAction SilentlyContinue) { 'PNPM_ON_PATH' }"
+    : "command -v pnpm >/dev/null && echo PNPM_ON_PATH",
+  1800,
+);
 record("login shell assembles the user's PATH", /PNPM_ON_PATH/.test(output()), "command -v pnpm");
 
-await send("pwd");
+await send(windows ? "(Get-Location).Path" : "pwd");
 record("shell starts at the project root", output().includes(ROOT), ROOT);
 
 const beforeResize = output().length;
@@ -131,10 +141,25 @@ record(
 
 sessions.resize({ terminalId: "term-1", cols: 120, rows: 40 }, ROOT);
 await settle(500);
-await send("tput cols");
-record("resize reaches the shell", /\b120\b/.test(output().slice(beforeResize)), "tput cols");
+await send(windows ? "$Host.UI.RawUI.WindowSize.Width" : "tput cols");
+const resizeOutput = output().slice(beforeResize);
+record(
+  "resize reaches the shell",
+  /\b120\b/.test(resizeOutput),
+  /\b120\b/.test(resizeOutput)
+    ? windows ? "$Host.UI.RawUI.WindowSize.Width" : "tput cols"
+    : resizeOutput.slice(-240).replace(/\r?\n/g, " | "),
+);
 
-record("rejects a traversal-shaped terminal id", parseOpenRequest({ terminalId: "../x", cols: 80, rows: 24 }) === null);
+record(
+  "rejects a traversal-shaped terminal id",
+  parseOpenRequest({
+    terminalId: "../x",
+    attachmentId: "probe",
+    cols: 80,
+    rows: 24,
+  }) === null,
+);
 record("rejects an oversized write", parseWriteRequest({ terminalId: "t", data: "x".repeat(70_000) }) === null);
 record("rejects an out-of-range resize", parseResizeRequest({ terminalId: "t", cols: 0, rows: 24 }) === null);
 

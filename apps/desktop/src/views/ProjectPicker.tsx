@@ -8,6 +8,9 @@
 import type { ReactNode } from "react";
 import { rankProjects } from "../projects.js";
 import { ProjectRow, useProjectList } from "./ProjectSwitcher.js";
+import { WindowControls } from "../WindowControls.js";
+
+const appIconUrl = new URL("../../icons/icon.svg", import.meta.url).href;
 
 export function ProjectPicker(props: {
   opening: string | null;
@@ -20,11 +23,11 @@ export function ProjectPicker(props: {
 
   return (
     <div className="picker">
-      <div className="picker-drag" />
+      <div className="picker-drag">
+        <WindowControls />
+      </div>
       <div className="picker-inner">
-        <div className="picker-mark" aria-hidden="true">
-          d
-        </div>
+        <img className="picker-mark" src={appIconUrl} alt="" aria-hidden="true" />
         <h1>Daydream Code</h1>
 
         {props.hasBridge ? (

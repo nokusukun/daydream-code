@@ -14,12 +14,17 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { JournalEvent, SessionRecord } from "@daydream-code/shared";
+import {
+  titleFromTask,
+  type JournalEvent,
+  type SessionRecord,
+} from "@daydream-code/shared";
 import type { NextMessage } from "@daydream-code/session";
+import type { EditableMessage } from "@daydream-code/session/transcript";
 import { useHarness } from "../harness.js";
 import { pendingQuestionFrom } from "../pending-question.js";
 import { QuestionPrompt } from "./QuestionPrompt.js";
-import { PanelHead } from "./PanelHead.js";
+import { PanelHead, type PanelCloseAction } from "./PanelHead.js";
 import { ChangesView } from "./ChangesView.js";
 import { UsageView } from "./UsageView.js";
 import { MessageComposer, pendingContextRebuild } from "./Composer.js";
@@ -43,13 +48,16 @@ import { elapsedMs, fmtElapsed, isLive } from "../sessions.js";
 import type { ChangedFile } from "../api.js";
 import { openTextContextMenu } from "../text-context.js";
 
-export function SessionPanel(props: { id: string }): ReactNode {
+export function SessionPanel(props: { id: string; close?: PanelCloseAction }): ReactNode {
   const { id } = props;
   const { api, subscribe, resyncTick, view, connection } = useHarness();
   const { status } = useWorkspace();
   const [session, setSession] = useState<SessionRecord | null>(null);
   const [events, setEvents] = useState<JournalEvent[] | null>(null);
   const [nextMessages, setNextMessages] = useState<NextMessage[]>([]);
+  const [editableMessage, setEditableMessage] = useState<EditableMessage | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -57,6 +65,7 @@ export function SessionPanel(props: { id: string }): ReactNode {
     setEvents(null);
     setSession(null);
     setNextMessages([]);
+    setEditableMessage(null);
     api
       .session(id)
       .then((detail) => {
@@ -66,6 +75,7 @@ export function SessionPanel(props: { id: string }): ReactNode {
         // An older core omits this field. Version skew must degrade to an
         // empty queue, not pass `undefined` into the queue renderer.
         setNextMessages(detail.nextMessages ?? []);
+        setEditableMessage(detail.editableMessage ?? null);
         setError(null);
       })
       .catch((e: unknown) => {
@@ -118,6 +128,7 @@ export function SessionPanel(props: { id: string }): ReactNode {
     () => groupEvents(events ?? [], { live }),
     [events, live],
   );
+  const titles = useMemo(() => cycleTitles(events ?? []), [events]);
   // Claude's tool results carry the call id and no name, so the name has to
   // come from the call that opened it.
   const names = useMemo(() => toolNames(events ?? []), [events]);
@@ -166,7 +177,11 @@ export function SessionPanel(props: { id: string }): ReactNode {
       }`}
     >
       <div className="panel-top">
-        <Head session={session} reportedModel={reportedModel} />
+        <Head
+          session={session}
+          reportedModel={reportedModel}
+          {...(props.close === undefined ? {} : { close: props.close })}
+        />
         {error !== null && (
           <div className="error-bar">
             {error}
@@ -207,6 +222,9 @@ export function SessionPanel(props: { id: string }): ReactNode {
                   names={names}
                   changed={changed}
                   running={item.running === true}
+                  {...(titles.has(item.event.id)
+                    ? { cycleTitle: titles.get(item.event.id)! }
+                    : {})}
                 />
               ) : (
                 <ToolGroup
@@ -276,6 +294,8 @@ export function SessionPanel(props: { id: string }): ReactNode {
         <MessageComposer
           session={session}
           id={id}
+          events={events ?? []}
+          editableMessage={editableMessage}
           nextMessages={nextMessages}
           contextRebuild={contextRebuild}
           onNextMessages={setNextMessages}
@@ -333,6 +353,7 @@ function Head(props: {
   session: SessionRecord | null;
   /** Model the driver actually ran, when the session pinned none. */
   reportedModel: string | null;
+  close?: PanelCloseAction;
 }): ReactNode {
   const { modelLabel } = useHarness();
   const { session } = props;
@@ -357,6 +378,7 @@ function Head(props: {
   if (session === null) {
     return (
       <PanelHead
+        {...(props.close === undefined ? {} : { close: props.close })}
         title={
           <span
             className="skeleton skeleton-row"
@@ -382,10 +404,13 @@ function Head(props: {
 
   return (
     <PanelHead
+      {...(props.close === undefined ? {} : { close: props.close })}
       title={
         <>
           <StatusGlyph status={session.status} />
-          {session.title ?? session.name}
+          <span title={session.title ?? session.name}>
+            {session.title ?? session.name}
+          </span>
         </>
       }
       sub={
@@ -637,6 +662,37 @@ export function groupLabel(events: readonly JournalEvent[]): string {
   return summarize(events).label;
 }
 
+/**
+ * Titles belong to cycles, not to the mutable session row.
+ *
+ * New journal events snapshot both boundaries, but the transcript only needs
+ * the opening title. Repeating it at the closing edge makes a short task read
+ * three times: title, user message, title. Older journals derive that one
+ * visible title from the recorded task without a migration.
+ */
+export function cycleTitles(
+  events: readonly JournalEvent[],
+): ReadonlyMap<number, string> {
+  const titles = new Map<number, string>();
+
+  for (const event of events) {
+    if (event.type !== "session_started") continue;
+    const payload = payloadOf(event);
+    const explicit = titleText(payload.title);
+    const task = fullText(payload.task ?? "").trim();
+    const title = explicit ?? (task.length > 0 ? titleFromTask(task) : null);
+    if (title !== null) titles.set(event.id, title);
+  }
+
+  return titles;
+}
+
+function titleText(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
 function toolName(event: JournalEvent): string {
   const p = payloadOf(event);
   return String(p.name ?? p.toolName ?? p.tool ?? "tool");
@@ -733,6 +789,8 @@ function metaLabel(event: JournalEvent): string | null {
     }
     case "session_ended":
       return `thread ended${typeof p.status === "string" ? ` · ${p.status}` : ""}`;
+    case "session_checkpoint":
+      return "checkpoint restored · previous response set aside";
     case "images_attached": {
       // The images themselves are drawn on the message above this row; all
       // this line owes is the fact that they were stored, not their ids.
@@ -829,6 +887,8 @@ export function Event(props: {
   changed: ReadonlyMap<string, ChangedFile>;
   /** This call is the one the run is inside right now. */
   running?: boolean;
+  /** Generated title captured for this cycle's opening boundary. */
+  cycleTitle?: string;
 }): ReactNode {
   const { event } = props;
   const payload = payloadOf(event);
@@ -842,25 +902,19 @@ export function Event(props: {
   switch (event.type) {
     case "session_started": {
       const text = fullText(payload.task ?? "");
+      const title =
+        props.cycleTitle ??
+        titleText(payload.title) ??
+        (text.trim().length > 0 ? titleFromTask(text) : "untitled thread");
       return (
         <>
+          <CycleBoundary edge="start" event={event} title={title} />
           {(text.trim().length > 0 || images.length > 0) && (
             <Row kind="you" label="you" time={fmtTime(event.ts)} copyText={text}>
               {text.trim().length > 0 && <ClampedProse text={text} />}
               <Attachments images={images} />
             </Row>
           )}
-          <Tool
-            arrow="·"
-            meta
-            card={{
-              name: metaLabel(event) ?? "thread started",
-              preview: fmtTime(event.ts),
-              caption: null,
-              body: { kind: "code", lang: "json", text: short(event.payload) },
-              shell: false,
-            }}
-          />
         </>
       );
     }
@@ -944,6 +998,9 @@ export function Event(props: {
       );
     case "turn_end":
       return <Row kind="turn_end" label="turn end" time={fmtTime(event.ts)} />;
+    case "session_ended": {
+      return <CycleBoundary edge="end" event={event} />;
+    }
     case "question_asked": {
       const questions = (payloadOf(event).questions ?? []) as {
         header: string;
@@ -1023,6 +1080,39 @@ export function Event(props: {
   }
 }
 
+/** A quiet chapter edge: the opening title, then lifecycle facts and raw details. */
+function CycleBoundary(props: {
+  edge: "start" | "end";
+  event: JournalEvent;
+  title?: string;
+}): ReactNode {
+  const payload = payloadOf(props.event);
+  const lifecycle = metaLabel(props.event) ??
+    (props.edge === "start" ? "thread started" : "thread ended");
+
+  return (
+    <Row
+      kind={props.edge === "start" ? "dispatch" : "summary"}
+      className={`cycle-boundary cycle-boundary-${props.edge}`}
+      {...(props.title === undefined ? {} : { copyText: props.title })}
+    >
+      {props.title !== undefined && (
+        <h3 className="cycle-title" title={props.title}>
+          {props.title}
+        </h3>
+      )}
+      <div className="cycle-meta">
+        <span>{lifecycle}</span>
+        <time dateTime={props.event.ts}>{fmtTime(props.event.ts)}</time>
+        <details className="cycle-details">
+          <summary>details</summary>
+          <Fence lang="json" text={short(payload)} />
+        </details>
+      </div>
+    </Row>
+  );
+}
+
 /** The opened payload: a command, a file, or whatever the program printed. */
 function ToolBodyView(props: { body: ToolBody }): ReactNode {
   const { body } = props;
@@ -1040,6 +1130,8 @@ function ToolBodyView(props: { body: ToolBody }): ReactNode {
       return <Fence lang={body.lang} text={body.text} />;
     case "output":
       return <Output text={body.text} />;
+    case "files":
+      return <FileChangeList changes={body.changes} raw={body.text} />;
     case "empty":
       return null;
     default: {
@@ -1047,6 +1139,72 @@ function ToolBodyView(props: { body: ToolBody }): ReactNode {
       return exhaustive;
     }
   }
+}
+
+function FileChangeList(props: {
+  changes: Extract<ToolBody, { kind: "files" }>["changes"];
+  raw: string;
+}): ReactNode {
+  const { connection } = useHarness();
+
+  if (props.changes.length === 0) {
+    return <div className="tool-files-empty">No files changed.</div>;
+  }
+
+  return (
+    <div className="tool-files">
+      <div className="tool-files-summary">
+        <span>
+          {props.changes.length} file{props.changes.length === 1 ? "" : "s"}
+        </span>
+        <span className="tool-files-summary-note">working tree updated</span>
+      </div>
+      <div className="tool-file-list">
+        {props.changes.map((change, index) => {
+          const relative = relativeTo(change.path, connection.rootPath);
+          const slash = relative.lastIndexOf("/");
+          const directory = slash < 0 ? "" : relative.slice(0, slash + 1);
+          const name = slash < 0 ? relative : relative.slice(slash + 1);
+          const kind = change.kind.toLowerCase();
+          const label =
+            kind === "update" || kind === "edit"
+              ? "modified"
+              : kind === "add" || kind === "create"
+                ? "added"
+                : kind === "delete" || kind === "remove"
+                  ? "deleted"
+                  : kind === "move" || kind === "rename"
+                    ? "renamed"
+                    : kind;
+
+          return (
+            <div className="tool-file-row" key={`${change.path}:${index}`}>
+              <svg
+                className="tool-file-icon"
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M4.25 1.75h4.9l2.6 2.65v9.85h-7.5z" />
+                <path d="M9 1.9v2.7h2.6" />
+              </svg>
+              <span className="tool-file-path" title={relative}>
+                <span className="tool-file-directory">{directory}</span>
+                <span className="tool-file-name">{name}</span>
+              </span>
+              <span className="tool-file-kind" data-kind={kind}>
+                {label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <details className="tool-files-raw">
+        <summary>raw details</summary>
+        <Fence lang="json" text={props.raw} />
+      </details>
+    </div>
+  );
 }
 
 /**

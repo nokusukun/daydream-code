@@ -46,8 +46,14 @@ type QuickActionRequest =
 
 interface TerminalOpenRequest {
   terminalId: string;
+  attachmentId: string;
   cols: number;
   rows: number;
+}
+
+interface TerminalAttachmentRequest {
+  terminalId: string;
+  attachmentId: string;
 }
 
 interface TerminalWriteRequest {
@@ -71,6 +77,15 @@ interface TerminalEventPayload {
 }
 
 contextBridge.exposeInMainWorld("daydream", {
+  getWindowState: () => ipcRenderer.invoke("daydream:window-state"),
+  minimizeWindow: () => ipcRenderer.invoke("daydream:window-minimize"),
+  toggleMaximizeWindow: () => ipcRenderer.invoke("daydream:window-toggle-maximize"),
+  closeWindow: () => ipcRenderer.invoke("daydream:window-close"),
+  onWindowState: (callback: (state: { maximized: boolean }) => void) => {
+    const listener = (_event: unknown, state: { maximized: boolean }): void => callback(state);
+    ipcRenderer.on("daydream:window-state", listener);
+    return () => ipcRenderer.removeListener("daydream:window-state", listener);
+  },
   getState: () => ipcRenderer.invoke("daydream:get-state"),
   getProjectCores: () => ipcRenderer.invoke("daydream:get-project-cores"),
   onProjectCores: (callback: (connections: ConnectionInfo[]) => void) => {
@@ -124,8 +139,8 @@ contextBridge.exposeInMainWorld("daydream", {
     ipcRenderer.invoke("daydream:terminal-resize", request),
   closeTerminal: (terminalId: string) =>
     ipcRenderer.invoke("daydream:terminal-close", terminalId),
-  detachTerminal: (terminalId: string) =>
-    ipcRenderer.invoke("daydream:terminal-detach", terminalId),
+  detachTerminal: (request: TerminalAttachmentRequest) =>
+    ipcRenderer.invoke("daydream:terminal-detach", request),
   listTerminals: () => ipcRenderer.invoke("daydream:terminal-list"),
   onTerminalEvent: (callback: (event: TerminalEventPayload) => void) => {
     const listener = (_event: unknown, payload: TerminalEventPayload): void => {

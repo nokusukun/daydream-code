@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { JournalEvent } from "@daydream-code/shared";
 import {
+  activeTranscriptEvents,
+  lastEditableMessage,
   transcriptLines,
   transcriptMessages,
   transcriptText,
@@ -103,5 +105,47 @@ describe("transcript rebuild from the journal", () => {
     ]);
     expect(lines).toHaveLength(1);
     expect(lines[0]?.text).toBe("real");
+  });
+
+  it("rebuilds from a checkpoint without mutating the journal", () => {
+    const opening = event("session_started", { task: "first request" });
+    const firstReply = event("turn", { text: "first answer" });
+    const replaced = event("session_started", { task: "replace me" });
+    const abandoned = event("turn", { text: "abandoned answer" });
+    const marker = event("session_checkpoint", { fromEventId: replaced.id });
+    const replacement = event("session_started", { task: "replacement" });
+    const events = [opening, firstReply, replaced, abandoned, marker, replacement];
+
+    expect(activeTranscriptEvents(events).map((item) => item.id)).toEqual([
+      opening.id,
+      firstReply.id,
+      replacement.id,
+    ]);
+    const text = transcriptText(events);
+    expect(text).toContain("first answer");
+    expect(text).toContain("replacement");
+    expect(text).not.toContain("replace me");
+    expect(text).not.toContain("abandoned answer");
+    expect(events).toHaveLength(6);
+  });
+
+  it("finds the newest editable user message on the active branch", () => {
+    const old = event("session_started", { task: "old" });
+    const injected = event("user_injected", {
+      kind: "user",
+      text: "latest",
+      images: [
+        { type: "image", blobId: "abc.png", mediaType: "image/png" },
+      ],
+    });
+    event("turn", { text: "reply" });
+
+    expect(lastEditableMessage([old, injected])).toEqual({
+      eventId: injected.id,
+      message: "latest",
+      images: [
+        { type: "image", blobId: "abc.png", mediaType: "image/png" },
+      ],
+    });
   });
 });

@@ -11,9 +11,10 @@
  * retained core, including the quiet ones. A project you cannot see is exactly
  * the project whose progress you cannot otherwise check.
  *
- * The bars are indeterminate on purpose. A run has no total — the model
- * decides when it is done — so a percentage would be a number the harness
- * invented. A sweep says "working" without claiming to know how much is left.
+ * Liveness is carried once by the status glyph beside the summary. Inside the
+ * menu, project tallies name each state in text; repeating that fact as
+ * animated bars and per-thread spinners made the same signal compete with
+ * itself.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useHarness } from "../harness.js";
@@ -28,7 +29,6 @@ import {
   latestFinishedActivity,
   liveProjectActivities,
   projectProgress,
-  projectStatus,
   projectStatusLabel,
   projectTally,
   projectsTooltip,
@@ -77,8 +77,6 @@ export function ActivityMenu(props: {
   // The last run to finish is what "idle" should report on — an empty bar that
   // says nothing is a worse answer than the outcome you last got.
   const lastDone = latestFinishedActivity(activities);
-  const busy = busyProjects(projects);
-
   return (
     <div className="activity" ref={rootRef}>
       <button
@@ -96,16 +94,6 @@ export function ActivityMenu(props: {
           lastDone={lastDone}
           currentRootPath={connection.rootPath}
         />
-        {/* One bar per busy project, not per run: the bars are the tally's
-            picture, and the tally counts projects. */}
-        <span className="activity-bars" aria-hidden="true">
-          {busy.slice(0, TRIGGER_PROJECTS).map((project) => (
-            <span
-              key={project.connection.rootPath}
-              className={`mini-bar mini-${projectStatus(project)}`}
-            />
-          ))}
-        </span>
         <span className="caret" aria-hidden="true">
           ▾
         </span>
@@ -276,7 +264,6 @@ export function ProjectGroup(props: {
   onOpenSession(activity: ProjectActivity): void;
 }): ReactNode {
   const { project } = props;
-  const status = projectStatus(project);
   const switchable = !project.current && props.onOpenProject !== undefined;
 
   return (
@@ -290,9 +277,6 @@ export function ProjectGroup(props: {
       >
         <span className="pop-project-name">{project.connection.name}</span>
         {project.current && <span className="pop-project-here">here</span>}
-        <span className={`sweep sweep-${status}`} aria-hidden="true">
-          <i />
-        </span>
         <span className="pop-row-meta">{projectStatusLabel(project)}</span>
       </button>
 
@@ -377,16 +361,12 @@ function ActivityRow(props: {
         onClick={() => props.onOpen(props.activity)}
       >
         <span className="pop-run-top">
-          <StatusGlyph status={session.status} />
           <span className="pop-row-title">{session.title ?? session.name}</span>
           <span className="pop-row-meta">
             {fmtElapsed(elapsedMs(session, props.now))}
           </span>
         </span>
         <span className="pop-run-bottom">
-          <span className={`sweep sweep-${session.status}`} aria-hidden="true">
-            <i />
-          </span>
           <span className="pop-row-meta">
             {session.status === "waiting" ? "blocked on you · " : ""}
             {session.name}

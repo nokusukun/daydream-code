@@ -16,6 +16,7 @@
   "references": [
     { "path": "../../packages/actions" },
     { "path": "../../packages/blobs" },
+    { "path": "../../packages/settings" },
     { "path": "../../packages/shared" },
     { "path": "../../packages/workspace" }
   ]

@@ -38,6 +38,7 @@ function source(overrides: Partial<SessionRecord> = {}): SessionRecord {
     driver: "claude",
     modelId: "claude-opus-5",
     effort: null,
+    fastMode: false,
     ...overrides,
   } as SessionRecord;
 }

@@ -14,7 +14,17 @@
  * through master-inject anyway, and tool payloads are clipped — the point is
  * continuity, not replay.
  */
-import type { JournalEvent, ModelMessage } from "@daydream-code/shared";
+import type {
+  ImagePart,
+  JournalEvent,
+  ModelMessage,
+} from "@daydream-code/shared";
+
+export interface EditableMessage {
+  eventId: number;
+  message: string;
+  images: ImagePart[];
+}
 
 interface TranscriptLine {
   role: "user" | "assistant";
@@ -43,6 +53,70 @@ function asRecord(payload: unknown): Record<string, unknown> {
 
 function str(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function images(value: unknown): ImagePart[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is ImagePart => {
+    if (typeof item !== "object" || item === null) return false;
+    const image = item as Record<string, unknown>;
+    return (
+      image.type === "image" &&
+      typeof image.blobId === "string" &&
+      typeof image.mediaType === "string"
+    );
+  });
+}
+
+/**
+ * The journal rows on the active conversation branch.
+ *
+ * Checkpointing never mutates the append-only journal. Its marker points at
+ * the user message being replaced; folding that marker removes the abandoned
+ * tail from model context while leaving every original row available to the
+ * transcript and journal search.
+ */
+export function activeTranscriptEvents(
+  events: readonly JournalEvent[],
+): JournalEvent[] {
+  let active: JournalEvent[] = [];
+  for (const event of events) {
+    if (event.type !== "session_checkpoint") {
+      active.push(event);
+      continue;
+    }
+    const fromEventId = asRecord(event.payload).fromEventId;
+    if (typeof fromEventId !== "number" || !Number.isInteger(fromEventId)) {
+      continue;
+    }
+    active = active.filter((candidate) => candidate.id < fromEventId);
+  }
+  return active;
+}
+
+/** The newest user-authored message on the active branch, if it is editable. */
+export function lastEditableMessage(
+  events: readonly JournalEvent[],
+): EditableMessage | null {
+  const active = activeTranscriptEvents(events);
+  for (let index = active.length - 1; index >= 0; index -= 1) {
+    const event = active[index]!;
+    const payload = asRecord(event.payload);
+    const editable =
+      event.type === "session_started" ||
+      event.type === "user_message_queued" ||
+      (event.type === "user_injected" && payload.kind === "user");
+    if (!editable) continue;
+    const message = typeof payload.task === "string"
+      ? payload.task
+      : typeof payload.text === "string"
+        ? payload.text
+        : "";
+    const attached = images(payload.images);
+    if (message.length === 0 && attached.length === 0) continue;
+    return { eventId: event.id, message, images: attached };
+  }
+  return null;
 }
 
 /**
@@ -117,7 +191,7 @@ export function transcriptLines(
   budget: number = TRANSCRIPT_BUDGET,
 ): TranscriptLine[] {
   const all: TranscriptLine[] = [];
-  for (const event of events) {
+  for (const event of activeTranscriptEvents(events)) {
     const line = lineFor(event);
     if (line !== null) all.push(line);
   }

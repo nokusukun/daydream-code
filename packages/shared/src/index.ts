@@ -204,6 +204,7 @@ export type JournalEventType =
   | "context_assembled"
   | "compaction"
   | "driver_error"
+  | "session_checkpoint"
   | "model_changed"
   | "handoff"
   | "session_ended"
@@ -307,6 +308,8 @@ export interface SessionRecord {
    * spends the tokens is the one that validates it.
    */
   effort: string | null;
+  /** Whether this thread requests the provider's lower-latency service tier. */
+  fastMode: boolean;
   status: SessionStatus;
   lastSeenMasterSeq: number;
   startedAt: string;

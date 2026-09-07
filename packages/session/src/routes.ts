@@ -7,6 +7,7 @@ import type {} from "@daydream-code/questions";
 import type {} from "@daydream-code/journal";
 import type { DispatchRequest } from "./index.js";
 import type {} from "./index.js";
+import { lastEditableMessage } from "./transcript.js";
 
 /**
  * An attachment arrives as a path (the caller shares this machine's disk), as
@@ -25,6 +26,7 @@ const DispatchBody = z.object({
   driver: z.string().optional(),
   modelId: z.string().optional(),
   effort: z.string().optional(),
+  fastMode: z.boolean().optional(),
   name: z.string().optional(),
   attachments: z.array(AttachmentBody).optional(),
 });
@@ -32,6 +34,10 @@ const DispatchBody = z.object({
 const MessageBody = z.object({
   message: z.string(),
   attachments: z.array(AttachmentBody).optional(),
+});
+
+const CheckpointBody = MessageBody.extend({
+  fromEventId: z.number().int().positive(),
 });
 
 /**
@@ -50,6 +56,7 @@ const ModelBody = z.object({
   driver: z.string().optional(),
   modelId: z.string().nullable().optional(),
   effort: z.string().nullable().optional(),
+  fastMode: z.boolean().optional(),
 });
 
 const HandoffBody = z.object({
@@ -58,6 +65,7 @@ const HandoffBody = z.object({
   driver: z.string().optional(),
   modelId: z.string().optional(),
   effort: z.string().optional(),
+  fastMode: z.boolean().optional(),
 });
 
 /**
@@ -74,7 +82,7 @@ const AnswerBody = z.object({
 
 /**
  * Consumer plugin: the session lifecycle's HTTP surface — list, read,
- * dispatch, continue, stop, archive, delete, answer.
+ * dispatch, continue, checkpoint, stop, archive, delete, answer.
  *
  * Answering a question lands here rather than on the questions package's own
  * routes because it has to resolve `:id` through the sessions seam first, and
@@ -114,6 +122,17 @@ const sessionRoutes = {
             session,
             journal,
             nextMessages: ctx.sessions.nextMessages(session.id),
+            editableMessage: lastEditableMessage(
+              ctx.journal.read({
+                sessionId: session.id,
+                types: [
+                  "session_started",
+                  "user_message_queued",
+                  "user_injected",
+                  "session_checkpoint",
+                ],
+              }),
+            ),
           };
         },
       },
@@ -151,6 +170,26 @@ const sessionRoutes = {
           );
           void handle.done.catch(() => {});
           return handle.record;
+        },
+      },
+      {
+        method: "POST",
+        path: "/api/sessions/:id/checkpoint",
+        handle: async (req: RouteRequest) => {
+          const session = resolve(req);
+          const body = CheckpointBody.parse(req.body);
+          try {
+            const handle = await ctx.sessions.checkpointSession(
+              session.id,
+              body.fromEventId,
+              body.message,
+              body.attachments,
+            );
+            void handle.done.catch(() => {});
+            return handle.record;
+          } catch (error) {
+            throw new HttpError(409, String((error as Error).message ?? error));
+          }
         },
       },
       {

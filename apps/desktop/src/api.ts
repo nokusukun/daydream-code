@@ -7,6 +7,7 @@ import type { QuickActionRecord } from "@daydream-code/actions";
 import type { BlobRef } from "@daydream-code/blobs";
 import type { AgentSkill } from "@daydream-code/driver";
 import type { AttachmentInput, NextMessage } from "@daydream-code/session";
+import type { EditableMessage } from "@daydream-code/session/transcript";
 import type { SettingsView, WriteRequest, WriteResult } from "@daydream-code/settings";
 import type {
   FileContent,
@@ -49,6 +50,7 @@ export interface DispatchInput {
   modelId?: string;
   /** Reasoning-effort level in the driver's vocabulary; omit for default. */
   effort?: string;
+  fastMode?: boolean;
   name?: string;
   attachments?: AttachmentInput[];
 }
@@ -61,6 +63,7 @@ export interface ModelChangeInput {
   driver?: string;
   modelId?: string | null;
   effort?: string | null;
+  fastMode?: boolean;
 }
 
 /** Spin a thread's work off to a new thread, optionally under a new agent. */
@@ -70,6 +73,7 @@ export interface HandoffInput {
   driver?: string;
   modelId?: string;
   effort?: string;
+  fastMode?: boolean;
 }
 
 /** A stored blob plus its bytes, which is the only way JSON can carry them. */
@@ -90,6 +94,7 @@ export interface DriverModel {
 export interface DriverCatalogEntry {
   driver: string;
   models: DriverModel[];
+  supportsFastMode: boolean;
 }
 
 export interface JournalQuery {
@@ -123,6 +128,7 @@ export interface SessionDetail {
   session: SessionRecord;
   journal: JournalEvent[];
   nextMessages: NextMessage[];
+  editableMessage: EditableMessage | null;
 }
 
 export interface ApiClientOptions {
@@ -262,6 +268,21 @@ export class ApiClient {
     attachments?: AttachmentInput[],
   ): Promise<SessionRecord> {
     return this.#post(`/api/sessions/${encodeURIComponent(id)}/message`, {
+      message,
+      ...(attachments !== undefined && attachments.length > 0
+        ? { attachments }
+        : {}),
+    });
+  }
+
+  checkpoint(
+    id: string,
+    fromEventId: number,
+    message: string,
+    attachments?: AttachmentInput[],
+  ): Promise<SessionRecord> {
+    return this.#post(`/api/sessions/${encodeURIComponent(id)}/checkpoint`, {
+      fromEventId,
       message,
       ...(attachments !== undefined && attachments.length > 0
         ? { attachments }

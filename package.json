@@ -6,6 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "start": "pnpm -C apps/desktop dev",
     "build": "tsc -b",
     "test": "vitest run",
     "typecheck": "tsc -b --noEmit false"

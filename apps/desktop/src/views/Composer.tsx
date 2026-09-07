@@ -26,6 +26,10 @@ import {
 import type { ImagePart, JournalEvent, SessionRecord } from "@daydream-code/shared";
 import type { AgentSkill } from "@daydream-code/driver";
 import type { NextMessage } from "@daydream-code/session";
+import {
+  lastEditableMessage,
+  type EditableMessage,
+} from "@daydream-code/session/transcript";
 import { useHarness } from "../harness.js";
 import {
   MAX_ATTACHMENTS,
@@ -332,6 +336,7 @@ function Box(props: {
   onDefer?(): void;
   onEditPrevious?(): void;
   onCancelEdit?(): void;
+  onStop?(): void;
   skillDriver: string;
   leading?: ReactNode;
   footer: ReactNode;
@@ -583,12 +588,14 @@ function Box(props: {
                 props.attachments.length === 0 &&
                 props.pending.length === 0,
               editing: props.onCancelEdit !== undefined,
+              canStop: props.onStop !== undefined,
             });
             if (action === null) return;
             e.preventDefault();
             if (action === "defer") props.onDefer?.();
             else if (action === "editPrevious") props.onEditPrevious?.();
             else if (action === "cancelEdit") props.onCancelEdit?.();
+            else if (action === "stop") props.onStop?.();
             else props.onSubmit();
           }}
         />
@@ -631,9 +638,15 @@ function Box(props: {
 
 export function composerKeyAction(
   event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey">,
-  options: { canDefer: boolean; canEditPrevious: boolean; editing: boolean },
-): "send" | "defer" | "editPrevious" | "cancelEdit" | null {
+  options: {
+    canDefer: boolean;
+    canEditPrevious: boolean;
+    editing: boolean;
+    canStop: boolean;
+  },
+): "send" | "defer" | "editPrevious" | "cancelEdit" | "stop" | null {
   if (event.key === "Escape" && options.editing) return "cancelEdit";
+  if (event.key === "Escape" && options.canStop) return "stop";
   if (event.key === "ArrowUp" && options.canEditPrevious) return "editPrevious";
   if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey)) return null;
   if (options.editing) return "send";
@@ -854,6 +867,7 @@ export function DispatchComposer(props: {
         driver: choice.driver,
         ...(choice.modelId !== null ? { modelId: choice.modelId } : {}),
         ...(choice.effort !== null ? { effort: choice.effort } : {}),
+        ...(choice.fastMode ? { fastMode: true } : {}),
         ...(draft.attachments.length > 0
           ? { attachments: draft.attachments.map(attachmentInput) }
           : {}),
@@ -991,6 +1005,8 @@ export function StopButton(props: {
 export function MessageComposer(props: {
   session: SessionRecord | null;
   id: string;
+  events: JournalEvent[];
+  editableMessage: EditableMessage | null;
   nextMessages: NextMessage[];
   contextRebuild: ContextRebuildUndo | null;
   onNextMessages: Dispatch<SetStateAction<NextMessage[]>>;
@@ -1010,7 +1026,8 @@ export function MessageComposer(props: {
     onError,
   );
   const editingId = draft.queuedDeliveryId;
-  const editingMode = editingId !== undefined;
+  const checkpointEventId = draft.checkpointEventId;
+  const editingMode = editingId !== undefined || checkpointEventId !== undefined;
   const editing =
     editingId === undefined
       ? null
@@ -1026,6 +1043,7 @@ export function MessageComposer(props: {
     props.session?.status === "running" || props.session?.status === "waiting";
   const [stopping, setStopping] = useState(false);
   const stop = useCallback(() => {
+    if (!stoppable || stopping) return;
     setStopping(true);
     api
       .stop(props.id)
@@ -1033,7 +1051,7 @@ export function MessageComposer(props: {
         onError(e instanceof Error ? e.message : String(e)),
       )
       .finally(() => setStopping(false));
-  }, [api, props.id, onError]);
+  }, [api, props.id, onError, stoppable, stopping]);
 
   const send = useCallback(() => {
     if (!sendable || busy) return;
@@ -1054,11 +1072,11 @@ export function MessageComposer(props: {
   }, [api, draft, busy, sendable, props.id, drafts, onError]);
 
   const queue = useCallback(() => {
-    if (!sendable || busy || (!running && !editingMode)) return;
+    if (!sendable || busy || (!running && editingId === undefined)) return;
     setBusy(true);
     const id = props.id;
     const request =
-      !editingMode
+      editingId === undefined
         ? api.enqueueNextMessage(
             id,
             draft.text.trim(),
@@ -1086,14 +1104,54 @@ export function MessageComposer(props: {
     running,
     sendable,
     editingId,
-    editingMode,
     props,
     drafts,
     onError,
   ]);
 
+  const checkpoint = useCallback(() => {
+    if (!sendable || busy || checkpointEventId === undefined) return;
+    setBusy(true);
+    const id = props.id;
+    api
+      .checkpoint(
+        id,
+        checkpointEventId,
+        draft.text.trim(),
+        draft.attachments.map(attachmentInput),
+      )
+      .then(() => drafts.clear(id))
+      .catch((e: unknown) =>
+        onError(e instanceof Error ? e.message : String(e)),
+      )
+      .finally(() => setBusy(false));
+  }, [
+    api,
+    busy,
+    checkpointEventId,
+    draft,
+    drafts,
+    onError,
+    props.id,
+    sendable,
+  ]);
+
+  const previous = useMemo(
+    () => lastEditableMessage(props.events) ?? props.editableMessage,
+    [props.editableMessage, props.events],
+  );
+
   const editPrevious = useCallback(() => {
-    if (busy || props.nextMessages.length === 0) return;
+    if (busy) return;
+    if (props.nextMessages.length === 0) {
+      if (props.session?.status !== "killed" || previous === null) return;
+      drafts.set(props.id, {
+        text: previous.message,
+        attachments: previous.images.map(imageDraft),
+        checkpointEventId: previous.eventId,
+      });
+      return;
+    }
     const next = props.nextMessages[props.nextMessages.length - 1]!;
     setBusy(true);
     api
@@ -1110,7 +1168,15 @@ export function MessageComposer(props: {
         onError(e instanceof Error ? e.message : String(e)),
       )
       .finally(() => setBusy(false));
-  }, [api, busy, drafts, onError, props]);
+  }, [api, busy, drafts, onError, previous, props]);
+
+  const cancelEdit = useCallback(() => {
+    if (checkpointEventId !== undefined) {
+      drafts.clear(props.id);
+      return;
+    }
+    if (editing !== null) controls.cancelEdit(editing);
+  }, [checkpointEventId, controls, drafts, editing, props.id]);
 
   const usage = props.session?.usage;
   const tokens = usage === undefined ? 0 : usage.tokensIn + usage.tokensOut;
@@ -1134,6 +1200,7 @@ export function MessageComposer(props: {
           driver: next.driver,
           modelId: next.modelId,
           effort: next.effort,
+          fastMode: next.fastMode,
         })
         .catch((e: unknown) =>
           onError(e instanceof Error ? e.message : String(e)),
@@ -1161,7 +1228,9 @@ export function MessageComposer(props: {
     <Box
       value={draft.text}
       placeholder={
-        editingMode
+        checkpointEventId !== undefined
+          ? "Edit the last message and continue from there…"
+          : editingMode
           ? "Edit queued message…"
           : running
             ? "Send a message"
@@ -1174,15 +1243,18 @@ export function MessageComposer(props: {
       onChange={(text) => setDraft({ ...draft, text })}
       onFiles={take}
       onRemove={remove}
-      onSubmit={editingMode ? queue : send}
+      onSubmit={checkpointEventId !== undefined ? checkpoint : editingMode ? queue : send}
       skillDriver={props.session?.driver ?? ""}
       {...(running && !editingMode ? { onDefer: queue } : {})}
-      {...(editing !== null
-        ? { onCancelEdit: () => controls.cancelEdit(editing) }
+      {...(editingMode
+        ? { onCancelEdit: cancelEdit }
         : {})}
-      {...(!editingMode && props.nextMessages.length > 0
+      {...(!editingMode &&
+      (props.nextMessages.length > 0 ||
+        (props.session?.status === "killed" && previous !== null))
         ? { onEditPrevious: editPrevious }
         : {})}
+      {...(stoppable && !stopping && !editingMode ? { onStop: stop } : {})}
       leading={
         <>
           {contextRebuild !== null && (
@@ -1209,6 +1281,7 @@ export function MessageComposer(props: {
                   driver: props.session.driver,
                   modelId: props.session.modelId,
                   effort: props.session.effort,
+                  fastMode: props.session.fastMode,
                 }
               }
               onChange={switchAgent}
@@ -1232,18 +1305,38 @@ export function MessageComposer(props: {
           {editingMode && (
             <span
               className="composer-hint"
-              title="⌘ Return saves the edit; Escape cancels"
+              title={
+                checkpointEventId !== undefined
+                  ? "⌘ Return checkpoints from this message; Escape cancels"
+                  : "⌘ Return saves the edit; Escape cancels"
+              }
             >
-              <kbd>⌘</kbd> <kbd>return</kbd> save · <kbd>esc</kbd> cancel
+              <kbd>⌘</kbd> <kbd>return</kbd>{" "}
+              {checkpointEventId !== undefined ? "checkpoint" : "save"} ·{" "}
+              <kbd>esc</kbd> cancel
             </span>
           )}
           {stoppable && <StopButton stopping={stopping} onClick={stop} />}
           <SendButton
             busy={busy}
             disabled={!sendable}
-            label={editingMode ? "Save queued message" : "Send"}
-            busyLabel={editingMode ? "Saving" : "Sending"}
-            onClick={editingMode ? queue : send}
+            label={
+              checkpointEventId !== undefined
+                ? "Checkpoint and run"
+                : editingMode
+                  ? "Save queued message"
+                  : "Send"
+            }
+            busyLabel={
+              checkpointEventId !== undefined
+                ? "Checkpointing"
+                : editingMode
+                  ? "Saving"
+                  : "Sending"
+            }
+            onClick={
+              checkpointEventId !== undefined ? checkpoint : editingMode ? queue : send
+            }
             {...(running && !editingMode
               ? {
                   defer: {
