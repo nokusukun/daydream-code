@@ -137,3 +137,53 @@ export const quickActions = sqliteTable(
     uniqueIndex("quick_actions_project_command").on(t.projectId, t.command),
   ],
 );
+
+/**
+ * Kanban cards. A card is a unit of work that may or may not have a session
+ * yet: Drafts and Queued cards have none, which is why `sessionId` is nullable
+ * and why the board cannot be a column on `sessions`. See migration v8.
+ */
+export const boardCards = sqliteTable(
+  "board_cards",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    column: text("lane", {
+      enum: ["draft", "queued", "evaluating", "blocked", "working", "attention", "done"],
+    }).notNull(),
+    position: real("position").notNull(),
+    title: text("title").notNull(),
+    task: text("task").notNull(),
+    requestJson: text("request_json").notNull(),
+    sessionId: text("session_id"),
+    evaluatorSessionId: text("evaluator_session_id"),
+    attentionReason: text("attention_reason"),
+    verdictJson: text("verdict_json"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [
+    index("board_cards_project_column").on(t.projectId, t.column, t.position),
+    uniqueIndex("board_cards_session").on(t.sessionId),
+  ],
+);
+
+/**
+ * "Card X is blocked by session Y." Keyed on the blocker's *session* because
+ * a blocker is by definition Working and therefore has one, and `session/ended`
+ * carries the record — the release path needs no join.
+ */
+export const boardBlocks = sqliteTable(
+  "board_blocks",
+  {
+    cardId: text("card_id").notNull(),
+    blockerSessionId: text("blocker_session_id").notNull(),
+    source: text("source", { enum: ["evaluator", "user"] }).notNull(),
+    reason: text("reason"),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("board_blocks_pk").on(t.cardId, t.blockerSessionId),
+    index("board_blocks_blocker").on(t.blockerSessionId),
+  ],
+);

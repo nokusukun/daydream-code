@@ -15,6 +15,21 @@ declare module "@daydream-code/kernel" {
       request: DispatchRequest,
       next: (request?: DispatchRequest) => Promise<SessionRecord>,
     ): Promise<SessionRecord>;
+    /**
+     * @mode waterfall — around a continue that would *start a run* on an idle
+     * session. Listeners may veto by returning without next(), or transform
+     * the request. Not fired when the session is live: that path queues an
+     * injection into the run already going and starts nothing.
+     *
+     * Fired for every `kind`, sibling-authored ones included, so that the
+     * policy of which continues may be intercepted lives in the listener and
+     * not here. A listener that only wants the user's own follow-ups checks
+     * `request.kind === "continue"`.
+     */
+    "session/pre-continue"(
+      request: ContinueRequest,
+      next: (request?: ContinueRequest) => Promise<SessionHandle>,
+    ): Promise<SessionHandle>;
     /** @mode emit — after a session's status row changes. */
     "session/updated"(session: SessionRecord): void;
     /**
@@ -68,6 +83,17 @@ export type AttachmentInput =
   | { path: string }
   | { data: string; alt?: string | undefined }
   | { blobId: string; alt?: string | undefined };
+
+/**
+ * A continue about to start a new run of an idle session. `kind` is how the
+ * master thread describes it (see `session/dispatched`).
+ */
+export interface ContinueRequest {
+  id: SessionId;
+  message: string;
+  attachments?: AttachmentInput[];
+  kind: "continue" | "ask" | "message";
+}
 
 export interface DispatchRequest {
   task: string;

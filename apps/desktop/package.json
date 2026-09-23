@@ -16,6 +16,7 @@
   "dependencies": {
     "@daydream-code/actions": "workspace:*",
     "@daydream-code/blobs": "workspace:*",
+    "@daydream-code/board": "workspace:*",
     "@daydream-code/boot": "workspace:*",
     "@daydream-code/compaction": "workspace:*",
     "@daydream-code/driver": "workspace:*",

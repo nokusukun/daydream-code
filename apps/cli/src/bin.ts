@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { boot, type PatchRow } from "@daydream-code/boot";
 import type { FiberDump } from "@daydream-code/kernel";
-import { sessionActivityAt, type JournalEvent } from "@daydream-code/shared";
+import { DeferredError, sessionActivityAt, type JournalEvent } from "@daydream-code/shared";
 import type {} from "@daydream-code/session";
 import type {} from "@daydream-code/driver";
 import type {} from "@daydream-code/journal";
@@ -349,21 +349,36 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         }
         const detachPrompt = attachQuestionPrompt(ctx as never);
         let done: Promise<unknown>;
+        // In kanban mode the dispatch (or continue) becomes a card and the
+        // session starts when the board says so; there is no run to follow.
+        const deferred = (error: unknown): number | undefined => {
+          if (!(error instanceof DeferredError)) return undefined;
+          detachPrompt();
+          console.log(`${error.message}; watch the board for it to start`);
+          return 0;
+        };
         if (command === "run") {
           const task = positionals[1];
           if (!task) {
             console.error('usage: daydream-code run "<task>"');
             return 1;
           }
-          const handle = await ctx.sessions.dispatch({
-            task,
-            ...(values.driver ? { driver: values.driver } : {}),
-            ...(values.model ? { modelId: values.model } : {}),
-            ...(values.effort ? { effort: values.effort } : {}),
-            ...(values.fast ? { fastMode: true } : {}),
-            ...(values.name ? { name: values.name } : {}),
-            ...(attachments.length > 0 ? { attachments } : {}),
-          });
+          let handle;
+          try {
+            handle = await ctx.sessions.dispatch({
+              task,
+              ...(values.driver ? { driver: values.driver } : {}),
+              ...(values.model ? { modelId: values.model } : {}),
+              ...(values.effort ? { effort: values.effort } : {}),
+              ...(values.fast ? { fastMode: true } : {}),
+              ...(values.name ? { name: values.name } : {}),
+              ...(attachments.length > 0 ? { attachments } : {}),
+            });
+          } catch (error) {
+            const code = deferred(error);
+            if (code !== undefined) return code;
+            throw error;
+          }
           console.log(
             `session ${handle.record.name} dispatched: ${handle.record.title}`,
           );
@@ -380,11 +395,18 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
             console.error(`unknown session "${key}"`);
             return 1;
           }
-          const handle = await ctx.sessions.continueSession(
-            session.id,
-            message,
-            attachments,
-          );
+          let handle;
+          try {
+            handle = await ctx.sessions.continueSession(
+              session.id,
+              message,
+              attachments,
+            );
+          } catch (error) {
+            const code = deferred(error);
+            if (code !== undefined) return code;
+            throw error;
+          }
           done = handle.done;
         }
         const final = (await done) as {

@@ -18,6 +18,11 @@ export const defaultModuleLoaders: readonly DesktopModuleLoader<DesktopHost>[] =
     load: () => import("./features/code.js"),
   },
   {
+    id: "board",
+    name: "Kanban board",
+    load: () => import("./features/board.js"),
+  },
+  {
     id: "terminal",
     name: "Terminal",
     load: () => import("./features/terminal.js"),

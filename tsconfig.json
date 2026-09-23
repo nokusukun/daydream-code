@@ -17,6 +17,9 @@
       "path": "./packages/blobs"
     },
     {
+      "path": "./packages/board"
+    },
+    {
       "path": "./packages/boot"
     },
     {

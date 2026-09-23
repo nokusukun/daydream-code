@@ -310,6 +310,51 @@ export const migrations: readonly Migration[] = [
   `
   ALTER TABLE sessions ADD COLUMN fast_mode INTEGER NOT NULL DEFAULT 0;
   `,
+
+  // v8 — kanban cards and their blockers.
+  //
+  // A card is a unit of work that may not have a session yet: Drafts and
+  // Queued cards are exactly the ones that do not. That is why this is its own
+  // table rather than a column on `sessions`, and why `session_id` is
+  // nullable and unique rather than a key. `position` is REAL so a manual
+  // reorder is one UPDATE between two neighbours instead of a renumbering.
+  //
+  // Blocks key on the blocker's *session*: a blocker is by definition Working
+  // and so has one, and `session/ended` carries the record, so releasing a
+  // card needs no join back to the blocker's card.
+  `
+  CREATE TABLE IF NOT EXISTS board_cards (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    lane TEXT NOT NULL,
+    position REAL NOT NULL,
+    title TEXT NOT NULL,
+    task TEXT NOT NULL,
+    request_json TEXT NOT NULL,
+    session_id TEXT,
+    evaluator_session_id TEXT,
+    attention_reason TEXT,
+    verdict_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS board_cards_project_column
+    ON board_cards (project_id, lane, position);
+  CREATE UNIQUE INDEX IF NOT EXISTS board_cards_session
+    ON board_cards (session_id) WHERE session_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS board_blocks (
+    card_id TEXT NOT NULL,
+    blocker_session_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    reason TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS board_blocks_pk
+    ON board_blocks (card_id, blocker_session_id);
+  CREATE INDEX IF NOT EXISTS board_blocks_blocker
+    ON board_blocks (blocker_session_id);
+  `,
 ];
 
 /** Bring the database up to the current schema version. Safe to call on every open. */

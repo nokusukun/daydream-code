@@ -11,6 +11,9 @@
       "path": "../../packages/actions"
     },
     {
+      "path": "../../packages/board"
+    },
+    {
       "path": "../../packages/routes"
     },
     {

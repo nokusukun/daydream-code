@@ -29,6 +29,7 @@
     "@daydream-code/questions": "workspace:*",
     "@daydream-code/routes": "workspace:*",
     "@daydream-code/settings": "workspace:*",
-    "@daydream-code/actions": "workspace:*"
+    "@daydream-code/actions": "workspace:*",
+    "@daydream-code/board": "workspace:*"
   }
 }

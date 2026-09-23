@@ -159,6 +159,28 @@ For example, this project configuration enables Codex and changes the master-thr
 
 To make Codex the default for new sessions, select it in desktop settings. The project’s default driver and model are stored in its SQLite project record; plugin implementation settings remain in the YAML layers.
 
+### Kanban mode
+
+Kanban mode turns every new thread into a **card** that is evaluated before it runs. Cards move through Drafts, Queued, Evaluating, Working, Needs Attention and Done. The evaluator is a real session on the project's agent: it reads what the Working sessions are doing (their tasks, summaries and the files they have written), judges whether the new task can run alongside them, and reports through a `board_verdict` tool. A card can be **blocked** by one or more Working sessions and is re-evaluated once every blocker has finished; a follow-up on a Done card re-queues it.
+
+It is off by default. Turn it on for a project by enabling all four rows together, in the project layer or from the **kanban** section of desktop settings:
+
+```yaml
+- id: board
+  disabled: false
+- id: board-evaluator
+  disabled: false
+  config:
+    driver: claude        # optional; the project default otherwise
+    timeoutMs: 600000     # an evaluator still running after this goes to Needs Attention
+- id: board-writeback
+  disabled: false
+- id: board-routes
+  disabled: false
+```
+
+With the mode on, `daydream-code run` and `POST /api/sessions` answer with the card they became instead of a session (the HTTP status is 202), the desktop composer's button reads **Queue**, and a **Board** mode appears in the window. The board surface is `GET /api/board` and `/api/board/cards/...`; the design record is in `PLAN-kanban.md`.
+
 ## Local data
 
 Daydream Code stores project-owned state under the project root:

@@ -31,6 +31,8 @@ import {
   type EditableMessage,
 } from "@daydream-code/session/transcript";
 import { useHarness } from "../harness.js";
+import { isDeferred } from "../api.js";
+import { useBoard } from "../board.js";
 import {
   MAX_ATTACHMENTS,
   attachmentInput,
@@ -846,7 +848,8 @@ export function DispatchComposer(props: {
   autoFocus: boolean;
   onError(message: string): void;
 }): ReactNode {
-  const { api, select, drafts } = useHarness();
+  const { api, select, drafts, setMode } = useHarness();
+  const { enabled: kanban } = useBoard();
   // The draft outlives this view, which disappears the moment a run is
   // clicked; the text is still here when you come back.
   const [draft, setDraft] = useDraft(drafts, NEW_SESSION_DRAFT);
@@ -861,27 +864,37 @@ export function DispatchComposer(props: {
     // and it is what the session is named after.
     if (trimmed.length === 0 || busy) return;
     setBusy(true);
-    api
-      .dispatch({
-        task: trimmed,
-        driver: choice.driver,
-        ...(choice.modelId !== null ? { modelId: choice.modelId } : {}),
-        ...(choice.effort !== null ? { effort: choice.effort } : {}),
-        ...(choice.fastMode ? { fastMode: true } : {}),
-        ...(draft.attachments.length > 0
-          ? { attachments: draft.attachments.map(attachmentInput) }
-          : {}),
-      })
-      .then((record) => {
+    const input = {
+      task: trimmed,
+      driver: choice.driver,
+      ...(choice.modelId !== null ? { modelId: choice.modelId } : {}),
+      ...(choice.effort !== null ? { effort: choice.effort } : {}),
+      ...(choice.fastMode ? { fastMode: true } : {}),
+      ...(draft.attachments.length > 0
+        ? { attachments: draft.attachments.map(attachmentInput) }
+        : {}),
+    };
+    // In kanban mode the task becomes a card, not a session: it goes to the
+    // board, and the board is where you watch it start.
+    const request: Promise<{ id: string; card: boolean }> = kanban
+      ? api.createCard(input).then((card) => ({ id: card.id, card: true }))
+      : api.dispatch(input).then((result) =>
+          isDeferred(result)
+            ? { id: result.deferred.ref, card: true }
+            : { id: result.id as string, card: false },
+        );
+    request
+      .then(({ id, card }) => {
         // Only once the task is safely a session; a failed dispatch keeps it.
         drafts.clear(NEW_SESSION_DRAFT);
-        select(record.id as string);
+        if (card) setMode("board");
+        else select(id);
       })
       .catch((e: unknown) =>
         onError(e instanceof Error ? e.message : String(e)),
       )
       .finally(() => setBusy(false));
-  }, [api, draft, choice, busy, select, drafts, onError]);
+  }, [api, draft, choice, busy, select, drafts, onError, kanban, setMode]);
 
   return (
     <Box
@@ -903,8 +916,8 @@ export function DispatchComposer(props: {
           <SendButton
             busy={busy}
             disabled={draft.text.trim().length === 0}
-            label="Dispatch"
-            busyLabel="Dispatching"
+            label={kanban ? "Queue" : "Dispatch"}
+            busyLabel={kanban ? "Queueing" : "Dispatching"}
             onClick={dispatch}
           />
         </>

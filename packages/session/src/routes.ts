@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Context } from "@daydream-code/kernel";
 import { HttpError, intParam, type RouteRequest } from "@daydream-code/routes";
-import type { SessionRecord } from "@daydream-code/shared";
+import { DeferredError, type SessionRecord } from "@daydream-code/shared";
 import type { QuestionOutcome } from "@daydream-code/questions";
 import type {} from "@daydream-code/questions";
 import type {} from "@daydream-code/journal";
@@ -88,6 +88,27 @@ const AnswerBody = z.object({
  * routes because it has to resolve `:id` through the sessions seam first, and
  * questions is a dependency of this package, not the other way round.
  */
+/**
+ * A dispatch or continue that a policy plugin parked instead of running
+ * (the kanban board queueing it as a card) is not a failure: the request was
+ * accepted, and something durable now stands for it. 202 with that reference
+ * as the body, so a client that knows about the interceptor can follow it and
+ * one that does not still sees success rather than a 4xx for a request that
+ * did exactly what the project is configured to do.
+ */
+async function deferrable<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof DeferredError) {
+      throw new HttpError(202, error.message, {
+        deferred: { kind: error.kind, ref: error.ref },
+      });
+    }
+    throw error;
+  }
+}
+
 const sessionRoutes = {
   name: "session-routes",
   inject: ["routes", "sessions", "journal", "questions"],
@@ -151,7 +172,7 @@ const sessionRoutes = {
               ? { attachments: body.attachments }
               : {}),
           };
-          const handle = await ctx.sessions.dispatch(request);
+          const handle = await deferrable(() => ctx.sessions.dispatch(request));
           // The caller gets the record now; the run outlives the request.
           void handle.done.catch(() => {});
           return handle.record;
@@ -163,10 +184,12 @@ const sessionRoutes = {
         handle: async (req: RouteRequest) => {
           const session = resolve(req);
           const body = MessageBody.parse(req.body);
-          const handle = await ctx.sessions.continueSession(
-            session.id,
-            body.message,
-            body.attachments,
+          const handle = await deferrable(() =>
+            ctx.sessions.continueSession(
+              session.id,
+              body.message,
+              body.attachments,
+            ),
           );
           void handle.done.catch(() => {});
           return handle.record;

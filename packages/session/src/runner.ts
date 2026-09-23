@@ -33,6 +33,7 @@ import { onAbort } from "@daydream-code/driver/abort";
 import {
   Sessions,
   type AttachmentInput,
+  type ContinueRequest,
   type DeliveryOutcome,
   type DispatchRequest,
   type HandoffRequest,
@@ -772,6 +773,24 @@ export default class SessionRunner extends Sessions {
       this.ctx.emit("session/dispatched", retitled, kind, message);
       return { record: retitled, done: active.done };
     }
+    // Idle: this continue starts a run, which is the moment a policy plugin
+    // may want to defer or reshape it. The live branch above never reaches
+    // here because it starts nothing.
+    const request: ContinueRequest = {
+      id,
+      message,
+      ...(attachments !== undefined ? { attachments } : {}),
+      kind,
+    };
+    return (await this.ctx.waterfall(
+      "session/pre-continue",
+      [request],
+      (req: ContinueRequest) => this.#revive(req),
+    )) as SessionHandle;
+  }
+
+  #revive(request: ContinueRequest): SessionHandle {
+    const { id, message, attachments, kind } = request;
     this.ctx.store.db
       .update(schema.sessions)
       // Reviving un-shelves. A run that was archived and is now working again

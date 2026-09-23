@@ -1,0 +1,24 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    { "path": "../blobs" },
+    { "path": "../config" },
+    { "path": "../journal" },
+    { "path": "../kernel" },
+    { "path": "../questions" },
+    { "path": "../routes" },
+    { "path": "../session" },
+    { "path": "../shared" },
+    { "path": "../store" },
+    { "path": "../thread" },
+    { "path": "../tools" },
+    { "path": "../workspace" }
+  ]
+}

@@ -32,6 +32,15 @@ export type StreamMessage =
    */
   | { kind: "session-deleted"; id: string };
 
+/**
+ * A frame the transport did not define. Capabilities publish these through
+ * `stream/publish`; the client learns their shape from the capability, not
+ * from here.
+ */
+export interface ExtensionFrame {
+  kind: string;
+}
+
 // ---------------------------------------------------------------------------
 // Seam
 
@@ -52,4 +61,22 @@ export abstract class HarnessServer extends Service {
   abstract readonly port: number;
   /** Base URL of the bound server, e.g. `http://127.0.0.1:4870`. */
   abstract readonly url: string;
+}
+
+// ---------------------------------------------------------------------------
+// Publishing from outside the transport
+
+declare module "@daydream-code/kernel" {
+  interface Events {
+    /**
+     * @mode emit — push one frame to every open `/stream` socket.
+     *
+     * The transport forwards a fixed set of core events on its own; a
+     * capability that wants its own frames on the wire emits this rather than
+     * the server learning what a board or a ticket is. The frame's `kind` is
+     * the contract with the client, and must not collide with the core kinds
+     * in `StreamMessage`.
+     */
+    "stream/publish"(message: StreamMessage | ExtensionFrame): void;
+  }
 }

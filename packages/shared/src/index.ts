@@ -400,3 +400,29 @@ export interface ProjectRecord {
 export function nowIso(): string {
   return new Date().toISOString();
 }
+
+// ---------------------------------------------------------------------------
+// Deferred work
+
+/**
+ * Thrown by a plugin that intercepted a request and parked it somewhere
+ * durable instead of doing it now — a kanban board taking a dispatch and
+ * queueing it as a card. The caller gets no handle because nothing has run;
+ * it gets a reference to the thing that will.
+ *
+ * Lives here rather than in the intercepting package so the surfaces that
+ * translate it (the session routes, the CLI) can recognise it without
+ * depending on any particular interceptor.
+ */
+export class DeferredError extends Error {
+  constructor(
+    /** What the request became: a card id, a ticket, whatever the interceptor mints. */
+    readonly ref: string,
+    /** The interceptor's own noun for it, e.g. "card". */
+    readonly kind: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DeferredError";
+  }
+}

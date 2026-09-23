@@ -73,6 +73,12 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    id: "kanban",
+    label: "kanban",
+    blurb: "queue every new thread as a card that an evaluator clears before it runs. Turn all four on together.",
+    rows: ["board", "board-evaluator", "board-writeback", "board-routes"],
+  },
+  {
     id: "storage",
     label: "storage",
     blurb: "where the journal, the threads and attachments live.",

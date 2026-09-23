@@ -1,5 +1,5 @@
 {
-  "name": "@daydream-code/boot",
+  "name": "@daydream-code/board",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,11 +18,18 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@daydream-code/asks": "workspace:*",
     "@daydream-code/blobs": "workspace:*",
-    "@daydream-code/board": "workspace:*",
+    "@daydream-code/config": "workspace:*",
+    "@daydream-code/journal": "workspace:*",
     "@daydream-code/kernel": "workspace:*",
     "@daydream-code/questions": "workspace:*",
-    "yaml": "^2.6.0"
+    "@daydream-code/routes": "workspace:*",
+    "@daydream-code/session": "workspace:*",
+    "@daydream-code/shared": "workspace:*",
+    "@daydream-code/store": "workspace:*",
+    "@daydream-code/thread": "workspace:*",
+    "@daydream-code/tools": "workspace:*",
+    "@daydream-code/workspace": "workspace:*",
+    "zod": "^4.0.0"
   }
 }

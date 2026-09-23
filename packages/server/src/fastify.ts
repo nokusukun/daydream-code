@@ -16,7 +16,7 @@ import type {
 import { HttpError, type HttpMethod, type RouteRequest } from "@daydream-code/routes";
 import type {} from "@daydream-code/routes";
 import type {} from "@daydream-code/journal";
-import { HarnessServer, type StreamMessage } from "./index.js";
+import { HarnessServer, type ExtensionFrame, type StreamMessage } from "./index.js";
 
 export const { Config, settings } = defineConfig({
   host: field.string({
@@ -131,9 +131,13 @@ export default class FastifyServer extends HarnessServer {
 
     app.setErrorHandler((error, _req, reply) => {
       const status = error instanceof HttpError ? error.status : 500;
-      void reply
-        .code(status)
-        .send({ error: error instanceof Error ? error.message : String(error) });
+      // An HttpError may carry its own body (a 202 with the thing that was
+      // created instead); everything else is the message, and nothing more.
+      const body =
+        error instanceof HttpError && error.body !== undefined
+          ? error.body
+          : { error: error instanceof Error ? error.message : String(error) };
+      void reply.code(status).send(body);
     });
 
     const token = config.token;
@@ -264,6 +268,9 @@ export default class FastifyServer extends HarnessServer {
       this.ctx.on("session/dispatched", forwardSession),
       this.ctx.on("session/deleted", (session: SessionRecord) =>
         send({ kind: "session-deleted", id: session.id }),
+      ),
+      this.ctx.on("stream/publish", (message: StreamMessage | ExtensionFrame) =>
+        send(message as StreamMessage),
       ),
     ];
     socket.on("close", () => {

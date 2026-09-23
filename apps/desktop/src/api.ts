@@ -4,6 +4,7 @@
  * could point at a remote core just as well as the local one.
  */
 import type { QuickActionRecord } from "@daydream-code/actions";
+import type { BoardCard, CardRequest } from "@daydream-code/board";
 import type { BlobRef } from "@daydream-code/blobs";
 import type { AgentSkill } from "@daydream-code/driver";
 import type { AttachmentInput, NextMessage } from "@daydream-code/session";
@@ -24,6 +25,7 @@ import type {
 } from "@daydream-code/shared";
 
 export type { QuickActionRecord } from "@daydream-code/actions";
+export type { BoardCard, BoardColumn, CardRequest } from "@daydream-code/board";
 export type { AgentSkill } from "@daydream-code/driver";
 export type { SettingsView, EntryView, SettingDescriptor, WriteResult } from "@daydream-code/settings";
 export type {
@@ -53,6 +55,28 @@ export interface DispatchInput {
   fastMode?: boolean;
   name?: string;
   attachments?: AttachmentInput[];
+}
+
+/**
+ * What a dispatch or continue answers with when a policy plugin parked it
+ * instead of running it: the kanban board, queueing it as a card. A 202, so
+ * `fetch` calls it ok and the body arrives here rather than as an ApiError.
+ */
+export interface Deferred {
+  deferred: { kind: string; ref: string };
+}
+
+export function isDeferred(value: unknown): value is Deferred {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { deferred?: unknown }).deferred === "object"
+  );
+}
+
+export interface CreateCardInput extends CardRequest {
+  task: string;
+  draft?: boolean;
 }
 
 /**
@@ -246,7 +270,7 @@ export class ApiClient {
     return this.#request(`/api/sessions/${encodeURIComponent(id)}`, { limit });
   }
 
-  dispatch(input: DispatchInput): Promise<SessionRecord> {
+  dispatch(input: DispatchInput): Promise<SessionRecord | Deferred> {
     return this.#post("/api/sessions", input);
   }
 
@@ -266,7 +290,7 @@ export class ApiClient {
     id: string,
     message: string,
     attachments?: AttachmentInput[],
-  ): Promise<SessionRecord> {
+  ): Promise<SessionRecord | Deferred> {
     return this.#post(`/api/sessions/${encodeURIComponent(id)}/message`, {
       message,
       ...(attachments !== undefined && attachments.length > 0
@@ -486,6 +510,53 @@ export class ApiClient {
     return this.#request("/api/project", undefined, {
       method: "PATCH",
       body: JSON.stringify(patch),
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Kanban board. Every call 404s when the project is not in kanban mode;
+  // `board()` is how a client finds that out.
+
+  board(): Promise<{ enabled: boolean; cards: BoardCard[] }> {
+    return this.#request("/api/board");
+  }
+
+  createCard(input: CreateCardInput): Promise<BoardCard> {
+    return this.#post("/api/board/cards", input);
+  }
+
+  patchCard(id: string, patch: { task?: string; request?: CardRequest }): Promise<BoardCard> {
+    return this.#request(`/api/board/cards/${encodeURIComponent(id)}`, undefined, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  }
+
+  submitCard(id: string): Promise<BoardCard> {
+    return this.#post(`/api/board/cards/${encodeURIComponent(id)}/submit`, {});
+  }
+
+  /** Move before another card, or to the tail with null. */
+  reorderCard(id: string, before: string | null): Promise<BoardCard> {
+    return this.#post(`/api/board/cards/${encodeURIComponent(id)}/reorder`, { before });
+  }
+
+  /** Force start: skip or abandon evaluation, drop blockers, run now. */
+  startCard(id: string): Promise<BoardCard> {
+    return this.#post(`/api/board/cards/${encodeURIComponent(id)}/start`, {});
+  }
+
+  /** Replace the blocker set; session names or ids of Working cards. */
+  setCardBlockers(id: string, sessions: string[], reason?: string): Promise<BoardCard> {
+    return this.#request(`/api/board/cards/${encodeURIComponent(id)}/blockers`, undefined, {
+      method: "PUT",
+      body: JSON.stringify({ sessions, ...(reason !== undefined ? { reason } : {}) }),
+    });
+  }
+
+  cancelCard(id: string): Promise<BoardCard> {
+    return this.#request(`/api/board/cards/${encodeURIComponent(id)}`, undefined, {
+      method: "DELETE",
     });
   }
 }

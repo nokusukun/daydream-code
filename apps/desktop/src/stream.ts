@@ -4,13 +4,17 @@
  * depends only on the shared vocabulary, not the server package).
  */
 import type { JournalEvent, SessionRecord, ThreadEntry } from "@daydream-code/shared";
+import type { BoardCard } from "@daydream-code/board";
 
 export type StreamFrame =
   | { kind: "hello"; lastEventId: number }
   | { kind: "journal"; event: JournalEvent }
   | { kind: "thread"; entry: ThreadEntry }
   | { kind: "session"; session: SessionRecord }
-  | { kind: "session-deleted"; id: string };
+  | { kind: "session-deleted"; id: string }
+  /** Published by the board routes; absent entirely when kanban mode is off. */
+  | { kind: "board"; card: BoardCard }
+  | { kind: "board-removed"; id: string };
 
 export type StreamStatus = "connecting" | "open" | "closed";
 

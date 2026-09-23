@@ -26,6 +26,9 @@ importers:
       '@daydream-code/actions':
         specifier: workspace:*
         version: link:../../packages/actions
+      '@daydream-code/board':
+        specifier: workspace:*
+        version: link:../../packages/board
       '@daydream-code/boot':
         specifier: workspace:*
         version: link:../../packages/boot
@@ -89,6 +92,9 @@ importers:
       '@daydream-code/blobs':
         specifier: workspace:*
         version: link:../../packages/blobs
+      '@daydream-code/board':
+        specifier: workspace:*
+        version: link:../../packages/board
       '@daydream-code/boot':
         specifier: workspace:*
         version: link:../../packages/boot
@@ -238,6 +244,48 @@ importers:
         specifier: ^4.0.0
         version: 4.4.3
 
+  packages/board:
+    dependencies:
+      '@daydream-code/blobs':
+        specifier: workspace:*
+        version: link:../blobs
+      '@daydream-code/config':
+        specifier: workspace:*
+        version: link:../config
+      '@daydream-code/journal':
+        specifier: workspace:*
+        version: link:../journal
+      '@daydream-code/kernel':
+        specifier: workspace:*
+        version: link:../kernel
+      '@daydream-code/questions':
+        specifier: workspace:*
+        version: link:../questions
+      '@daydream-code/routes':
+        specifier: workspace:*
+        version: link:../routes
+      '@daydream-code/session':
+        specifier: workspace:*
+        version: link:../session
+      '@daydream-code/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@daydream-code/store':
+        specifier: workspace:*
+        version: link:../store
+      '@daydream-code/thread':
+        specifier: workspace:*
+        version: link:../thread
+      '@daydream-code/tools':
+        specifier: workspace:*
+        version: link:../tools
+      '@daydream-code/workspace':
+        specifier: workspace:*
+        version: link:../workspace
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
+
   packages/boot:
     dependencies:
       '@daydream-code/asks':
@@ -246,6 +294,9 @@ importers:
       '@daydream-code/blobs':
         specifier: workspace:*
         version: link:../blobs
+      '@daydream-code/board':
+        specifier: workspace:*
+        version: link:../board
       '@daydream-code/kernel':
         specifier: workspace:*
         version: link:../kernel

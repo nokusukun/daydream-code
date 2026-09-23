@@ -57,6 +57,16 @@ export function baseBundle(projectRoot: string): Layer {
       { id: "sessions", name: "@daydream-code/session/runner" },
       { id: "session-routes", name: "@daydream-code/session/routes" },
       { id: "send-tools", name: "@daydream-code/session/send-tool" },
+      // Kanban mode. Off by default; a project turns it on by enabling all
+      // four rows in its config layer (or the desktop's settings toggle).
+      // Every new session in the project then becomes a card that an
+      // evaluator session clears before it runs. The provider without the
+      // evaluator leaves cards in Evaluating forever, which is why they ship
+      // as a set.
+      { id: "board", name: "@daydream-code/board/sqlite", disabled: true },
+      { id: "board-evaluator", name: "@daydream-code/board/evaluator", disabled: true },
+      { id: "board-writeback", name: "@daydream-code/board/master-writeback", disabled: true },
+      { id: "board-routes", name: "@daydream-code/board/routes", disabled: true },
       { id: "server", name: "@daydream-code/server/fastify", disabled: true },
     ],
   };

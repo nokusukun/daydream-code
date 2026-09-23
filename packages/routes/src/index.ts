@@ -61,6 +61,12 @@ export class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /**
+     * A JSON body to send instead of `{ error: message }`. For the statuses
+     * that are not failures — a 202 whose body is the queued thing — where the
+     * caller needs data, not an apology. Absent on every real error.
+     */
+    readonly body?: unknown,
   ) {
     super(message);
     this.name = "HttpError";
