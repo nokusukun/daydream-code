@@ -610,7 +610,11 @@ pre {
   border-left: 1px solid var(--border);
 }
 
-.toolbar-actions > .titlebar-search:first-child {
+/* Whichever segment leads owns the pill's rounded end — the sidebar toggle
+   when the mode has a rail, search otherwise. A square hover fill there pokes
+   out past the shell's curve. */
+.toolbar-actions > :first-child,
+.toolbar-actions > :first-child > .toolbar-icon {
   border-radius: 999px 0 0 999px;
 }
 
@@ -675,8 +679,15 @@ pre {
 
 /* -- body / panels --------------------------------------------------------- */
 
+/* `min-width: 0` because `.body` is a grid item of `.app`, whose one column is
+   implicitly `auto`: without it the column grows to the body's min-content, so
+   anything wider than the window — the board's lanes — widens the whole app
+   and gets clipped by the window instead of scrolling inside its own box. The
+   split-pane variant already had this through `.split`; the sidebar-less
+   variant (the board's default) did not. */
 .body {
   display: flex;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -1192,6 +1203,29 @@ pre {
 
 .context-rebuild-undo {
   flex: none;
+  margin-left: auto;
+}
+
+/* The board holding a follow-up: the same pill, tinted by what it waits on.
+   Evaluating borrows the accent the running ring wears; Blocked borrows warn,
+   the colour the board's Blocked cards use. */
+.board-hold-notice.is-evaluating {
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--glass-edge));
+}
+
+.board-hold-notice.is-blocked {
+  border-color: color-mix(in oklab, var(--warn) 46%, var(--glass-edge));
+}
+
+.board-hold-notice > .glyph {
+  flex: none;
+  color: var(--accent);
+}
+
+.board-hold-actions {
+  flex: none;
+  display: flex;
+  gap: 2px;
   margin-left: auto;
 }
 
@@ -6547,6 +6581,13 @@ table.fibers td:first-child {
     display: none;
   }
 
+  /* `display: none` doesn't change `:first-child`, so the segment after the
+     hidden toggle has to take over the leading curve and drop its divider. */
+  .toolbar-actions > .sidebar-toggle:first-child + * {
+    border-left: 0;
+    border-radius: 999px 0 0 999px;
+  }
+
   .change-bars {
     display: none;
   }
@@ -7841,6 +7882,100 @@ table.fibers td:first-child {
   color: var(--text-3);
 }
 
+/* The search field wears the header's control shape — the 26px pill every
+   .btn beside it has — so it reads as one of the header's controls rather
+   than a form dropped into it. It widens while it holds a query, because a
+   query you cannot read back is the usual reason a search "finds nothing". */
+.board-search {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 200px;
+  height: 26px;
+  padding: 0 var(--s2) 0 var(--s3);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--glass-control);
+  backdrop-filter: var(--glass-control-filter);
+  -webkit-backdrop-filter: var(--glass-control-filter);
+  box-shadow: var(--glass-control-shadow);
+  transition: width var(--t-fast) var(--ease-out-quart),
+    border-color var(--t-instant) var(--ease-out-quart),
+    box-shadow var(--t-instant) var(--ease-out-quart);
+}
+
+.board-search.is-active,
+.board-search:focus-within {
+  width: 260px;
+}
+
+.board-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-veil);
+}
+
+.board-search-glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.board-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-base);
+  user-select: text;
+}
+
+/* The ring is on the pill; a second one on the input inside it would draw
+   a box within the box. */
+.board-search input:focus-visible {
+  outline: none;
+}
+
+.board-search input::placeholder {
+  color: var(--text-3);
+}
+
+.board-search-clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--text-3) 26%, transparent);
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.board-search-clear:hover {
+  background: color-mix(in oklab, var(--text-3) 42%, transparent);
+}
+
+.board-search-clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.board-search-count {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-search {
+    transition: none;
+  }
+}
+
 .board-notice {
   display: flex;
   align-items: center;
@@ -7865,9 +8000,13 @@ table.fibers td:first-child {
   overflow: auto hidden;
 }
 
+/* The floor scales with the weight, so the lanes keep their proportions when
+   the window is too narrow for all six: the board scrolls sideways instead of
+   squeezing every lane down to a word per line. A flat 168px floor left cards
+   so narrow their titles wrapped after one or two words. */
 .board-lane {
   flex: var(--lane-w, 1) 1 0;
-  min-width: 168px;
+  min-width: calc(var(--lane-w, 1) * 280px);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -7952,6 +8091,13 @@ table.fibers td:first-child {
 
 .board-lane.is-inert {
   opacity: 0.4;
+}
+
+/* A lane with no hits stays in place — columns that jump sideways as you
+   type make the board unreadable — and steps back so the lanes that did
+   match are where the eye lands. */
+.board-lane.is-unmatched {
+  opacity: 0.55;
 }
 
 .board-lane-empty {
@@ -8289,6 +8435,70 @@ table.fibers td:first-child {
   background: var(--surface-2);
 }
 
+/* Done's "Archived N" row is the sidebar's own shelf door (`.rail-more`), so
+   both places archived threads live look like the same object. Board scale:
+   the lane's other quiet text (the Drafts door, the empty line) is xs. */
+.board-shelf {
+  flex: none;
+  padding: var(--s2);
+  font-size: var(--text-xs);
+}
+
+/* Archive all. It sits in the lane head, which is text-height; the negative
+   block margin keeps a 20px hit target from making Done's hairline sit lower
+   than every other lane's. */
+.board-lane-act {
+  align-self: center;
+  width: 20px;
+  height: 20px;
+  margin: -3px -4px -3px 0;
+  color: var(--text-3);
+}
+
+/* The time and the card's archive icon share one slot. The icon replaces the
+   time on hover or focus rather than joining an action row: Done cards have
+   no other action, and a reserved 20px strip for one verb made every finished
+   card taller than what it says. */
+.board-card-end {
+  display: grid;
+  flex: none;
+  justify-items: end;
+}
+
+.board-card-end > * {
+  grid-area: 1 / 1;
+}
+
+.board-card-time {
+  transition: opacity var(--t-fast) var(--ease-out-quart);
+}
+
+.board-card-archive {
+  width: 20px;
+  height: 20px;
+  margin-top: -2px;
+  color: var(--text-2);
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease-out-quart);
+}
+
+.board-card:hover .board-card-archive,
+.board-card:focus-within .board-card-archive {
+  opacity: 1;
+}
+
+.board-card:hover .board-card-end:has(.board-card-archive) .board-card-time,
+.board-card:focus-within .board-card-end:has(.board-card-archive) .board-card-time {
+  opacity: 0;
+}
+
+/* Shown only when the person asks to see archived cards. Dashed like the
+   Drafts door, so it reads as "off the board", and still at full text
+   contrast, because a shelved card is shown in order to be read. */
+.board-card.is-archived {
+  border-style: dashed;
+}
+
 .board-draft-input {
   width: 100%;
   resize: vertical;
@@ -8360,4 +8570,21 @@ table.fibers td:first-child {
   margin: 0 0 var(--s2);
   font-size: var(--text-md);
   color: var(--text-1);
+}
+
+.board-empty .btn-primary {
+  margin-top: var(--s4);
+}
+
+.board-empty-note {
+  margin-top: var(--s3);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+/* The shared notice bar is left-aligned flex for the dismiss button; here it
+   sits alone under the switch and centres with the rest of the column. */
+.board-empty .board-notice {
+  margin-top: var(--s3);
+  justify-content: center;
 }

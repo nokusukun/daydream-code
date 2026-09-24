@@ -52,6 +52,25 @@ interface ActiveRun {
   injections: Injection[];
   done: Promise<SessionRecord>;
   stopping: boolean;
+  /**
+   * The sessions the turn in progress echoes. Seeded when the turn starts —
+   * from whoever dispatched the run, or from the master updates that alone
+   * woke it — and grown by any session this turn sets in motion. Taken at
+   * `turn_end`, synchronously: the turn-end entry is written only after an
+   * async summary, by which point the next turn may already have begun.
+   */
+  causedBy: Set<SessionId>;
+  /** The last finished turn's set, for the entry that says the run ended. */
+  lastCausedBy: SessionId[];
+}
+
+/**
+ * What the run-ended entry echoes: the last finished turn, plus any turn still
+ * open — a run can end mid-turn (a stop, or a driver whose last step was a
+ * tool call), and that turn's links are just as real.
+ */
+function endedCausedBy(active: ActiveRun): SessionId[] {
+  return [...new Set([...active.lastCausedBy, ...active.causedBy])];
 }
 
 interface HeldNextMessage {
@@ -390,6 +409,7 @@ export default class SessionRunner extends Sessions {
         text,
         undefined,
         "ask",
+        [pending.fromSessionId],
       );
       // The revived run outlives this call; its failure is reported through
       // the target's own journal, and must not surface as an unhandled
@@ -411,6 +431,17 @@ export default class SessionRunner extends Sessions {
 
   #spendWake(id: SessionId): void {
     this.#wakesSinceUser.set(id, (this.#wakesSinceUser.get(id) ?? 0) + 1);
+  }
+
+  /**
+   * `target` was set in motion by `causes`. Any of them mid-turn records the
+   * target against that turn, so its turn-end entry is not handed back to the
+   * session it just started or asked — that session is the news.
+   */
+  #link(target: SessionId, causes: readonly SessionId[]): void {
+    for (const cause of causes) {
+      if (cause !== target) this.#active.get(cause)?.causedBy.add(target);
+    }
   }
 
   /**
@@ -686,7 +717,9 @@ export default class SessionRunner extends Sessions {
       })
       .run();
     const record = this.get(SessionId(id))!;
-    ctx.emit("session/dispatched", record, "new", request.task);
+    const causedBy = request.causedBy ?? [];
+    this.#link(record.id, causedBy);
+    ctx.emit("session/dispatched", record, "new", request.task, causedBy);
     return this.#startRun(record, request.task, request);
   }
 
@@ -696,10 +729,12 @@ export default class SessionRunner extends Sessions {
     attachments?: AttachmentInput[],
     /** How this continue is described on the master thread. */
     kind: "continue" | "ask" | "message" = "continue",
+    causedBy: readonly SessionId[] = [],
   ): Promise<SessionHandle> {
     const active = this.#active.get(id);
     const record = this.get(id);
     if (!record) throw new Error(`unknown session "${id}"`);
+    this.#link(id, causedBy);
     // The new message is the current task now, so the title moves to it —
     // before the dispatch event, so listeners see the session as it now is.
     if (kind === "continue") {
@@ -731,7 +766,7 @@ export default class SessionRunner extends Sessions {
       // other: the turn cannot reach a boundary until the question clears.
       // Prose beats the offered options, so it passes through verbatim.
       if (this.ctx.questions.settleCurrent(record.id, { kind: "replied", text: message })) {
-        this.ctx.emit("session/dispatched", retitled, kind, message);
+        this.ctx.emit("session/dispatched", retitled, kind, message, causedBy);
         return { record: retitled, done: active.done };
       }
       // Same trap, other seam: a session blocked on a *sibling* is equally
@@ -745,7 +780,7 @@ export default class SessionRunner extends Sessions {
           kind: "answered",
           text: `[answered by the user, not by ${blockedOn.toName}] ${message}`,
         });
-        this.ctx.emit("session/dispatched", retitled, kind, message);
+        this.ctx.emit("session/dispatched", retitled, kind, message, causedBy);
         return { record: retitled, done: active.done };
       }
       const images = this.#ingest(attachments);
@@ -770,7 +805,7 @@ export default class SessionRunner extends Sessions {
         },
       });
       active.injections.push(injection);
-      this.ctx.emit("session/dispatched", retitled, kind, message);
+      this.ctx.emit("session/dispatched", retitled, kind, message, causedBy);
       return { record: retitled, done: active.done };
     }
     // Idle: this continue starts a run, which is the moment a policy plugin
@@ -781,6 +816,7 @@ export default class SessionRunner extends Sessions {
       message,
       ...(attachments !== undefined ? { attachments } : {}),
       kind,
+      ...(causedBy.length > 0 ? { causedBy: [...causedBy] } : {}),
     };
     return (await this.ctx.waterfall(
       "session/pre-continue",
@@ -791,6 +827,7 @@ export default class SessionRunner extends Sessions {
 
   #revive(request: ContinueRequest): SessionHandle {
     const { id, message, attachments, kind } = request;
+    const causedBy = request.causedBy ?? [];
     this.ctx.store.db
       .update(schema.sessions)
       // Reviving un-shelves. A run that was archived and is now working again
@@ -800,9 +837,10 @@ export default class SessionRunner extends Sessions {
       .where(eq(schema.sessions.id, id))
       .run();
     const revived = this.get(id)!;
-    this.ctx.emit("session/dispatched", revived, kind, message);
+    this.ctx.emit("session/dispatched", revived, kind, message, causedBy);
     return this.#startRun(revived, message, {
       task: message,
+      ...(causedBy.length > 0 ? { causedBy: [...causedBy] } : {}),
       ...(attachments !== undefined ? { attachments } : {}),
       driver: revived.driver,
       ...(revived.modelId ? { modelId: revived.modelId } : {}),
@@ -1028,9 +1066,10 @@ export default class SessionRunner extends Sessions {
   async deliver(
     id: SessionId,
     text: string,
-    options: { kind?: Injection["kind"] } = {},
+    options: { kind?: Injection["kind"]; from?: SessionId } = {},
   ): Promise<DeliveryOutcome> {
     const kind = options.kind ?? "message";
+    const causedBy = options.from !== undefined ? [options.from] : [];
     const record = this.get(id);
     if (!record) {
       return { kind: "gone", reason: `no session "${id}" in this project` };
@@ -1046,6 +1085,7 @@ export default class SessionRunner extends Sessions {
     }
     if (active) {
       const entry: Injection = { kind, text };
+      this.#link(id, causedBy);
       active.injections.push(entry);
       // A run that has already taken its last turn boundary will never drain
       // this, and it would be lost without a sound: `#active` is not cleared
@@ -1076,7 +1116,7 @@ export default class SessionRunner extends Sessions {
     }
     this.#spendWake(id);
     try {
-      const handle = await this.continueSession(id, text, undefined, "message");
+      const handle = await this.continueSession(id, text, undefined, "message", causedBy);
       // The revived run outlives this call; its failure belongs in the
       // target's own journal, not on the sender's stack.
       void handle.done.catch(() => undefined);
@@ -1536,6 +1576,8 @@ export default class SessionRunner extends Sessions {
       injections: [],
       done: undefined as unknown as Promise<SessionRecord>,
       stopping: false,
+      causedBy: new Set(request.causedBy ?? []),
+      lastCausedBy: [],
     };
 
     // Ingested once per run: the blob store is content-addressed, so this is
@@ -1582,14 +1624,24 @@ export default class SessionRunner extends Sessions {
       if (event.type === "turn_end") {
         const finished = turnEvents;
         turnEvents = [];
-        void this.#onTurnEnd(record, finished);
+        const causedBy = [...active.causedBy];
+        active.causedBy = new Set();
+        active.lastCausedBy = causedBy;
+        void this.#onTurnEnd(record, finished, causedBy);
       }
     };
 
     const drainInjections = (): Injection[] => {
       const queued = active.injections.splice(0);
       const blocks: string[] = [];
-      ctx.emit("session/collect-injections", record, blocks);
+      const causes = new Set<SessionId>();
+      ctx.emit("session/collect-injections", record, blocks, causes);
+      // A turn with the user's words in it is the user's turn, whatever else
+      // rides along; only one woken by harness-authored updates alone is a
+      // reaction to the sessions those updates report.
+      if (!queued.some((injection) => injection.kind === "user")) {
+        for (const cause of causes) active.causedBy.add(cause);
+      }
       return [
         ...queued,
         ...blocks.map(
@@ -1667,6 +1719,7 @@ export default class SessionRunner extends Sessions {
           result.summary,
           result.tldr,
           usage,
+          endedCausedBy(active),
         );
       } catch (error) {
         ctx.journal.append({
@@ -1690,6 +1743,7 @@ export default class SessionRunner extends Sessions {
           summary,
           tldr,
           usage,
+          endedCausedBy(active),
         );
       } finally {
         this.#active.delete(record.id);
@@ -1703,6 +1757,7 @@ export default class SessionRunner extends Sessions {
   async #onTurnEnd(
     record: SessionRecord,
     turnEvents: JournalEvent[],
+    causedBy: SessionId[],
   ): Promise<void> {
     const ctx = this.ctx;
     try {
@@ -1712,7 +1767,7 @@ export default class SessionRunner extends Sessions {
         session: fresh,
         turnEvents,
       });
-      ctx.emit("session/turn-ended", fresh, summary);
+      ctx.emit("session/turn-ended", fresh, summary, causedBy);
       const master = ctx.threads.ensureMaster();
       await ctx.compaction.maybeCompact(ThreadId(master.id));
     } catch (error) {
@@ -1726,6 +1781,7 @@ export default class SessionRunner extends Sessions {
     summary: string,
     tldr: string,
     usage: Usage,
+    causedBy: readonly SessionId[] = [],
   ): SessionRecord {
     const ctx = this.ctx;
     ctx.store.db
@@ -1752,7 +1808,7 @@ export default class SessionRunner extends Sessions {
       usage,
     });
     ctx.emit("session/updated", final);
-    ctx.emit("session/ended", final);
+    ctx.emit("session/ended", final, causedBy);
     void ctx.compaction
       .maybeCompact(ThreadId(ctx.threads.ensureMaster().id))
       .catch(() => undefined);

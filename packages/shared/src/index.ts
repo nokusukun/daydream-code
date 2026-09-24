@@ -246,6 +246,14 @@ export interface ThreadEntryInput {
   /** For kind=compaction: this entry summarizes all entries with seq <= this. */
   supersedesThroughSeq?: number;
   tokenEstimate?: number;
+  /**
+   * Sessions this entry is an echo of: its author's turn was a reaction to
+   * them, or they were set in motion by it. Delivery never hands an entry back
+   * to a session listed here, which is what stops two live sessions from
+   * waking each other with news of each other's reactions. Only automatic
+   * entries carry it; a deliberate message always reaches its reader.
+   */
+  causedBy?: SessionId[];
 }
 
 export interface ThreadEntry extends ThreadEntryInput {

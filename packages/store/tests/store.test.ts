@@ -109,7 +109,7 @@ describe("SqliteStore", () => {
     };
     db.insert(schema.threadEntries).values(entry).run();
     expect(db.select().from(schema.threadEntries).all()).toEqual([
-      { id: 1, ...entry },
+      { id: 1, ...entry, causedByJson: null },
     ]);
 
     const session = {

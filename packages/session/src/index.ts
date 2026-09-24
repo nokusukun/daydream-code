@@ -41,24 +41,45 @@ declare module "@daydream-code/kernel" {
      * master thread can say that it happened without reprinting the prose —
      * that text is addressed to one session, and broadcasting it verbatim
      * would put tool-call boilerplate in front of every other session.
+     *
+     * `causedBy` names the sessions that set this dispatch in motion — the
+     * evaluator whose verdict started a card, the sibling that asked. The
+     * master-thread entry carries it so the news is not handed back to them.
      */
     "session/dispatched"(
       session: SessionRecord,
       kind: "new" | "continue" | "ask" | "message",
       message: string,
+      causedBy: readonly SessionId[],
     ): void;
-    /** @mode emit — a turn finished; `summary` is the one-liner for master. */
-    "session/turn-ended"(session: SessionRecord, summary: string): void;
+    /**
+     * @mode emit — a turn finished; `summary` is the one-liner for master.
+     * `causedBy` is the set of sessions this turn echoes (see
+     * `ThreadEntryInput.causedBy`): the ones whose automatic updates alone
+     * woke it, and the ones it set in motion.
+     */
+    "session/turn-ended"(
+      session: SessionRecord,
+      summary: string,
+      causedBy: readonly SessionId[],
+    ): void;
     /**
      * @mode emit — cooperative collection: listeners push text blocks to be
-     * injected into the session's next turn (e.g. `[master thread update]`).
+     * injected into the session's next turn (e.g. `[master thread update]`),
+     * and add to `causes` the sessions whose activity those blocks report.
+     * When nothing but these blocks wakes the next turn, that turn is a
+     * reaction to `causes`, and its own end is not reported back to them.
      */
     "session/collect-injections"(
       session: SessionRecord,
       blocks: string[],
+      causes: Set<SessionId>,
     ): void;
-    /** @mode emit — session reached a terminal status, after final write-back row update. */
-    "session/ended"(session: SessionRecord): void;
+    /**
+     * @mode emit — session reached a terminal status, after final write-back
+     * row update. `causedBy` is the final turn's, when the run had one.
+     */
+    "session/ended"(session: SessionRecord, causedBy?: readonly SessionId[]): void;
     /**
      * @mode emit — a session and its journal were purged, after the rows are
      * gone. Carries the record as it last existed, because by the time this
@@ -93,6 +114,8 @@ export interface ContinueRequest {
   message: string;
   attachments?: AttachmentInput[];
   kind: "continue" | "ask" | "message";
+  /** Sessions that set this continue in motion; see `DispatchRequest.causedBy`. */
+  causedBy?: SessionId[];
 }
 
 export interface DispatchRequest {
@@ -115,6 +138,13 @@ export interface DispatchRequest {
   /** Request the provider's lower-latency service tier. Defaults to false. */
   fastMode?: boolean;
   permissionMode?: "auto" | "ask" | "readonly";
+  /**
+   * Sessions whose action started this one — the evaluator whose verdict
+   * launched a card. The new session's first turn is an echo of them, and a
+   * live one among them has this session added to the turn it is in, so
+   * neither side is woken by news of the other's part in the same step.
+   */
+  causedBy?: SessionId[];
 }
 
 /**
@@ -201,6 +231,9 @@ export abstract class Sessions extends Service {
     id: SessionId,
     message: string,
     attachments?: AttachmentInput[],
+    kind?: ContinueRequest["kind"],
+    /** Sessions that set this continue in motion; see `DispatchRequest.causedBy`. */
+    causedBy?: readonly SessionId[],
   ): Promise<SessionHandle>;
   /**
    * Replace the newest user message on an idle thread and continue from the
@@ -251,7 +284,8 @@ export abstract class Sessions extends Service {
   abstract deliver(
     id: SessionId,
     text: string,
-    options?: { kind?: Injection["kind"] },
+    /** `from` is the sending session; the delivery is recorded as its echo. */
+    options?: { kind?: Injection["kind"]; from?: SessionId },
   ): Promise<DeliveryOutcome>;
   abstract stop(id: SessionId): Promise<void>;
   /**

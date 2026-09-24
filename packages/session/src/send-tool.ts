@@ -102,7 +102,9 @@ const sendTools = {
           "No reply is required — this is a notification, not a question. Carry on with your own work; if it changes what you were doing, say so in your summary.",
         ].join("\n");
 
-        const outcome = await ctx.sessions.deliver(record.id, text);
+        const outcome = await ctx.sessions.deliver(record.id, text, {
+          from: run.sessionId,
+        });
         ctx.journal.append({
           sessionId: record.id,
           type: "message_received",

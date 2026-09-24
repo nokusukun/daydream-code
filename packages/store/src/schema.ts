@@ -49,6 +49,7 @@ export const threadEntries = sqliteTable(
     toSessionId: text("to_session_id"),
     supersedesThroughSeq: integer("supersedes_through_seq"),
     messageJson: text("message_json").notNull(),
+    causedByJson: text("caused_by_json"),
     tokenEstimate: integer("token_estimate").notNull().default(0),
     createdAt: text("created_at").notNull(),
   },

@@ -38,6 +38,11 @@ export const { Config, settings } = defineConfig({
     options: PERMISSION_MODES,
     default: "auto" as const,
   }),
+  skipWhenIdle: field.boolean({
+    label: "skip evaluation when idle",
+    help: "start a card at once when nothing is Working and no card is Evaluating ahead of it — the only verdict an evaluator could reach there is proceed.",
+    default: true,
+  }),
   timeoutMs: field.number({
     label: "evaluation timeout",
     help: "an evaluator still running after this is stopped and the card goes to Needs Attention. Sized for a model that reads a few files and maybe asks one sibling, not for a full run.",
@@ -89,6 +94,10 @@ function clip(text: string, max: number): string {
  * working tree — which files a live run has touched, whether the new task
  * would cross them — and a session can go and look. It shows in the rail
  * like any other run; the board keeps it out of the columns.
+ *
+ * One mechanical fast path (`skipWhenIdle`, on by default): when the board is
+ * idle the verdict is provably `proceed` — see `foregone` — and the card
+ * starts without an evaluator at all.
  */
 const boardEvaluator = {
   name: "board-evaluator",
@@ -109,16 +118,20 @@ const boardEvaluator = {
           return session === undefined ? [] : [{ card, session }];
         });
 
-    const prompt = async (card: BoardCard): Promise<string> => {
-      const working = workingSessions();
-      const ahead = ctx.board
+    /** Cards ahead of `card` in queue order that have not started: the `defer` targets. */
+    const waitingAhead = (card: BoardCard): BoardCard[] =>
+      ctx.board
         .list()
         .filter(
           (c) =>
             c.id !== card.id &&
-            (c.column === "queued" || c.column === "evaluating") &&
+            (c.column === "queued" || c.column === "evaluating" || c.column === "blocked") &&
             c.position < card.position,
         );
+
+    const prompt = async (card: BoardCard): Promise<string> => {
+      const working = workingSessions();
+      const ahead = waitingAhead(card);
       let changed: string[] = [];
       try {
         changed = (await ctx.workspace.status()).files.map((f) => `${f.status} ${f.path}`);
@@ -160,11 +173,15 @@ const boardEvaluator = {
         "## Uncommitted changes in the tree",
         changed.length > 0 ? changed.join("\n") : "(clean)",
         "",
-        "## Cards ahead of this one in the queue (context only; you may `defer` to one that is Evaluating, never block on it)",
+        "## Cards ahead of this one that have not started (you may `defer` to any of these, never block on them)",
       );
       if (ahead.length === 0) lines.push("(none)");
       for (const c of ahead) {
-        lines.push(`- ${c.id} [${c.column}] ${c.title}: ${clip(c.task, 200)}`);
+        const waitingOn =
+          c.column === "blocked" && c.blockedBy.length > 0
+            ? ` (waiting on ${c.blockedBy.map((b) => b.blockerName).join(", ")})`
+            : "";
+        lines.push(`- ${c.id} [${c.column}${waitingOn}] ${c.title}: ${clip(c.task, 200)}`);
       }
       lines.push(
         "",
@@ -172,13 +189,41 @@ const boardEvaluator = {
         "- Judge two things: file overlap (would this card plausibly edit files a Working session has written or is about to?) and logical dependency (does this card need something a Working session is producing — a migration, an API, a decision?).",
         "- You may read files and run `git status` / `git diff` to check. Make NO edits.",
         "- If a Working session's *intent* is the deciding factor and its summary does not settle it, you may `ask_session` it once. Treat silence (an unanswered ask) as not blocking.",
-        "- If a card ahead of you in the queue is still Evaluating and looks like it would conflict with this one, `defer` to it: you will be asked again once its verdict lands.",
+        "- Also judge the cards ahead that have not started. Once one of them runs it may conflict with this card, even if nothing Working does now. If one would, `defer` to it. This card then waits until that one starts (or leaves the queue) and is evaluated again with it Working, so it can be blocked properly. Don't jump a conflicting card that got here first.",
         "- Finish by calling `board_verdict` exactly once. A `block` must name Working session names from the list above. Give a one-sentence reason a person will read on the card.",
       );
       return lines.join("\n");
     };
 
+    /**
+     * Whether the verdict is a foregone `proceed`: a `block` may only name
+     * the sessions of Working cards, and a `defer` only a not-yet-started
+     * card ahead in the queue — both enforced by the provider. With neither
+     * in existence, an evaluator session could not reach any other
+     * conclusion, so dispatching one would spend a model run to conclude the
+     * inevitable. A Blocked card ahead counts even when nothing is Working:
+     * its blocker can sit in Needs Attention, off the Working list but live.
+     */
+    const foregone = (card: BoardCard): boolean =>
+      workingSessions().length === 0 && waitingAhead(card).length === 0;
+
     const evaluate = async (card: BoardCard): Promise<void> => {
+      if (config.skipWhenIdle && foregone(card)) {
+        // `start` is the board's sanctioned skip-evaluation move. A card
+        // launching this way stays in Evaluating until its dispatch
+        // resolves, so a sibling entering Evaluating meanwhile sees it
+        // ahead, fails `foregone`, and gets a real evaluator.
+        try {
+          await ctx.board.start(card.id);
+        } catch (error) {
+          // The card moved on (a force start, a cancel) before the start
+          // resolved, or the driver refused. Neither is this plugin's to fix.
+          if (!(error instanceof BoardError)) {
+            console.error(`[board-evaluator] could not start ${card.id}:`, error);
+          }
+        }
+        return;
+      }
       let task: string;
       try {
         task = await prompt(card);
@@ -246,7 +291,7 @@ const boardEvaluator = {
       description: [
         "Report your decision about the card you are evaluating. Only the evaluator session of a card in Evaluating may call this; from any other session it is refused.",
         "",
-        "`proceed` starts the card now. `block` parks it until every session named in `blockedBy` has finished — those must be Working sessions, by name. `defer` sends it back to the queue until the Evaluating card named in `deferTo` has its own verdict.",
+        "`proceed` starts the card now. `block` parks it until every session named in `blockedBy` has finished — those must be Working sessions, by name. `defer` holds it in the queue behind the card named in `deferTo` — a card ahead of it that has not started (Queued, Evaluating or Blocked) — until that card starts or leaves the queue, then evaluates it again.",
         "",
         "Call it exactly once, at the end. Do not call it before you have looked at what the Working sessions are doing.",
       ].join("\n"),
@@ -265,7 +310,7 @@ const boardEvaluator = {
           },
           deferTo: {
             type: "string",
-            description: "For `defer`: the id of the Evaluating card ahead in the queue to wait on.",
+            description: "For `defer`: the id of a not-yet-started card ahead in the queue to wait behind.",
           },
         },
         required: ["decision", "reason"],

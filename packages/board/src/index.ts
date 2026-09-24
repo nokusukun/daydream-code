@@ -78,10 +78,11 @@ export interface BoardBlock {
 
 /**
  * What the evaluator decided. `block` names sessions; `defer` names a card.
- * Only Working sessions may be blockers and only an Evaluating card ahead in
- * queue order may be deferred to — both enforced by the provider, not the
- * prompt — which is what keeps two parallel evaluations from each blocking
- * on the other.
+ * Only Working sessions may be blockers, and only a card ahead in queue order
+ * that has not started (Queued, Evaluating, Blocked) may be deferred to. The
+ * provider enforces both, not the prompt. A defer holds until its target
+ * starts or leaves the queue. "Ahead" is re-checked on every pump, so a
+ * reorder cannot leave two cards waiting on each other.
  */
 export type Verdict =
   | { decision: "proceed"; reason: string; at: string }

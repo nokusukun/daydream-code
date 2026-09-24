@@ -355,6 +355,16 @@ export const migrations: readonly Migration[] = [
   CREATE INDEX IF NOT EXISTS board_blocks_blocker
     ON board_blocks (blocker_session_id);
   `,
+  // v9 — the sessions a master-thread entry is an echo of.
+  //
+  // A JSON array of session ids, NULL for the common case of none. Delivery
+  // reads it to keep an automatic entry from waking the session whose own
+  // activity produced it. Stored rather than inferred because an entry's cause
+  // is fixed at the moment it is written: by the time a sibling reads it, the
+  // author may already be reacting to something else.
+  `
+  ALTER TABLE thread_entries ADD COLUMN caused_by_json TEXT;
+  `,
 ];
 
 /** Bring the database up to the current schema version. Safe to call on every open. */

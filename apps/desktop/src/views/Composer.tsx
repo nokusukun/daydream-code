@@ -33,6 +33,7 @@ import {
 import { useHarness } from "../harness.js";
 import { isDeferred } from "../api.js";
 import { useBoard } from "../board.js";
+import { holdHeadline, type BoardHold } from "../board-hold.js";
 import {
   MAX_ATTACHMENTS,
   attachmentInput,
@@ -772,6 +773,59 @@ export function ContextRebuildNotice(props: {
   );
 }
 
+/**
+ * The board is holding this thread's next turn (see `board-hold.ts`). It sits
+ * where a held follow-up sits because it *is* one — the board's hold rather
+ * than the runner's — and it quotes the message, since the transcript draws
+ * nothing for it and a sent message that vanishes reads as lost.
+ */
+export function BoardHoldNotice(props: {
+  hold: BoardHold;
+  starting: boolean;
+  onWatch(evaluatorId: string): void;
+  onStart(): void;
+}): ReactNode {
+  const { hold } = props;
+  const detail =
+    hold.kind === "blocked" && hold.reason !== null ? hold.reason : `“${hold.message}”`;
+  return (
+    <div
+      className={`context-rebuild-notice board-hold-notice is-${hold.kind}`}
+      role="status"
+      aria-live="polite"
+    >
+      {hold.kind === "evaluating" && <StatusGlyph status="running" />}
+      <span className="context-rebuild-copy">
+        <strong>{holdHeadline(hold)}</strong>
+        <span title={hold.kind === "blocked" && hold.reason !== null ? hold.reason : hold.message}>
+          {detail}
+        </span>
+      </span>
+      <span className="board-hold-actions">
+        {hold.kind === "evaluating" && hold.evaluatorId !== null && (
+          <button
+            type="button"
+            className="btn btn-quiet"
+            title="Open the evaluator's thread"
+            onClick={() => props.onWatch(hold.evaluatorId!)}
+          >
+            Watch
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn btn-quiet"
+          title="Skip evaluation and run this message now"
+          disabled={props.starting}
+          onClick={props.onStart}
+        >
+          {props.starting ? "Starting…" : "Start now"}
+        </button>
+      </span>
+    </div>
+  );
+}
+
 function imageDraft(image: ImagePart): Attachment {
   return {
     blobId: image.blobId,
@@ -1068,10 +1122,12 @@ export function MessageComposer(props: {
   editableMessage: EditableMessage | null;
   nextMessages: NextMessage[];
   contextRebuild: ContextRebuildUndo | null;
+  /** The board's hold on this thread's next turn, under kanban. */
+  boardHold?: BoardHold | null;
   onNextMessages: Dispatch<SetStateAction<NextMessage[]>>;
   onError(message: string): void;
 }): ReactNode {
-  const { api, drafts } = useHarness();
+  const { api, drafts, select } = useHarness();
   // The panel is keyed by session id, so this composer is thrown away and
   // rebuilt on every switch. The draft is what makes that survivable.
   const [draft, setDraft] = useDraft(drafts, props.id);
@@ -1283,6 +1339,19 @@ export function MessageComposer(props: {
       .finally(() => setUndoingModel(false));
   }, [api, contextRebuild, onError, props.id, undoingModel]);
 
+  const boardHold = props.boardHold ?? null;
+  const [startingCard, setStartingCard] = useState(false);
+  const startHeld = useCallback(() => {
+    if (boardHold === null || startingCard) return;
+    setStartingCard(true);
+    api
+      .startCard(boardHold.cardId)
+      .catch((e: unknown) =>
+        onError(e instanceof Error ? e.message : String(e)),
+      )
+      .finally(() => setStartingCard(false));
+  }, [api, boardHold, onError, startingCard]);
+
   return (
     <Box
       value={draft.text}
@@ -1316,6 +1385,14 @@ export function MessageComposer(props: {
       {...(stoppable && !stopping && !editingMode ? { onStop: stop } : {})}
       leading={
         <>
+          {boardHold !== null && (
+            <BoardHoldNotice
+              hold={boardHold}
+              starting={startingCard}
+              onWatch={select}
+              onStart={startHeld}
+            />
+          )}
           {contextRebuild !== null && (
             <ContextRebuildNotice
               change={contextRebuild}

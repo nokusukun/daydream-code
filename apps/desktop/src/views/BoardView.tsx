@@ -18,10 +18,18 @@
  * board *promises* while you drag and what it *does* when you let go, so the
  * promise cannot drift from the behaviour. Lanes that would refuse the card
  * go quiet instead of inviting the drop.
+ *
+ * Every lane reads newest first. That is a display order only: `position`
+ * stays the queue's priority (lower runs sooner, and the evaluator's "cards
+ * ahead" and `defer` both read it that way), so the board flips it on the way
+ * to the screen and flips reorders back on the way to the server.
  */
 import {
+  Fragment,
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type DragEvent,
   type KeyboardEvent,
@@ -30,19 +38,21 @@ import {
 } from "react";
 import { titleFromTask, type SessionRecord } from "@daydream-code/shared";
 import { ApiError, type BoardCard } from "../api.js";
-import { LANES, laneOf, useBoard } from "../board.js";
+import { LANES, enableKanban, laneOf, useBoard } from "../board.js";
 import { useHarness } from "../harness.js";
-import { useSessions } from "../sessions.js";
-import { StatusGlyph, fmtAgo } from "../ui.js";
+import { isArchived, useSessions } from "../sessions.js";
+import { ArchiveIcon, StatusGlyph, UnarchiveIcon, fmtAgo } from "../ui.js";
 
 const DRAG_TYPE = "application/x-daydream-card";
 
 /**
  * Lanes are not equally important and were not equally sized on purpose.
  * Working and Needs Attention carry a running session, a model, a verdict or
- * a failure reason and are the two a person scans first; Drafts and Done
- * carry a title and a timestamp. Equal sixths spent the same width on both
- * and wrapped the sentences that matter.
+ * a failure reason and are the two a person scans first; Drafts carry a title
+ * and a timestamp. Equal sixths spent the same width on both and wrapped the
+ * sentences that matter. Done sits between: it is where finished work gets
+ * read back and archived, so it gets a full-width share rather than a
+ * Drafts-sized one.
  */
 const LANE_WEIGHT: Readonly<Record<string, number>> = {
   draft: 0.78,
@@ -50,7 +60,7 @@ const LANE_WEIGHT: Readonly<Record<string, number>> = {
   evaluating: 0.84,
   working: 1.2,
   attention: 1.12,
-  done: 0.8,
+  done: 1,
 };
 
 /**
@@ -113,6 +123,74 @@ export function taskSubtext(title: string, task: string): string {
   return collapsed.slice(sentence.length).replace(/^[\s.!?,;:]+/, "");
 }
 
+/**
+ * Whether a Done card is archived.
+ *
+ * The board keeps no archive flag of its own: a card's archive is its
+ * thread's archive, the same shelf the sidebar's Archive uses. With one
+ * shelf, a thread archived from either place is gone from both. A follow-up
+ * revives the thread, which un-shelves it and re-queues the card, so the card
+ * comes back without the board having to remember anything. This applies to
+ * Done only. A card in any other lane is work in flight, and hiding it would
+ * hide what the queue is doing.
+ */
+export function isShelved(
+  card: Pick<BoardCard, "column">,
+  session: SessionRecord | undefined,
+): boolean {
+  return card.column === "done" && session !== undefined && isArchived(session);
+}
+
+/**
+ * Whether a card answers a board search.
+ *
+ * Every whitespace-separated term has to appear somewhere on the card, the
+ * same rule the project switcher uses, so "sidebar hover" narrows rather
+ * than widens. The haystack is what the card shows plus the names it is
+ * known by elsewhere: its thread's name (master-thread prose and the
+ * sidebar call it that) and the sessions blocking it, which is how you find
+ * everything parked behind one run.
+ */
+export function cardMatches(
+  card: Pick<BoardCard, "title" | "task" | "attentionReason" | "verdict" | "blockedBy">,
+  session: Pick<SessionRecord, "name"> | undefined,
+  query: string,
+): boolean {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+  if (terms.length === 0) return true;
+  const haystack = [
+    card.title,
+    card.task,
+    session?.name ?? "",
+    card.attentionReason ?? "",
+    card.verdict?.reason ?? "",
+    ...card.blockedBy.map((b) => b.blockerName),
+  ]
+    .join("\n")
+    .toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
+/**
+ * The cards a lane renders, in order: its live cards, then its archived ones
+ * when the shelf is open.
+ *
+ * A search (`match` non-null) reaches into the archive without opening the
+ * shelf. The finished card you are looking for is as likely archived as not,
+ * and making you guess which and then toggle is the chore search is meant to
+ * remove. Archived hits keep their dimmed look and still sort below the live
+ * ones.
+ */
+export function laneShows(
+  onLane: readonly BoardCard[],
+  shelved: readonly BoardCard[],
+  showShelf: boolean,
+  match: ((card: BoardCard) => boolean) | null,
+): BoardCard[] {
+  if (match !== null) return [...onLane.filter(match), ...shelved.filter(match)];
+  return showShelf ? [...onLane, ...shelved] : [...onLane];
+}
+
 export type Move = "start" | "queue" | "reorder" | "block" | "cancel";
 
 /**
@@ -153,6 +231,57 @@ export function openTargetOf(
   return null;
 }
 
+/**
+ * A lane's cards, newest on top.
+ *
+ * Newest means highest `position`, not latest `updatedAt`: a card takes a
+ * fresh tail position when it is created and when a follow-up re-queues it,
+ * which is exactly when it is new work. Sorting on `updatedAt` would reshuffle
+ * the lane every time a verdict or status landed.
+ */
+export function laneCards(cards: readonly BoardCard[], lane: string): BoardCard[] {
+  return cards.filter((card) => laneOf(card) === lane).sort((a, b) => b.position - a.position);
+}
+
+/*
+ * The server's `reorder(id, before)` puts a card just below `before` in
+ * position order, which on a newest-first lane is just *under* it on screen,
+ * and `before: null` means the tail, which is now the top. The two helpers
+ * below translate "where it should appear" into that vocabulary so the
+ * on-screen direction and the stored order cannot disagree.
+ */
+
+/**
+ * `before` for dropping `dragged` onto the lane at display index `onto`,
+ * landing on the seam above that card (where `is-insert` draws it), or at the
+ * bottom of the lane when `onto` is omitted. Undefined when it is a no-op.
+ */
+export function dropBefore(
+  cards: readonly BoardCard[],
+  dragged: BoardCard,
+  onto?: number,
+): string | null | undefined {
+  if (onto === undefined) {
+    const last = cards.at(-1);
+    return last === undefined || last.id === dragged.id ? undefined : last.id;
+  }
+  const above = cards[onto - 1];
+  if (above?.id === dragged.id) return undefined;
+  return above?.id ?? null;
+}
+
+/**
+ * `before` for moving the card at display index `at` one row up (-1) or down
+ * (+1) on screen. Undefined at the edge it is moving toward.
+ */
+export function nudgeBefore(cards: readonly BoardCard[], at: number, step: 1 | -1): string | null | undefined {
+  if (step === -1) {
+    if (at <= 0) return undefined;
+    return cards[at - 2]?.id ?? null;
+  }
+  return cards[at + 1]?.id;
+}
+
 /** The promise a lane makes while a card hovers it. Present tense, no period. */
 export function moveVerb(move: Move): string {
   switch (move) {
@@ -174,6 +303,7 @@ export function BoardView(): ReactNode {
   const board = useBoard();
   const { sessions } = useSessions();
   const [notice, setNotice] = useState<string | null>(null);
+  const [enabling, setEnabling] = useState(false);
   const [dragging, setDragging] = useState<BoardCard | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [overCard, setOverCard] = useState<string | null>(null);
@@ -181,6 +311,38 @@ export function BoardView(): ReactNode {
   // move between the rest. Making all of them tab stops put twenty presses
   // between the first lane and the second.
   const [cursor, setCursor] = useState<Readonly<Record<string, string>>>({});
+  const [showShelf, setShowShelf] = useState(false);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const searching = query.trim().length > 0;
+
+  // ⌘F finds on the board the way it does in every Mac document window.
+  // Nothing else in the app claims it, and the board is the one view whose
+  // content outgrows a screen.
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
+      const field = searchRef.current;
+      if (field === null) return;
+      event.preventDefault();
+      field.focus();
+      field.select();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // The lanes are wider than most windows now, so a hit can land in a lane
+  // that is scrolled out of sight — "1 match" over a board that shows none.
+  // Bring the first lane that has one into view; `nearest` leaves the board
+  // where it is when that lane is already visible.
+  const lanesRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!searching) return;
+    lanesRef.current
+      ?.querySelector<HTMLElement>(".board-lane:not(.is-unmatched)")
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [query, searching]);
 
   const byId = useMemo(() => new Map(sessions.map((s) => [s.id as string, s])), [sessions]);
   const cardOf = useCallback((id: string) => board.cards.find((c) => c.id === id), [board.cards]);
@@ -203,6 +365,10 @@ export function BoardView(): ReactNode {
   const drop = useCallback(
     (target: { lane: string; card?: BoardCard }, event: DragEvent) => {
       event.preventDefault();
+      // A card drop sits inside its lane's drop zone. Without this the lane
+      // handler ran second on the same event and sent a second reorder that
+      // overrode the card's.
+      event.stopPropagation();
       const id = event.dataTransfer.getData(DRAG_TYPE);
       const card = dragging?.id === id ? dragging : cardOf(id);
       clearDrag();
@@ -219,9 +385,15 @@ export function BoardView(): ReactNode {
         case "queue":
           attempt(() => api.submitCard(card.id));
           return;
-        case "reorder":
-          attempt(() => api.reorderCard(card.id, target.card?.id ?? null));
+        case "reorder": {
+          const lane = laneCards(board.cards, "queued");
+          const at = target.card === undefined ? undefined : lane.findIndex((c) => c.id === target.card?.id);
+          if (at === -1) return;
+          const before = dropBefore(lane, card, at);
+          if (before === undefined) return;
+          attempt(() => api.reorderCard(card.id, before));
           return;
+        }
         case "block": {
           // A Working card dropped on a queued one becomes its blocker.
           const onto = target.card;
@@ -235,7 +407,7 @@ export function BoardView(): ReactNode {
           return;
       }
     },
-    [api, attempt, byId, cardOf, clearDrag, dragging],
+    [api, attempt, board.cards, byId, cardOf, clearDrag, dragging],
   );
 
   const laneProps = (lane: string) => ({
@@ -264,15 +436,13 @@ export function BoardView(): ReactNode {
       const at = rows.findIndex((row) => row.contains(document.activeElement));
       if (at === -1) return;
       event.preventDefault();
-      const step = event.key === "ArrowDown" ? 1 : -1;
+      const step: 1 | -1 = event.key === "ArrowDown" ? 1 : -1;
       const card = cards[at];
       if (event.altKey) {
         if (card === undefined || !queueable(card)) return;
-        // `before` is the card to insert ahead of; moving down has to clear
-        // the neighbour it swaps with, hence at + 2.
-        const before = step === 1 ? cards[at + 2] : cards[at - 1];
-        if (step === 1 ? at === cards.length - 1 : at === 0) return;
-        attempt(() => api.reorderCard(card.id, before?.id ?? null));
+        const before = nudgeBefore(cards, at, step);
+        if (before === undefined) return;
+        attempt(() => api.reorderCard(card.id, before));
         return;
       }
       rows[at + step]?.focus();
@@ -281,14 +451,45 @@ export function BoardView(): ReactNode {
   );
 
   if (board.enabled === false) {
+    // The switch lives here as well as in Settings: the person who finds this
+    // screen is the person who wants the board, and sending them off to a
+    // settings section to flip four rows was a chore the API never required.
+    const turnOn = () => {
+      setEnabling(true);
+      void enableKanban(api).then((problem) => {
+        setEnabling(false);
+        setNotice(problem);
+        // Refresh even on a partial failure: any row that did mount changes
+        // what `/api/board` answers, and the board coming up (or not) is a
+        // truer report than the message alone.
+        board.refresh();
+      });
+    };
     return (
       <main className="panel board board-off">
         <div className="board-empty">
           <h2>Kanban mode is off</h2>
           <p>
-            Turn on the four <strong>kanban</strong> rows in Settings and every new thread becomes a
-            card here, cleared by an evaluator before it runs.
+            Turn it on and every new thread becomes a card here, cleared by an evaluator before it
+            runs.
           </p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={turnOn}
+            disabled={enabling}
+          >
+            {enabling ? "Turning on…" : "Turn on kanban mode"}
+          </button>
+          <p className="board-empty-note">
+            Flips the four <strong>kanban</strong> rows in this project&rsquo;s settings — the same
+            switches the Settings window shows.
+          </p>
+          {notice !== null && (
+            <p className="board-notice" role="status">
+              {notice}
+            </p>
+          )}
         </div>
       </main>
     );
@@ -296,6 +497,8 @@ export function BoardView(): ReactNode {
 
   const known = board.enabled !== null;
   const needsYou = board.cards.filter((card) => card.column === "attention").length;
+  const sessionOf = (card: BoardCard) => (card.sessionId === null ? undefined : byId.get(card.sessionId));
+  const hits = searching ? board.cards.filter((card) => cardMatches(card, sessionOf(card), query)).length : 0;
 
   return (
     <main className="panel board">
@@ -309,6 +512,62 @@ export function BoardView(): ReactNode {
           </span>
         )}
         <span className="composer-spacer" />
+        {searching && known && (
+          <span className="board-search-count" role="status">
+            {hits === 0 ? "no matches" : `${hits} ${hits === 1 ? "match" : "matches"}`}
+          </span>
+        )}
+        <div className={`board-search${searching ? " is-active" : ""}`}>
+          <svg
+            className="board-search-glyph"
+            viewBox="0 0 12 12"
+            width="12"
+            height="12"
+            aria-hidden="true"
+            focusable="false"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          >
+            <circle cx="5" cy="5" r="3.4" />
+            <path d="M7.6 7.6 10.6 10.6" />
+          </svg>
+          <input
+            ref={searchRef}
+            type="text"
+            aria-label="Search cards"
+            placeholder="Search cards"
+            title="Search cards (⌘F)"
+            spellCheck={false}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              // The native search-field rhythm: the first Escape clears the
+              // query, the second leaves the field.
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              if (query.length > 0) setQuery("");
+              else event.currentTarget.blur();
+            }}
+          />
+          {query.length > 0 && (
+            <button
+              type="button"
+              className="board-search-clear"
+              aria-label="Clear search"
+              title="Clear search"
+              onClick={() => {
+                setQuery("");
+                searchRef.current?.focus();
+              }}
+            >
+              <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M3 3l6 6M9 3l-6 6" />
+              </svg>
+            </button>
+          )}
+        </div>
         <button
           type="button"
           className="btn"
@@ -326,16 +585,43 @@ export function BoardView(): ReactNode {
           </button>
         </p>
       )}
-      <div className={`board-lanes${dragging !== null ? " is-dragging" : ""}`}>
+      <div ref={lanesRef} className={`board-lanes${dragging !== null ? " is-dragging" : ""}`}>
         {LANES.map((lane) => {
-          const cards = board.cards.filter((card) => laneOf(card) === lane.id);
+          const inLane = laneCards(board.cards, lane.id);
+          const shelvedHere = inLane.filter((card) => isShelved(card, sessionOf(card)));
+          const shelf = new Set(shelvedHere.map((card) => card.id));
+          // Archived cards sit below the shelf row rather than back in their
+          // old places: they were taken off the lane on purpose, and
+          // interleaving them would undo the one thing archiving does.
+          const onLane = inLane.filter((card) => !shelf.has(card.id));
+          const cards = laneShows(
+            onLane,
+            shelvedHere,
+            showShelf,
+            searching ? (card) => cardMatches(card, sessionOf(card), query) : null,
+          );
+          const current = searching ? cards.length : onLane.length;
+          const shelfRow =
+            lane.id === "done" && known && !searching && shelvedHere.length > 0 ? (
+              <button
+                type="button"
+                className="rail-more board-shelf"
+                aria-expanded={showShelf}
+                onClick={() => setShowShelf((open) => !open)}
+              >
+                {showShelf ? "Hide archived" : "Archived"}
+                <span className="rail-more-count">{shelvedHere.length}</span>
+              </button>
+            ) : null;
           const move = dragging === null ? null : moveTo(dragging, lane.id);
           const armed = move !== null;
           const state = dragging === null ? "" : armed ? " is-armed" : " is-inert";
           return (
             <section
               key={lane.id}
-              className={`board-lane board-lane-${lane.id}${state}${over === lane.id && armed ? " is-over" : ""}`}
+              className={`board-lane board-lane-${lane.id}${state}${over === lane.id && armed ? " is-over" : ""}${
+                searching && known && cards.length === 0 ? " is-unmatched" : ""
+              }`}
               style={{ ["--lane-w" as string]: LANE_WEIGHT[lane.id] ?? 1 }}
               aria-label={lane.label}
               {...(armed ? laneProps(lane.id) : {})}
@@ -345,7 +631,26 @@ export function BoardView(): ReactNode {
                 {armed && move !== null ? (
                   <span className="board-lane-move">{moveVerb(move)}</span>
                 ) : (
-                  known && <span className="board-lane-count">{cards.length}</span>
+                  known && <span className="board-lane-count">{current}</span>
+                )}
+                {lane.id === "done" && known && dragging === null && !searching && current > 1 && (
+                  <button
+                    type="button"
+                    className="btn btn-quiet btn-icon board-lane-act"
+                    aria-label="Archive all finished cards"
+                    title="Archive all finished cards"
+                    onClick={() =>
+                      attempt(() =>
+                        Promise.all(
+                          onLane
+                            .filter((card) => card.sessionId !== null)
+                            .map((card) => api.archive(card.sessionId!, true)),
+                        ),
+                      )
+                    }
+                  >
+                    <ArchiveIcon />
+                  </button>
                 )}
               </h2>
               {/* No role="list" here: the same box also holds the Drafts
@@ -353,7 +658,7 @@ export function BoardView(): ReactNode {
                   whose children are not all list items is worse for a screen
                   reader than the section's own label. */}
               <div className="board-lane-cards" onKeyDown={laneKeys(cards)}>
-                {lane.id === "draft" && (
+                {lane.id === "draft" && !searching && (
                   <button type="button" className="board-lane-new" onClick={newSession}>
                     + New card
                   </button>
@@ -363,60 +668,75 @@ export function BoardView(): ReactNode {
                     <div key={i} className="skeleton board-card-skel" />
                   ))}
                 {cards.map((card) => (
-                  <Card
-                    key={card.id}
-                    card={card}
-                    session={card.sessionId === null ? undefined : byId.get(card.sessionId)}
-                    evaluator={card.evaluatorSessionId === null ? undefined : byId.get(card.evaluatorSessionId)}
-                    dragging={dragging?.id === card.id}
-                    target={
-                      overCard === card.id && dragging !== null && dragging.id !== card.id
-                        ? moveTo(dragging, lane.id)
-                        : null
-                    }
-                    blockerName={
-                      dragging === null || dragging.sessionId === null
-                        ? undefined
-                        : (byId.get(dragging.sessionId)?.name ?? dragging.sessionId)
-                    }
-                    tabbable={(cursor[lane.id] ?? cards[0]?.id) === card.id}
-                    onFocus={() => setCursor((prev) => ({ ...prev, [lane.id]: card.id }))}
-                    reorderable={queueable(card) && cards.length > 1}
-                    onDragStart={(event) => {
-                      event.dataTransfer.setData(DRAG_TYPE, card.id);
-                      event.dataTransfer.effectAllowed = "move";
-                      setDragging(card);
-                    }}
-                    onDragEnd={clearDrag}
-                    onDragOver={
-                      lane.id === "queued"
-                        ? (event) => {
-                            if (!event.dataTransfer.types.includes(DRAG_TYPE)) return;
-                            if (dragging === null || moveTo(dragging, "queued") === null) return;
-                            event.preventDefault();
-                            setOverCard(card.id);
-                          }
-                        : undefined
-                    }
-                    onDragLeave={() => setOverCard((id) => (id === card.id ? null : id))}
-                    onDrop={lane.id === "queued" ? (event) => drop({ lane: "queued", card }, event) : undefined}
-                    onOpen={(id) => select(id)}
-                    onStart={() => attempt(() => api.startCard(card.id))}
-                    onSubmit={() => attempt(() => api.submitCard(card.id))}
-                    onCancel={() => attempt(() => api.cancelCard(card.id))}
-                    onSave={(task) => attempt(() => api.patchCard(card.id, { task }))}
-                    onUnblock={(name) =>
-                      attempt(() =>
-                        api.setCardBlockers(
-                          card.id,
-                          card.blockedBy.map((b) => b.blockerName).filter((n) => n !== name),
-                        ),
-                      )
-                    }
-                  />
+                  <Fragment key={card.id}>
+                    {showShelf && card.id === shelvedHere[0]?.id && shelfRow}
+                    <Card
+                      card={card}
+                      session={card.sessionId === null ? undefined : byId.get(card.sessionId)}
+                      evaluator={card.evaluatorSessionId === null ? undefined : byId.get(card.evaluatorSessionId)}
+                      dragging={dragging?.id === card.id}
+                      target={
+                        overCard === card.id && dragging !== null && dragging.id !== card.id
+                          ? moveTo(dragging, lane.id)
+                          : null
+                      }
+                      blockerName={
+                        dragging === null || dragging.sessionId === null
+                          ? undefined
+                          : (byId.get(dragging.sessionId)?.name ?? dragging.sessionId)
+                      }
+                      tabbable={(cursor[lane.id] ?? cards[0]?.id) === card.id}
+                      onFocus={() => setCursor((prev) => ({ ...prev, [lane.id]: card.id }))}
+                      reorderable={queueable(card) && cards.length > 1}
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData(DRAG_TYPE, card.id);
+                        event.dataTransfer.effectAllowed = "move";
+                        setDragging(card);
+                      }}
+                      onDragEnd={clearDrag}
+                      onDragOver={
+                        lane.id === "queued"
+                          ? (event) => {
+                              if (!event.dataTransfer.types.includes(DRAG_TYPE)) return;
+                              if (dragging === null || moveTo(dragging, "queued") === null) return;
+                              event.preventDefault();
+                              setOverCard(card.id);
+                            }
+                          : undefined
+                      }
+                      onDragLeave={() => setOverCard((id) => (id === card.id ? null : id))}
+                      onDrop={lane.id === "queued" ? (event) => drop({ lane: "queued", card }, event) : undefined}
+                      onOpen={(id) => select(id)}
+                      onStart={() => attempt(() => api.startCard(card.id))}
+                      onSubmit={() => attempt(() => api.submitCard(card.id))}
+                      onCancel={() => attempt(() => api.cancelCard(card.id))}
+                      onSave={(task) => attempt(() => api.patchCard(card.id, { task }))}
+                      archived={shelf.has(card.id)}
+                      onArchive={
+                        card.column === "done" && card.sessionId !== null
+                          ? () => attempt(() => api.archive(card.sessionId!, !shelf.has(card.id)))
+                          : undefined
+                      }
+                      onUnblock={(name) =>
+                        attempt(() =>
+                          api.setCardBlockers(
+                            card.id,
+                            card.blockedBy.map((b) => b.blockerName).filter((n) => n !== name),
+                          ),
+                        )
+                      }
+                    />
+                  </Fragment>
                 ))}
-                {known && cards.length === 0 && lane.id !== "draft" && (
-                  <p className="board-lane-empty">{emptyLine(lane.id)}</p>
+                {!showShelf && shelfRow}
+                {known && cards.length === 0 && (searching || lane.id !== "draft") && (
+                  <p className="board-lane-empty">
+                    {searching
+                      ? "no matching cards."
+                      : shelvedHere.length > 0
+                        ? "every finished card is archived."
+                        : emptyLine(lane.id)}
+                  </p>
                 )}
               </div>
             </section>
@@ -481,6 +801,10 @@ function Card(props: {
   onCancel(): void;
   onSave(task: string): void;
   onUnblock(name: string): void;
+  /** Done cards only: its thread is on the archive shelf. */
+  archived: boolean;
+  /** Archive, or restore when `archived`. Absent where neither applies. */
+  onArchive?: (() => void) | undefined;
 }): ReactNode {
   const { card, session, evaluator, target } = props;
   const [editing, setEditing] = useState(false);
@@ -542,7 +866,7 @@ function Card(props: {
         target === "block" ? " is-target" : ""
       }${target === "reorder" || target === "queue" ? " is-insert" : ""}${
         openId !== null ? " is-openable" : ""
-      }`}
+      }${props.archived ? " is-archived" : ""}`}
       {...(openId !== null && !editing ? { onClick: openFromClick, onKeyDown: openFromKey } : {})}
       draggable={draggable(card)}
       onDragStart={props.onDragStart}
@@ -557,8 +881,21 @@ function Card(props: {
           <StatusGlyph status={status} />
         </span>
         <span className="board-card-title">{card.title}</span>
-        <span className="board-card-time" title={new Date(card.updatedAt).toLocaleString()}>
-          {fmtAgo(card.updatedAt)}
+        <span className="board-card-end">
+          <span className="board-card-time" title={new Date(card.updatedAt).toLocaleString()}>
+            {fmtAgo(card.updatedAt)}
+          </span>
+          {props.onArchive !== undefined && (
+            <button
+              type="button"
+              className="btn btn-quiet btn-icon board-card-archive"
+              aria-label={props.archived ? "Restore from archive" : "Archive"}
+              title={props.archived ? "Restore from archive" : "Archive"}
+              onClick={props.onArchive}
+            >
+              {props.archived ? <UnarchiveIcon /> : <ArchiveIcon />}
+            </button>
+          )}
         </span>
       </div>
 

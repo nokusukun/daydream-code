@@ -50,6 +50,19 @@ export function evaluationMarker(cardId: string): string {
 
 type Row = typeof schema.boardCards.$inferSelect;
 
+/** Columns of a card that has not started yet and is still in queue order. */
+const WAITING: readonly BoardColumn[] = ["queued", "evaluating", "blocked"];
+
+/**
+ * Whether `card` may wait on `target`: the target is ahead in queue order and
+ * has not started. "Ahead" is what makes defers acyclic — every hold points
+ * at a strictly lower position — so a chain of them always ends at a card
+ * that is not waiting on anything.
+ */
+function waitsBehind(card: BoardCard, target: BoardCard): boolean {
+  return WAITING.includes(target.column) && target.position < card.position;
+}
+
 /**
  * Default provider: sqlite rows, the column state machine, the queue pump,
  * and the two intercepts. See index.ts for what each move means.
@@ -216,7 +229,10 @@ export default class BoardSqlite extends Board {
     this.#write(id, { position });
     const moved = this.get(id)!;
     this.ctx.emit("board/moved", moved, moved.column);
-    return moved;
+    // A defer only holds while its target is ahead; carrying a card past the
+    // one it waits on (or that one past it) ends the wait.
+    this.#pump();
+    return this.get(id)!;
   }
 
   async start(id: string): Promise<BoardCard> {
@@ -342,22 +358,15 @@ export default class BoardSqlite extends Board {
       }
       case "defer": {
         const target = this.get(input.deferTo);
-        if (target === undefined || target.column !== "evaluating" || target.position >= card.position) {
-          const ahead = this.list()
-            .filter((c) => c.column === "evaluating" && c.position < card.position)
-            .map((c) => c.id);
-          throw new BoardError(
-            "bad-defer",
-            `"${input.deferTo}" is not an Evaluating card ahead of ${id} in the queue` +
-              (ahead.length > 0 ? `; those are: ${ahead.join(", ")}` : "; there are none, so decide now"),
-          );
+        if (target === undefined || !waitsBehind(card, target)) {
+          throw new BoardError("bad-defer", this.#deferHint(card, input.deferTo, target));
         }
         this.#write(id, {
           verdictJson: JSON.stringify({ ...input, at } satisfies Verdict),
           evaluatorSessionId: from,
         });
-        // Back to Queued with the defer on record; `#pump` skips it until
-        // the target leaves Evaluating.
+        // Back to Queued with the defer on record; `#pump` holds it there
+        // until the target starts or leaves the queue.
         return this.#move(this.get(id)!, "queued");
       }
     }
@@ -490,19 +499,28 @@ export default class BoardSqlite extends Board {
   // -------------------------------------------------------------------------
   // The machine
 
-  /** Move every Queued card that is not deferring into Evaluating. */
+  /** Move every Queued card that is not held by a defer into Evaluating. */
   #pump(): void {
     const cards = this.list();
-    const evaluating = new Set(cards.filter((c) => c.column === "evaluating").map((c) => c.id));
+    const byId = new Map(cards.map((c) => [c.id, c]));
     for (const card of cards) {
       if (card.column !== "queued") continue;
-      if (card.verdict?.decision === "defer" && evaluating.has(card.verdict.deferTo)) continue;
+      if (card.verdict?.decision === "defer") {
+        // Re-checked on every pump rather than trusted from verdict time: a
+        // reorder can carry the card ahead of its target, and a hold on a
+        // card *behind* is how two cards end up waiting on each other.
+        const target = byId.get(card.verdict.deferTo);
+        if (target !== undefined && waitsBehind(card, target)) continue;
+      }
       this.#move(card, "evaluating");
     }
   }
 
   async #launch(card: BoardCard): Promise<BoardCard> {
     let handle: SessionHandle;
+    // The evaluator's verdict is what starts the run, so the two are linked:
+    // neither is woken by master-thread news of the other's half of the step.
+    const causedBy = card.evaluatorSessionId !== null ? [card.evaluatorSessionId] : [];
     if (card.sessionId !== null) {
       this.#releasing.add(card.sessionId);
       try {
@@ -510,12 +528,18 @@ export default class BoardSqlite extends Board {
           card.sessionId,
           card.task,
           card.request.attachments,
+          "continue",
+          causedBy,
         );
       } finally {
         this.#releasing.delete(card.sessionId);
       }
     } else {
-      const request: DispatchRequest = { task: card.task, ...card.request };
+      const request: DispatchRequest = {
+        task: card.task,
+        ...card.request,
+        ...(causedBy.length > 0 ? { causedBy } : {}),
+      };
       this.#owned.add(request);
       handle = await this.ctx.sessions.dispatch(request);
     }
@@ -576,8 +600,13 @@ export default class BoardSqlite extends Board {
     });
     const moved = this.get(card.id)!;
     this.ctx.emit("board/moved", moved, card.column);
-    // Leaving Evaluating may unblock a deferred card waiting on this one.
-    if (card.column === "evaluating" && to !== "evaluating") this.#pump();
+    // A card deferring on this one is released when it leaves the waiting
+    // columns (a verdict that launches it, a force start). Leaving
+    // Evaluating for Queued or Blocked releases nobody, but it is also the
+    // end of a round, which the pump has always followed. Queued → Evaluating
+    // is excluded because the pump itself makes that move.
+    const leftWaiting = WAITING.includes(card.column) && !WAITING.includes(to);
+    if ((card.column === "evaluating" && to !== "evaluating") || leftWaiting) this.#pump();
     return moved;
   }
 
@@ -710,6 +739,35 @@ export default class BoardSqlite extends Board {
       );
     }
     return working;
+  }
+
+  /**
+   * Why a defer was refused, phrased as what to do instead. The common case
+   * is a race, not a typo: the evaluator's prompt is a snapshot, and the card
+   * it wants to wait on may have launched while it was reading files. Then
+   * the right verdict is a block on that card's session, so name it.
+   */
+  #deferHint(card: BoardCard, deferTo: string, target: BoardCard | undefined): string {
+    const ahead = this.list()
+      .filter((c) => c.id !== card.id && waitsBehind(card, c))
+      .map((c) => `${c.id} (${c.column})`);
+    let why: string;
+    if (target === undefined) why = `"${deferTo}" is not a card on this board`;
+    else if (target.id === card.id) why = "a card cannot wait on itself";
+    else if (!WAITING.includes(target.column)) {
+      const session = target.sessionId === null ? undefined : this.ctx.sessions.get(target.sessionId);
+      why =
+        target.column === "working" && session !== undefined
+          ? `card ${target.id} has already started, as session ${session.name}; if this card conflicts with it, block on ${session.name} instead`
+          : `card ${target.id} is ${target.column}, no longer waiting in the queue`;
+    } else why = `card ${target.id} is behind ${card.id} in the queue; only a card ahead can be waited on`;
+    return (
+      why +
+      (ahead.length > 0
+        ? `. Cards ahead still waiting: ${ahead.join(", ")}`
+        : ". No card ahead is still waiting, so decide between proceed and block") +
+      this.#workingHint()
+    );
   }
 
   #workingHint(): string {

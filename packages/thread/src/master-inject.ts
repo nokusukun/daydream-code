@@ -1,7 +1,7 @@
 import { eq, inArray } from "@daydream-code/store/drizzle";
 import type { Context } from "@daydream-code/kernel";
 import { schema } from "@daydream-code/store";
-import type { SessionRecord, ThreadEntry } from "@daydream-code/shared";
+import type { SessionId, SessionRecord, ThreadEntry } from "@daydream-code/shared";
 import type {} from "./index.js";
 
 /** Max entries delivered per turn; older backlog is pointed at, not inlined. */
@@ -21,6 +21,35 @@ const MAX_ENTRIES = 50;
  */
 function elidesSummary(kind: ThreadEntry["kind"]): boolean {
   return kind === "session_turn_end" || kind === "session_summary";
+}
+
+/**
+ * Whether handing `entry` to `reader` would only tell it about itself.
+ *
+ * Automatic entries — turn ends, run ends, dispatches, board notes — record
+ * which sessions they echo. Without this, two live sessions ping-pong: A's
+ * turn end wakes B, B's "nothing for me here" turn end wakes A, and so on, each
+ * round spending a turn on the other's reaction to itself. A deliberate
+ * message (`session_message`) never carries `causedBy`, so a real reply always
+ * gets through.
+ */
+function echoes(entry: ThreadEntry, reader: SessionId): boolean {
+  return entry.causedBy?.includes(reader) ?? false;
+}
+
+/**
+ * The sessions an automatic entry reports on: its author and everything the
+ * author was itself echoing. Transitive on purpose — a turn woken by B's
+ * reaction to A is still, at bottom, a reaction to A, and stopping only the
+ * direct echo would leave a three-session loop running. Every hop adds a
+ * session, so any chain dies once it has been through each of them.
+ */
+function causesOf(entry: ThreadEntry): SessionId[] {
+  if (entry.kind === "session_message") return [];
+  return [
+    ...(entry.sessionId !== undefined ? [entry.sessionId] : []),
+    ...(entry.causedBy ?? []),
+  ];
 }
 
 type SessionLabel = { name: string; status: string };
@@ -101,9 +130,10 @@ function entryLine(entry: ThreadEntry, labels: Map<string, SessionLabel>): strin
  * Consumer plugin: live sibling awareness. At every turn boundary the runner
  * emits session/collect-injections; this plugin contributes a
  * `[master thread update]` block with everything on master past the session's
- * lastSeenMasterSeq cursor, then advances the cursor. Own entries and
- * session_messages addressed to other sessions are filtered out, and turn-end
- * and session-end entries are reduced to the fact that they happened.
+ * lastSeenMasterSeq cursor, then advances the cursor. Own entries, entries
+ * that only echo this session back to itself, and session_messages addressed
+ * to other sessions are filtered out, and turn-end and session-end entries are
+ * reduced to the fact that they happened.
  */
 const masterInject = {
   name: "master-inject",
@@ -111,7 +141,7 @@ const masterInject = {
   apply(ctx: Context) {
     ctx.on(
       "session/collect-injections",
-      (session: SessionRecord, blocks: string[]) => {
+      (session: SessionRecord, blocks: string[], causes?: Set<SessionId>) => {
         const master = ctx.threads.ensureMaster();
         const maxSeq = ctx.threads.maxSeq(master.id);
         if (maxSeq <= session.lastSeenMasterSeq) return;
@@ -120,6 +150,7 @@ const masterInject = {
           .entries(master.id, { fromSeq: session.lastSeenMasterSeq + 1 })
           .filter((entry) => {
             if (entry.sessionId === session.id) return false; // it already knows
+            if (echoes(entry, session.id)) return false;
             if (entry.kind === "session_message") {
               return entry.toSessionId == null || entry.toSessionId === session.id;
             }
@@ -135,6 +166,9 @@ const masterInject = {
         session.lastSeenMasterSeq = maxSeq;
 
         if (fresh.length === 0) return;
+        for (const entry of fresh) {
+          for (const cause of causesOf(entry)) causes?.add(cause);
+        }
         const shown = fresh.slice(-MAX_ENTRIES);
         const dropped = fresh.length - shown.length;
         const labels = labelsFor(ctx, shown);

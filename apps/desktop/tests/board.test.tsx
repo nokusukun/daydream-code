@@ -16,7 +16,17 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { titleFromTask, type SessionRecord } from "@daydream-code/shared";
 import type { BoardCard, BoardColumn } from "../src/api.js";
-import { moveTo, moveVerb, openTargetOf, taskSubtext, type Move } from "../src/views/BoardView.js";
+import {
+  dropBefore,
+  laneCards,
+  moveTo,
+  moveVerb,
+  nudgeBefore,
+  openTargetOf,
+  taskSubtext,
+  type Move,
+} from "../src/views/BoardView.js";
+import { enableKanban } from "../src/board.js";
 
 vi.mock("../src/harness.js", () => ({
   useHarness: () => ({ api: {}, select: vi.fn(), newSession: vi.fn() }),
@@ -113,6 +123,71 @@ describe("what a drag would do", () => {
     const verbs = moves.map(moveVerb);
     expect(new Set(verbs).size).toBe(moves.length);
     for (const verb of verbs) expect(verb.length).toBeGreaterThan(3);
+  });
+});
+
+describe("a board that is off", () => {
+  it("offers the switch itself instead of only pointing at Settings", async () => {
+    const html = await render([], false);
+    expect(html).toContain("Kanban mode is off");
+    expect(html).toContain("Turn on kanban mode");
+    // And says what the switch is, so Settings showing the same four rows
+    // flipped is a confirmation rather than a surprise.
+    expect(html).toContain("four");
+  });
+});
+
+describe("enableKanban", () => {
+  const outcome = (id: string, status: string) => ({
+    view: {} as never,
+    outcomes: [{ id, status }] as never,
+  });
+
+  it("flips exactly the four kanban rows, in the project layer, routes last", async () => {
+    const writeSetting = vi.fn((request: { id: string }) =>
+      Promise.resolve(outcome(request.id, "mounted")),
+    );
+    expect(await enableKanban({ writeSetting: writeSetting as never })).toBeNull();
+    expect(writeSetting.mock.calls.map(([request]) => request)).toEqual(
+      ["board", "board-evaluator", "board-writeback", "board-routes"].map((id) => ({
+        layer: "project",
+        id,
+        set: { disabled: false },
+      })),
+    );
+  });
+
+  it("names the row that failed to start", async () => {
+    const writeSetting = vi.fn((request: { id: string }) =>
+      Promise.resolve(
+        request.id === "board-evaluator"
+          ? { view: {} as never, outcomes: [{ id: request.id, status: "failed", reason: "no driver" }] as never }
+          : outcome(request.id, "mounted"),
+      ),
+    );
+    const message = await enableKanban({ writeSetting: writeSetting as never });
+    expect(message).toContain("board-evaluator");
+    expect(message).toContain("no driver");
+    // The other rows were still written: a half-flipped switch that stops
+    // silently would leave no way to see which half from the board.
+    expect(writeSetting).toHaveBeenCalledTimes(4);
+  });
+
+  it("reports a saved-but-not-live row as needing a restart, not as a failure", async () => {
+    const writeSetting = vi.fn((request: { id: string }) =>
+      Promise.resolve(outcome(request.id, "restart-required")),
+    );
+    const message = await enableKanban({ writeSetting: writeSetting as never });
+    expect(message).toContain("restart");
+    expect(message).not.toContain("fail");
+  });
+
+  it("stops at the first write the server refused", async () => {
+    const writeSetting = vi.fn(() => Promise.reject(new Error("layer file is read-only")));
+    const message = await enableKanban({ writeSetting: writeSetting as never });
+    expect(message).toContain("board");
+    expect(message).toContain("layer file is read-only");
+    expect(writeSetting).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -339,5 +414,56 @@ describe("the stylesheet", () => {
     // `.transcript > *` and `.runs > *` learned this the hard way: a flex
     // column that scrolls shrinks its children into hairlines.
     expect(board).toMatch(/\.board-lane-cards > \* \{\s*flex: none;/);
+  });
+});
+
+describe("lane order", () => {
+  // `position` is the queue's priority and stays ascending on the server; the
+  // board only flips it for display. These pin that the flip is undone on
+  // every path back to `reorderCard`, so "up" on screen is up in the queue.
+  const q = (id: string, position: number) => card("queued", { id, position });
+  const lane = laneCards([q("a", 1), q("b", 2), q("c", 3), card("done", { id: "d", position: 4 })], "queued");
+
+  it("puts the newest card on top", () => {
+    expect(lane.map((c) => c.id)).toEqual(["c", "b", "a"]);
+  });
+
+  it("renders newest first in every lane", async () => {
+    const html = await render([
+      card("done", { id: "old", position: 1, title: "older done" }),
+      card("done", { id: "new", position: 5, title: "newer done" }),
+    ]);
+    expect(html.indexOf("newer done")).toBeGreaterThan(-1);
+    expect(html.indexOf("newer done")).toBeLessThan(html.indexOf("older done"));
+  });
+
+  it("⌥↑ lands the card above its on-screen neighbour", () => {
+    // b (index 1) moving up must end above c: the tail, i.e. `before: null`.
+    expect(nudgeBefore(lane, 1, -1)).toBeNull();
+    // a (index 2) moving up must land between c and b: just below c.
+    expect(nudgeBefore(lane, 2, -1)).toBe("c");
+    expect(nudgeBefore(lane, 0, -1)).toBeUndefined();
+  });
+
+  it("⌥↓ lands the card below its on-screen neighbour", () => {
+    // c (index 0) moving down must land between b and a: just below b.
+    expect(nudgeBefore(lane, 0, 1)).toBe("b");
+    expect(nudgeBefore(lane, 1, 1)).toBe("a");
+    expect(nudgeBefore(lane, 2, 1)).toBeUndefined();
+  });
+
+  it("a drop on a card takes the seam above it", () => {
+    const a = lane[2]!;
+    // a dropped on c (the top card) goes to the top: the tail.
+    expect(dropBefore(lane, a, 0)).toBeNull();
+    // a dropped on b lands between c and b: just below c.
+    expect(dropBefore(lane, a, 1)).toBe("c");
+    // c dropped on b is already in that seam.
+    expect(dropBefore(lane, lane[0]!, 1)).toBeUndefined();
+  });
+
+  it("a drop on the lane itself goes to the bottom", () => {
+    expect(dropBefore(lane, lane[0]!)).toBe("a");
+    expect(dropBefore(lane, lane[2]!)).toBeUndefined();
   });
 });

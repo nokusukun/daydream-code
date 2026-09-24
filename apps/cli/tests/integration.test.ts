@@ -484,6 +484,69 @@ describe("headless end-to-end (mock driver)", () => {
     expect(blob).toContain("second note after B forked");
   });
 
+  it("a turn woken only by a sibling's updates is not reported back to that sibling", async () => {
+    const root = tempProject();
+    const { ctx } = await bootProject(root, [{ tool: "hang" }, { turn: "own work" }]);
+    let waiters: Array<() => void> = [];
+    ctx.tools.register(ctx, {
+      name: "hang",
+      description: "test only: block until released",
+      parameters: { type: "object", properties: {} },
+      execute: () => new Promise<unknown>((resolve) => waiters.push(() => resolve({ released: true }))),
+    });
+    const release = () => {
+      const pending = waiters;
+      waiters = [];
+      for (const w of pending) w();
+    };
+    const waitFor = async (what: string, predicate: () => boolean) => {
+      const deadline = Date.now() + 5_000;
+      while (!predicate()) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    };
+
+    // A is live and mid-tool while B runs to completion, so B's turn end and
+    // run end reach A as a master update at A's next boundary.
+    const a = await ctx.sessions.dispatch({ task: "alpha", driver: "mock" });
+    await waitFor("A hanging", () => waiters.length === 1);
+    const b = await ctx.sessions.dispatch({ task: "beta", driver: "mock" });
+    await waitFor("B hanging", () => waiters.length === 2);
+    waiters.pop()!(); // B's hang: B finishes
+    await b.done;
+    const master = ThreadId(ctx.threads.ensureMaster().id);
+    await waitFor("B's run end on master", () =>
+      ctx.threads.entries(master).some((e) => e.kind === "session_summary" && e.sessionId === b.record.id),
+    );
+    release(); // A reacts to B, then does its own work
+    await a.done;
+    await waitFor("A's turn ends on master", () =>
+      ctx.threads.entries(master).filter((e) => e.kind === "session_turn_end" && e.sessionId === a.record.id).length >= 2,
+    );
+
+    const aTurns = ctx.threads
+      .entries(master)
+      .filter((e) => e.kind === "session_turn_end" && e.sessionId === a.record.id);
+    // One reaction to B, recorded as B's echo; one of A's own, recorded as nobody's.
+    expect(aTurns.map((e) => e.causedBy ?? [])).toEqual(
+      expect.arrayContaining([[b.record.id], []]),
+    );
+
+    // B, continued by the user, hears about A's own turn but not A's reaction to it.
+    const revived = await ctx.sessions.continueSession(b.record.id, "keep going");
+    await waitFor("B hanging again", () => waiters.length === 1);
+    release();
+    await revived.done;
+    const blob = ctx.journal
+      .read({ sessionId: b.record.id })
+      .filter((e) => e.type === "user_injected")
+      .map((e) => JSON.stringify(e.payload))
+      .join("\n");
+    const aName = ctx.sessions.get(a.record.id)!.name;
+    expect(blob.split(`session ${aName} turn end`).length - 1).toBe(1);
+  });
+
   it("broadcasts that a sibling's turn ended, without its summary text", async () => {
     const root = tempProject();
     // The mock summary is built from the turn text, so this token appears in

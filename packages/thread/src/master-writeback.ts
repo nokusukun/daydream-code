@@ -1,5 +1,5 @@
 import type { Context } from "@daydream-code/kernel";
-import type { SessionRecord } from "@daydream-code/shared";
+import type { SessionId, SessionRecord } from "@daydream-code/shared";
 
 /**
  * Consumer plugin: translates session lifecycle events into master-thread
@@ -22,6 +22,7 @@ const masterWriteback = {
         session: SessionRecord,
         kind: "new" | "continue" | "ask" | "message",
         message: string,
+        causedBy: readonly SessionId[] = [],
       ) => {
         // A delivered question is recorded as the fact that it happened. The
         // question itself already reached the one session it was addressed to,
@@ -51,28 +52,34 @@ const masterWriteback = {
           threadId: master(),
           kind: "session_dispatch",
           sessionId: session.id,
+          causedBy: [...causedBy],
           message: { role: "user", content },
         });
       },
     );
 
-    ctx.on("session/turn-ended", (session: SessionRecord, summary: string) => {
-      ctx.threads.append({
-        threadId: master(),
-        kind: "session_turn_end",
-        sessionId: session.id,
-        message: {
-          role: "user",
-          content: `session ${session.name} turn end, summary: ${summary}`,
-        },
-      });
-    });
+    ctx.on(
+      "session/turn-ended",
+      (session: SessionRecord, summary: string, causedBy: readonly SessionId[] = []) => {
+        ctx.threads.append({
+          threadId: master(),
+          kind: "session_turn_end",
+          sessionId: session.id,
+          causedBy: [...causedBy],
+          message: {
+            role: "user",
+            content: `session ${session.name} turn end, summary: ${summary}`,
+          },
+        });
+      },
+    );
 
-    ctx.on("session/ended", (session: SessionRecord) => {
+    ctx.on("session/ended", (session: SessionRecord, causedBy: readonly SessionId[] = []) => {
       ctx.threads.append({
         threadId: master(),
         kind: "session_summary",
         sessionId: session.id,
+        causedBy: [...causedBy],
         message: {
           role: "user",
           content:

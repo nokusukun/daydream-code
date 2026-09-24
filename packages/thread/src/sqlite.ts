@@ -101,6 +101,10 @@ export default class ThreadsSqlite extends Threads {
           toSessionId: input.toSessionId ?? null,
           supersedesThroughSeq: input.supersedesThroughSeq ?? null,
           messageJson: JSON.stringify(message),
+          causedByJson:
+            input.causedBy !== undefined && input.causedBy.length > 0
+              ? JSON.stringify([...new Set(input.causedBy)])
+              : null,
           tokenEstimate,
           createdAt: nowIso(),
         })
@@ -228,6 +232,13 @@ export default class ThreadsSqlite extends Threads {
         : {}),
       ...(row.supersedesThroughSeq !== null
         ? { supersedesThroughSeq: row.supersedesThroughSeq }
+        : {}),
+      ...(row.causedByJson !== null
+        ? {
+            causedBy: (JSON.parse(row.causedByJson) as string[]).map((id) =>
+              SessionId(id),
+            ),
+          }
         : {}),
     };
   }

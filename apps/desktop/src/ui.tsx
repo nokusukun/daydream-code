@@ -133,6 +133,57 @@ export function StopIcon(): ReactNode {
 }
 
 /**
+ * Archive: the lidded box Mail and Finder use, drawn in the gear and bolt's
+ * stroke family. A tray or a down-arrow reads as "download" at 15px; the lid
+ * is what makes it a shelf.
+ */
+export function ArchiveIcon(): ReactNode {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={15}
+      height={15}
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="2" y="2.6" width="12" height="3.4" rx="1" />
+      <path d="M3.2 6v6a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4V6" />
+      <path d="M6.4 8.8h3.2" />
+    </svg>
+  );
+}
+
+/**
+ * Restore from the archive: the same box with the slot turned into an arrow
+ * leaving it, so the pair reads as one action and its undo.
+ */
+export function UnarchiveIcon(): ReactNode {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={15}
+      height={15}
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="2" y="2.6" width="12" height="3.4" rx="1" />
+      <path d="M3.2 6v6a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4V6" />
+      <path d="M8 11.8V8.2M6.4 9.6 8 8l1.6 1.6" />
+    </svg>
+  );
+}
+
+/**
  * Status as a drawn glyph rather than a coloured dot.
  *
  * A pulsing dot is the default "live" indicator everywhere, and it says

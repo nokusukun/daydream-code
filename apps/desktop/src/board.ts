@@ -7,7 +7,7 @@
  * normal state and not an error; anything else is.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, type BoardCard, type BoardColumn } from "./api.js";
+import { ApiError, type ApiClient, type BoardCard, type BoardColumn } from "./api.js";
 import { useHarness } from "./harness.js";
 
 export interface BoardState {
@@ -72,6 +72,48 @@ export function useBoard(): BoardState {
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
   return useMemo(() => ({ enabled, cards, error, refresh }), [enabled, cards, error, refresh]);
+}
+
+/**
+ * The composition rows that are kanban mode — the same four switches the
+ * settings window's kanban section shows. Routes last: each write mounts its
+ * row live, and the board asks `/api/board` the moment the flow resolves, so
+ * the row that answers that request should be the one that cannot land
+ * before the rows it depends on.
+ */
+export const KANBAN_ROWS = ["board", "board-evaluator", "board-writeback", "board-routes"] as const;
+
+/**
+ * Turn kanban mode on for this project, from the board screen itself.
+ *
+ * Writes to the project layer, not the user layer: kanban is a per-project
+ * workflow (the board, its evaluators and its writeback all hang off one
+ * project's sessions), and this is also where the settings window defaults.
+ *
+ * Returns null on success, or one sentence to show the person. A row that
+ * saved but needs a restart is reported as that, not as a failure — the
+ * switch did flip, the harness just cannot act on it yet.
+ */
+export async function enableKanban(api: Pick<ApiClient, "writeSetting">): Promise<string | null> {
+  const problems: string[] = [];
+  let restart = false;
+  for (const id of KANBAN_ROWS) {
+    try {
+      const result = await api.writeSetting({ layer: "project", id, set: { disabled: false } });
+      const outcome = result.outcomes.find((candidate) => candidate.id === id);
+      if (outcome?.status === "failed") problems.push(`${id}: ${outcome.reason ?? "failed to start"}`);
+      if (outcome?.status === "restart-required") restart = true;
+    } catch (cause) {
+      // The write itself failed, so nothing was saved for this row. The
+      // remaining writes would fail the same way and leave kanban
+      // half-configured with no report of which half; stop and say where.
+      const detail = cause instanceof ApiError ? (cause.detail ?? cause.message) : String(cause);
+      return `could not save ${id}: ${detail}`;
+    }
+  }
+  if (problems.length > 0) return `kanban did not fully start — ${problems.join("; ")}`;
+  if (restart) return "saved — restart Daydream Code to finish turning kanban on";
+  return null;
 }
 
 /** The six lanes a person sees; Blocked lives inside Queued. */

@@ -1,5 +1,5 @@
 import type { Context } from "@daydream-code/kernel";
-import { ThreadId, type SessionRecord } from "@daydream-code/shared";
+import { ThreadId, type SessionId, type SessionRecord } from "@daydream-code/shared";
 import type {} from "@daydream-code/thread";
 import type {} from "@daydream-code/session";
 import type { BoardCard, BoardColumn } from "./index.js";
@@ -52,20 +52,29 @@ const boardWriteback = {
   inject: ["board", "threads", "sessions"] as const,
   apply(ctx: Context) {
     const master = () => ThreadId(ctx.threads.ensureMaster().id);
-    const note = (content: string): void => {
+    // A card's move is news to everyone except the two sessions it is about:
+    // its own run, which is the thing that moved, and its evaluator, whose
+    // verdict usually moved it. Told anyway, each wakes to report that its own
+    // card changed column — the shape that once started a session with a turn
+    // spent reading about its own dispatch.
+    const note = (card: BoardCard, content: string): void => {
+      const causedBy = [card.sessionId, card.evaluatorSessionId].filter(
+        (id): id is SessionId => id !== null,
+      );
       ctx.threads.append({
         threadId: master(),
         kind: "note",
+        causedBy,
         message: { role: "user", content },
       });
     };
 
     ctx.on("board/moved", (card: BoardCard, from: BoardColumn | null) => {
       const line = lineFor(ctx, card, from);
-      if (line !== null) note(line);
+      if (line !== null) note(card, line);
     });
     ctx.on("board/removed", (card: BoardCard) => {
-      if (card.column !== "draft") note(`card ${JSON.stringify(card.title)} cancelled`);
+      if (card.column !== "draft") note(card, `card ${JSON.stringify(card.title)} cancelled`);
     });
 
     const told = new Set<string>();

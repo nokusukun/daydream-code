@@ -32,6 +32,8 @@ async function bootProject(options: {
   work: unknown[];
   evaluator: unknown[];
   server?: boolean;
+  /** Leave the idle fast-path on (its shipped default) instead of pinning it off. */
+  skipWhenIdle?: boolean;
 }): Promise<BootResult & { hang: Hang }> {
   const dir = options.root ?? mkdtempSync(join(tmpdir(), "ddc-board-"));
   if (options.root === undefined) dirs.push(dir);
@@ -46,7 +48,19 @@ async function bootProject(options: {
         config: { id: "mock-eval", script: options.evaluator },
       },
       { id: "board", disabled: false },
-      { id: "board-evaluator", disabled: false, config: { driver: "mock-eval", timeoutMs: 60_000 } },
+      {
+        id: "board-evaluator",
+        disabled: false,
+        config: {
+          driver: "mock-eval",
+          timeoutMs: 60_000,
+          // The machinery tests exercise the evaluator itself, and most of
+          // their cards start on an idle board — the fast-path would launch
+          // them before an evaluator exists. The fast-path tests leave the
+          // field unset so they cover the shipped default, not a pin.
+          ...(options.skipWhenIdle === true ? {} : { skipWhenIdle: false }),
+        },
+      },
       { id: "board-writeback", disabled: false },
       { id: "board-routes", disabled: false },
       ...(options.server === true
@@ -194,6 +208,41 @@ describe("kanban mode", () => {
     expect(notes.some((n) => n.includes("done"))).toBe(true);
   });
 
+  it("a card's session and its evaluator are never woken by news of each other's half of the start", async () => {
+    // The work session stays live across everything the start writes to the
+    // master thread, so any of it that were addressed to it would be drained
+    // at its next turn boundary — which is exactly what used to wake a fresh
+    // session to read that it had just been started.
+    const { ctx, hang } = await bootProject({
+      work: [{ tool: "hang" }, { turn: "did the thing" }],
+      evaluator: [verdict({ decision: "proceed", reason: "nothing is working" })],
+    });
+    const card = await queue(ctx, "fix the widths");
+    const working = await cardIn(ctx, card.id, "working");
+    const worker = working.sessionId!;
+    const evaluator = working.evaluatorSessionId!;
+    await until(ctx, "worker hanging", () => hang.count() >= 1);
+    await until(ctx, "evaluator ended", () => ctx.sessions.get(evaluator)?.status === "completed");
+    hang.release();
+    await cardIn(ctx, card.id, "done");
+
+    const master = ctx.threads.entries(ThreadId(ctx.threads.ensureMaster().id));
+    const started = master.find((e) => e.kind === "note" && String(e.message.content).includes("started as session"));
+    expect(started?.causedBy).toEqual(expect.arrayContaining([worker, evaluator]));
+    const dispatched = master.find((e) => e.kind === "session_dispatch" && e.sessionId === worker);
+    expect(dispatched?.causedBy).toEqual([evaluator]);
+    const evaluatorEnded = master.find((e) => e.kind === "session_summary" && e.sessionId === evaluator);
+    expect(evaluatorEnded?.causedBy).toEqual([worker]);
+
+    const injected = (id: SessionId) =>
+      ctx.journal
+        .read({ sessionId: id })
+        .filter((e) => e.type === "user_injected")
+        .map((e) => JSON.stringify(e.payload));
+    expect(injected(worker)).toEqual([]);
+    expect(injected(evaluator)).toEqual([]);
+  });
+
   it("a block verdict parks the card until the blocker finishes, then re-evaluates it", async () => {
     const { ctx, hang } = await bootProject({
       work: [{ tool: "hang" }, { turn: "finished" }],
@@ -291,6 +340,85 @@ describe("kanban mode", () => {
     await until(ctx, "B's second evaluator", () => ctx.board.get(b.id)!.evaluatorSessionId !== evalB);
   });
 
+  it("defer can wait on a Blocked card ahead: held until that card starts, then re-evaluated", async () => {
+    const { ctx, hang } = await bootProject({
+      work: [{ tool: "hang" }, { turn: "finished" }],
+      evaluator: [{ tool: "hang" }],
+    });
+    const w = await queue(ctx, "rewrite the lane layout");
+    await ctx.board.verdict(w.id, { decision: "proceed", reason: "first in" }, await evaluatorOf(ctx, w.id));
+    const sessionW = ctx.sessions.get((await cardIn(ctx, w.id, "working")).sessionId!)!;
+
+    const b = await queue(ctx, "newest cards on top");
+    await ctx.board.verdict(
+      b.id,
+      { decision: "block", reason: "same render block", blockedBy: [sessionW.name] },
+      await evaluatorOf(ctx, b.id),
+    );
+    await cardIn(ctx, b.id, "blocked");
+
+    // C conflicts with B, not with anything Working. Before, its only
+    // options were to proceed (jumping B) or block on W (wrong reason).
+    const c = await queue(ctx, "archive button in the same lane");
+    const deferred = await ctx.board.verdict(
+      c.id,
+      { decision: "defer", reason: "edits the lane B is about to change", deferTo: b.id },
+      await evaluatorOf(ctx, c.id),
+    );
+    expect(deferred.column).toBe("queued");
+
+    // W finishes: B is released and re-evaluated. C still waits: B has not
+    // started yet, only moved from Blocked to Evaluating.
+    hang.release();
+    await cardIn(ctx, w.id, "done");
+    const evalB2 = await evaluatorOf(ctx, b.id);
+    expect(ctx.board.get(b.id)!.column).toBe("evaluating");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(ctx.board.get(c.id)!.column).toBe("queued");
+
+    // B starts; C is released to be judged against B running.
+    await ctx.board.verdict(b.id, { decision: "proceed", reason: "W is done" }, evalB2);
+    await cardIn(ctx, c.id, "evaluating");
+  });
+
+  it("a reorder that carries a deferring card past its target ends the wait", async () => {
+    const { ctx } = await bootProject({ work: [], evaluator: [{ tool: "hang" }] });
+    const a = await queue(ctx, "first");
+    const b = await queue(ctx, "second");
+    await evaluatorOf(ctx, a.id);
+    await ctx.board.verdict(b.id, { decision: "defer", reason: "x", deferTo: a.id }, await evaluatorOf(ctx, b.id));
+    expect(ctx.board.get(b.id)!.column).toBe("queued");
+
+    // B now runs first, so waiting on A would mean waiting on a card behind
+    // it, which is how two cards end up waiting on each other.
+    ctx.board.reorder(b.id, a.id);
+    await cardIn(ctx, b.id, "evaluating");
+  });
+
+  it("a defer on a card that has since started is refused with that card's session to block on", async () => {
+    const { ctx } = await bootProject({ work: [{ tool: "hang" }], evaluator: [{ tool: "hang" }] });
+    const a = await queue(ctx, "first");
+    const b = await queue(ctx, "second");
+    const evalA = await evaluatorOf(ctx, a.id);
+    const evalB = await evaluatorOf(ctx, b.id);
+    // B's prompt listed A as Evaluating; A launches while B is still reading.
+    await ctx.board.verdict(a.id, { decision: "proceed", reason: "clear" }, evalA);
+    const sessionA = ctx.sessions.get((await cardIn(ctx, a.id, "working")).sessionId!)!;
+
+    const refusal = await ctx.board
+      .verdict(b.id, { decision: "defer", reason: "same files", deferTo: a.id }, evalB)
+      .catch((error: unknown) => error);
+    expect(refusal).toMatchObject({ code: "bad-defer" });
+    expect((refusal as Error).message).toContain(`block on ${sessionA.name}`);
+    // The refusal leaves the round open for the verdict it points at.
+    const blocked = await ctx.board.verdict(
+      b.id,
+      { decision: "block", reason: "same files", blockedBy: [sessionA.name] },
+      evalB,
+    );
+    expect(blocked.column).toBe("blocked");
+  });
+
   it("force start skips evaluation and stops the evaluator", async () => {
     const { ctx, hang } = await bootProject({ work: [{ turn: "fast" }], evaluator: [{ tool: "hang" }] });
     const card = await queue(ctx, "urgent");
@@ -304,6 +432,65 @@ describe("kanban mode", () => {
     hang.release();
     await until(ctx, "evaluator stopped", () => ctx.sessions.get(evaluator)?.status === "killed");
     expect(ctx.board.get(card.id)!.column).toBe("done");
+  });
+
+  it("an idle board skips evaluation: the card starts with no evaluator session at all", async () => {
+    const { ctx, hang } = await bootProject({
+      work: [{ turn: "fast" }],
+      // Any evaluator that did get dispatched would hang, and the card
+      // could never reach Done — so Done itself proves the skip.
+      evaluator: [{ tool: "hang" }],
+      skipWhenIdle: true,
+    });
+    const card = await queue(ctx, "only card in the building");
+    const done = await cardIn(ctx, card.id, "done");
+    expect(done.evaluatorSessionId).toBeNull();
+    expect(done.verdict).toBeNull();
+    expect(hang.count()).toBe(0);
+    expect(masterNotes(ctx).some((n) => n.includes("started as session"))).toBe(true);
+  });
+
+  it("the skip is only for an idle board: a Working card brings the evaluator back", async () => {
+    const { ctx, hang } = await bootProject({
+      work: [{ tool: "hang" }, { turn: "released" }],
+      evaluator: [verdict({ decision: "proceed", reason: "no overlap" })],
+      skipWhenIdle: true,
+    });
+    const a = await queue(ctx, "long running");
+    await cardIn(ctx, a.id, "working");
+    expect(ctx.board.get(a.id)!.evaluatorSessionId).toBeNull();
+    await until(ctx, "A hanging", () => hang.count() >= 1);
+
+    const b = await queue(ctx, "while A is live");
+    const evalB = await evaluatorOf(ctx, b.id);
+    expect(ctx.sessions.get(evalB)?.driver).toBe("mock-eval");
+    await cardIn(ctx, b.id, "working");
+    expect(ctx.board.get(b.id)!.verdict?.decision).toBe("proceed");
+
+    hang.release();
+    await cardIn(ctx, a.id, "done");
+    await cardIn(ctx, b.id, "done");
+  });
+
+  it("two cards entering Evaluating together: the head skips, the second is really evaluated", async () => {
+    const { ctx } = await bootProject({
+      work: [{ turn: "ok" }],
+      evaluator: [verdict({ decision: "proceed", reason: "head start had left evaluating" })],
+      skipWhenIdle: true,
+    });
+    const a = ctx.board.create({ task: "first", request: { driver: "mock" }, draft: true });
+    const b = ctx.board.create({ task: "second", request: { driver: "mock" }, draft: true });
+    // Back to back, so B enters Evaluating while A's skip-launch is still in
+    // flight: A sits in Evaluating ahead of B, and B must fail `foregone` —
+    // it could legitimately have deferred to A.
+    ctx.board.submit(a.id);
+    ctx.board.submit(b.id);
+
+    await cardIn(ctx, a.id, "done");
+    await cardIn(ctx, b.id, "done");
+    expect(ctx.board.get(a.id)!.evaluatorSessionId).toBeNull();
+    expect(ctx.board.get(b.id)!.evaluatorSessionId).not.toBeNull();
+    expect(ctx.board.get(b.id)!.verdict?.decision).toBe("proceed");
   });
 
   it("a follow-up on a done card re-queues it as new work and the session continues once cleared", async () => {

@@ -47,6 +47,8 @@ import { digestChunks } from "../master.js";
 import { elapsedMs, fmtElapsed, isLive } from "../sessions.js";
 import type { ChangedFile } from "../api.js";
 import { openTextContextMenu } from "../text-context.js";
+import { useBoard } from "../board.js";
+import { boardHold } from "../board-hold.js";
 
 export function SessionPanel(props: { id: string; close?: PanelCloseAction }): ReactNode {
   const { id } = props;
@@ -167,11 +169,14 @@ export function SessionPanel(props: { id: string; close?: PanelCloseAction }): R
     () => new Map(status.files.map((f) => [f.path, f])),
     [status.files],
   );
+  // Outside kanban `cards` is empty, so this is null and costs one 404.
+  const { cards } = useBoard();
+  const hold = useMemo(() => boardHold(cards, id), [cards, id]);
 
   return (
     <main
       className={`panel${
-        nextMessages.length === 0 && contextRebuild === null
+        nextMessages.length === 0 && contextRebuild === null && hold === null
           ? ""
           : " panel-has-composer-banner"
       }`}
@@ -298,6 +303,7 @@ export function SessionPanel(props: { id: string; close?: PanelCloseAction }): R
           editableMessage={editableMessage}
           nextMessages={nextMessages}
           contextRebuild={contextRebuild}
+          boardHold={hold}
           onNextMessages={setNextMessages}
           onError={setError}
         />
