@@ -23,7 +23,11 @@ import { QuickActionStore } from "./quick-actions.js";
 import { labelForModel, type ModelLabel } from "./model-label.js";
 import { connectStream, type StreamFrame, type StreamStatus } from "./stream.js";
 import type { ConnectionInfo } from "./bridge.js";
-import { loadWindowLayout, saveWindowLayout } from "./window-layout.js";
+import {
+  loadWindowLayout,
+  saveWindowLayout,
+  type WindowLayout,
+} from "./window-layout.js";
 
 /** Overlay ids are contributed by desktop modules. */
 export type Overlay = string | null;
@@ -88,8 +92,16 @@ export interface Harness {
   setMode(mode: Mode): void;
   view: PanelView;
   setView(view: PanelView): void;
-  sidebar: boolean;
-  toggleSidebar(): void;
+  /**
+   * The raw sidebar preference state: explicit per-mode choices plus the
+   * legacy global flag. Resolution against a mode's declared default lives
+   * in `useSidebar`, not here — it needs the mode contributions, and
+   * `HarnessProvider` also mounts in windows with no module runtime (the
+   * settings window).
+   */
+  sidebarLayout: Pick<WindowLayout, "sidebar" | "sidebarModes">;
+  /** Record an explicit sidebar choice for one mode and persist it. */
+  setSidebar(modeId: string, open: boolean): void;
   /**
    * Files open in the editor, in tab order. Kept here rather than in the code
    * view so that opening a file from a transcript — which is a different
@@ -110,8 +122,12 @@ export interface Harness {
   newSession(): void;
   overlay: Overlay;
   setOverlay(overlay: Overlay): void;
-  /** Driver catalog from `GET /api/models`, fetched once per connection. */
+  /** Latest provider-discovered driver catalog from `GET /api/models`. */
   catalog: DriverCatalogEntry[];
+  /** True after this connection has returned at least one catalog response. */
+  catalogReady: boolean;
+  /** Re-query providers; concurrent callers share the same in-flight request. */
+  refreshCatalog(): Promise<void>;
   /**
    * Friendly name for a model id: "Claude Opus 5" rather than
    * "claude-opus-5". Falls back to the raw id for models the catalog does not
@@ -174,12 +190,32 @@ export function HarnessProvider(props: {
       : "agent",
   );
   const [view, setView] = useState<PanelView>("thread");
-  const [sidebar, setSidebar] = useState(() => loadWindowLayout().sidebar);
+  const [sidebarLayout, setSidebarLayout] = useState(() => {
+    const { sidebar, sidebarModes } = loadWindowLayout();
+    return { sidebar, sidebarModes };
+  });
   const [openFiles, setOpenFiles] = useState<readonly string[]>([]);
   const [file, setFile] = useState<string | null>(null);
   const [draft, setDraft] = useState(false);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [catalog, setCatalog] = useState<DriverCatalogEntry[]>([]);
+  const [catalogReady, setCatalogReady] = useState(false);
+  const catalogRequest = useRef<Promise<void> | null>(null);
+
+  const refreshCatalog = useCallback((): Promise<void> => {
+    if (catalogRequest.current !== null) return catalogRequest.current;
+    const request = api
+      .models()
+      .then((entries) => {
+        setCatalog(entries);
+        setCatalogReady(true);
+      })
+      .finally(() => {
+        if (catalogRequest.current === request) catalogRequest.current = null;
+      });
+    catalogRequest.current = request;
+    return request;
+  }, [api]);
 
   const setMode = useCallback((next: Mode) => {
     setModeState(next);
@@ -187,17 +223,8 @@ export function HarnessProvider(props: {
   }, []);
 
   useEffect(() => {
-    let stale = false;
-    api
-      .models()
-      .then((entries) => {
-        if (!stale) setCatalog(entries);
-      })
-      .catch(() => undefined);
-    return () => {
-      stale = true;
-    };
-  }, [api]);
+    void refreshCatalog().catch(() => undefined);
+  }, [refreshCatalog]);
 
   const modelLabel = useCallback(
     (driver: string, modelId: string | null): ModelLabel =>
@@ -251,12 +278,12 @@ export function HarnessProvider(props: {
 
   const closeSplit = useCallback(() => setSplit(null), []);
 
-  const toggleSidebar = useCallback(
-    () =>
-      setSidebar((open) => {
-        const next = !open;
-        saveWindowLayout({ sidebar: next });
-        return next;
+  const setSidebar = useCallback(
+    (modeId: string, open: boolean) =>
+      setSidebarLayout((cur) => {
+        const sidebarModes = { ...cur.sidebarModes, [modeId]: open };
+        saveWindowLayout({ sidebarModes });
+        return { ...cur, sidebarModes };
       }),
     [],
   );
@@ -308,8 +335,8 @@ export function HarnessProvider(props: {
       setMode,
       view,
       setView,
-      sidebar,
-      toggleSidebar,
+      sidebarLayout,
+      setSidebar,
       openFiles,
       file,
       openFile,
@@ -319,6 +346,8 @@ export function HarnessProvider(props: {
       overlay,
       setOverlay,
       catalog,
+      catalogReady,
+      refreshCatalog,
       modelLabel,
     }),
     [
@@ -336,8 +365,8 @@ export function HarnessProvider(props: {
       closeSplit,
       mode,
       view,
-      sidebar,
-      toggleSidebar,
+      sidebarLayout,
+      setSidebar,
       openFiles,
       file,
       openFile,
@@ -346,6 +375,8 @@ export function HarnessProvider(props: {
       newSession,
       overlay,
       catalog,
+      catalogReady,
+      refreshCatalog,
       modelLabel,
     ],
   );

@@ -41,8 +41,18 @@ export function labelForModel(
     const fallback = entry?.models.find((m) => m.isDefault === true);
     return { label: fallback?.label ?? "Default model" };
   }
+  // Provider catalogs may expose a friendly selectable alias (`opus[1m]`)
+  // beside the canonical id reported by a completed run. Match either side
+  // before stripping variants so both render with the provider's own label.
+  const exact = entry?.models.find(
+    (model) => model.id === modelId || model.resolvedId === modelId,
+  );
+  if (exact !== undefined) return { label: exact.label };
   const { base, variant } = splitModelId(modelId);
-  const known = entry?.models.find((m) => m.id === base)?.label;
+  const known = entry?.models.find((model) => {
+    if (model.id === base) return true;
+    return model.resolvedId !== undefined && splitModelId(model.resolvedId).base === base;
+  })?.label;
   return {
     label: known ?? base,
     ...(variant !== undefined ? { variant } : {}),

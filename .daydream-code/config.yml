@@ -1,0 +1,11 @@
+# daydream-code config. Rows patch the base bundle by id;
+# a row's `config` is replaced whole, never deep-merged.
+
+- id: board
+  disabled: false
+- id: board-evaluator
+  disabled: false
+- id: board-writeback
+  disabled: false
+- id: board-routes
+  disabled: false

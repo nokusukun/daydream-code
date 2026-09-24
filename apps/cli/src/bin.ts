@@ -272,7 +272,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         return 0;
       }
       case "models": {
-        for (const entry of ctx.drivers.catalog()) {
+        for (const entry of await ctx.drivers.catalog(projectRoot)) {
           console.log(entry.driver);
           if (entry.models.length === 0) console.log("  (driver default only)");
           for (const model of entry.models) {

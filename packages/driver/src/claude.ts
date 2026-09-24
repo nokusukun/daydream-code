@@ -5,6 +5,7 @@ import {
   query,
   tool,
   type EffortLevel,
+  type ModelInfo,
   type Options,
   type SDKUserMessage,
   type SlashCommand,
@@ -13,7 +14,6 @@ import type { Context } from "@daydream-code/kernel";
 import { zeroUsage, type ImagePart, type Usage } from "@daydream-code/shared";
 import type { HarnessToolDefinition } from "@daydream-code/tools";
 import {
-  DriverModelSchema,
   type DriverModel,
   type DriverRunInput,
   type DriverSessionResult,
@@ -281,8 +281,8 @@ export function claudeFastSettings(fastMode: boolean): {
 }
 
 /**
- * Baked-in catalog (config-replaceable). No `isDefault`: an unset modelId
- * defers to the user's own Claude Code default model.
+ * Last-known-good fallback used only when Claude Code discovery fails. No
+ * `isDefault`: an unset modelId defers to the user's own Claude Code default.
  *
  * `efforts` per model rather than per driver: the 4.6 generation predates
  * `xhigh`, and Haiku 4.5 rejects the effort parameter outright, so its list
@@ -291,7 +291,12 @@ export function claudeFastSettings(fastMode: boolean): {
  * errors — but the catalog should still not offer what cannot run.
  */
 const CLAUDE_MODELS: DriverModel[] = [
-  { id: "claude-fable-5", label: "Claude Fable 5", description: "most capable, Mythos-class", efforts: [...CLAUDE_EFFORTS] },
+  // IDs verified against platform.claude.com/docs/en/about-claude/models/overview
+  // (2026-09-24): the 5.1/5.5 generation uses dateless pinned IDs like its
+  // predecessors — `claude-fable-5-1`, never a date-suffixed variant.
+  { id: "claude-fable-5-1", label: "Claude Fable 5.1", description: "most capable, Mythos-class", efforts: [...CLAUDE_EFFORTS] },
+  { id: "claude-opus-5-5", label: "Claude Opus 5.5", description: "long-running agentic work", efforts: [...CLAUDE_EFFORTS] },
+  { id: "claude-fable-5", label: "Claude Fable 5", efforts: [...CLAUDE_EFFORTS] },
   { id: "claude-opus-5", label: "Claude Opus 5", efforts: [...CLAUDE_EFFORTS] },
   { id: "claude-opus-4-8", label: "Claude Opus 4.8", efforts: [...CLAUDE_EFFORTS] },
   { id: "claude-opus-4-7", label: "Claude Opus 4.7", efforts: [...CLAUDE_EFFORTS] },
@@ -327,6 +332,10 @@ export class ClaudeDriver implements SessionDriver {
     } finally {
       await session.return();
     }
+  }
+
+  discoverModels(workdir: string): Promise<DriverModel[]> {
+    return claudeModels(workdir);
   }
 
   async run(input: DriverRunInput): Promise<DriverSessionResult> {
@@ -501,6 +510,47 @@ function claudeSkill(skill: SlashCommand): AgentSkill {
   };
 }
 
+/** Convert Claude's account-aware catalog into Daydream's small wire shape. */
+export function claudeModelsFromInfo(info: readonly ModelInfo[]): DriverModel[] {
+  const providerDefault = info.find((model) => model.value === "default");
+  return info
+    .filter((model) => model.value !== "default")
+    .map((model): DriverModel => {
+      const efforts = model.supportedEffortLevels ?? [];
+      const isDefault =
+        providerDefault?.resolvedModel !== undefined &&
+        model.resolvedModel === providerDefault.resolvedModel;
+      return {
+        id: model.value,
+        ...(model.resolvedModel !== undefined &&
+          model.resolvedModel !== model.value
+          ? { resolvedId: model.resolvedModel }
+          : {}),
+        label: model.displayName,
+        ...(model.description.length > 0 ? { description: model.description } : {}),
+        ...(isDefault ? { isDefault: true } : {}),
+        ...(efforts.length > 0 ? { efforts: [...efforts] } : {}),
+      };
+    });
+}
+
+/** Ask the running Claude distribution which models this account can select. */
+export async function claudeModels(workdir: string): Promise<DriverModel[]> {
+  const idlePrompt: AsyncIterable<SDKUserMessage> = {
+    [Symbol.asyncIterator]() {
+      return {
+        next: () => new Promise<IteratorResult<SDKUserMessage>>(() => undefined),
+      };
+    },
+  };
+  const session = query({ prompt: idlePrompt, options: { cwd: workdir } });
+  try {
+    return claudeModelsFromInfo(await session.supportedModels());
+  } finally {
+    await session.return();
+  }
+}
+
 export const name = "driver-claude";
 export const inject = ["drivers"] as const;
 
@@ -512,8 +562,8 @@ export const { Config, settings } = defineConfig({
     advanced: true,
   }),
   models: field.list({
-    label: "model catalog",
-    help: "what the model picker offers. Removing one does not stop a session that already pinned it.",
+    label: "fallback model catalog",
+    help: "used only when Claude model discovery is unavailable. The normal picker comes from Claude Code.",
     item: {
       id: field.string({ label: "model id", placeholder: "claude_models" }),
       label: field.string({ label: "shown as" }),

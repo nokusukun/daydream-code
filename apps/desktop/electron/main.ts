@@ -24,6 +24,7 @@ const {
   dialog,
   ipcMain,
   nativeTheme,
+  powerSaveBlocker,
   shell,
   systemPreferences,
 } = electron;
@@ -41,6 +42,7 @@ import {
   runQuickAction,
   type QuickActionResult,
 } from "./quick-actions.js";
+import { createScreenKeeper } from "./power-save.js";
 import {
   TerminalSessions,
   parseOpenRequest,
@@ -613,6 +615,26 @@ function registerIpc(): void {
   ipcMain.handle("daydream:get-appearance", () => readAppearance());
   ipcMain.handle("daydream:set-theme-source", (_event, choice: unknown) => {
     setThemeSource(choice);
+  });
+
+  /**
+   * Keep-awake votes, per webContents. A vote's owner can vanish without
+   * sending its release — a reload replaces the page, a crash replaces
+   * nothing — so both paths drop the vote here rather than trusting the
+   * renderer to be alive to send `false`.
+   */
+  const screenKeeper = createScreenKeeper({
+    start: () => powerSaveBlocker.start("prevent-display-sleep"),
+    stop: (id) => powerSaveBlocker.stop(id),
+  });
+  ipcMain.handle("daydream:set-keep-awake", (event, input: unknown) =>
+    screenKeeper.set(event.sender.id, input),
+  );
+  electronApp.on("web-contents-created", (_event, contents) => {
+    // Main-frame navigation (including reload) resets the page's state; the
+    // new page re-votes once its driver mounts, or it no longer wants one.
+    contents.on("did-navigate", () => screenKeeper.drop(contents.id));
+    contents.once("destroyed", () => screenKeeper.drop(contents.id));
   });
 
   ipcMain.handle("daydream:code-context-menu", showCodeContextMenu);

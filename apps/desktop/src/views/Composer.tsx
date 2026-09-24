@@ -843,6 +843,23 @@ export function useNextMessageControls(
   return { busyId, cancel, cancelEdit };
 }
 
+/**
+ * Where a described task goes when the composer's action is pressed.
+ *
+ * Kanban mode turns a dispatch into a card, and `shelve` is the second action
+ * that parks that card in Drafts instead of Queued. It is a function rather
+ * than three branches inside the click handler because it is the whole of the
+ * difference between the composer's two buttons, and the board has no other
+ * way to make a card — the lane-local textarea that used to is gone.
+ */
+export function taskDestination(
+  kanban: boolean | null,
+  shelve: boolean,
+): "draft-card" | "card" | "dispatch" {
+  if (shelve) return "draft-card";
+  return kanban === true ? "card" : "dispatch";
+}
+
 /** Starts a run. The master thread's composer. */
 export function DispatchComposer(props: {
   autoFocus: boolean;
@@ -858,43 +875,61 @@ export function DispatchComposer(props: {
   const onError = props.onError;
   const { pending, take, remove } = useAttachments(NEW_SESSION_DRAFT, onError);
 
-  const dispatch = useCallback(() => {
-    const trimmed = draft.text.trim();
-    // A task, unlike a message, has to say something: it is the instruction
-    // and it is what the session is named after.
-    if (trimmed.length === 0 || busy) return;
-    setBusy(true);
-    const input = {
-      task: trimmed,
-      driver: choice.driver,
-      ...(choice.modelId !== null ? { modelId: choice.modelId } : {}),
-      ...(choice.effort !== null ? { effort: choice.effort } : {}),
-      ...(choice.fastMode ? { fastMode: true } : {}),
-      ...(draft.attachments.length > 0
-        ? { attachments: draft.attachments.map(attachmentInput) }
-        : {}),
-    };
-    // In kanban mode the task becomes a card, not a session: it goes to the
-    // board, and the board is where you watch it start.
-    const request: Promise<{ id: string; card: boolean }> = kanban
-      ? api.createCard(input).then((card) => ({ id: card.id, card: true }))
-      : api.dispatch(input).then((result) =>
-          isDeferred(result)
-            ? { id: result.deferred.ref, card: true }
-            : { id: result.id as string, card: false },
-        );
-    request
-      .then(({ id, card }) => {
-        // Only once the task is safely a session; a failed dispatch keeps it.
-        drafts.clear(NEW_SESSION_DRAFT);
-        if (card) setMode("board");
-        else select(id);
-      })
-      .catch((e: unknown) =>
-        onError(e instanceof Error ? e.message : String(e)),
-      )
-      .finally(() => setBusy(false));
-  }, [api, draft, choice, busy, select, drafts, onError, kanban, setMode]);
+  /**
+   * `shelve` writes the card to Drafts instead of Queued. It exists so that
+   * every way of making a card comes through this composer: the board's own
+   * lane used to carry a second, poorer one — a bare textarea that could name
+   * a task but not the driver, the model, the effort or an attachment, and so
+   * minted cards that could never say who should run them.
+   */
+  const create = useCallback(
+    (shelve: boolean) => {
+      const trimmed = draft.text.trim();
+      // A task, unlike a message, has to say something: it is the instruction
+      // and it is what the session is named after.
+      if (trimmed.length === 0 || busy) return;
+      setBusy(true);
+      const input = {
+        task: trimmed,
+        driver: choice.driver,
+        ...(choice.modelId !== null ? { modelId: choice.modelId } : {}),
+        ...(choice.effort !== null ? { effort: choice.effort } : {}),
+        ...(choice.fastMode ? { fastMode: true } : {}),
+        ...(draft.attachments.length > 0
+          ? { attachments: draft.attachments.map(attachmentInput) }
+          : {}),
+      };
+      // In kanban mode the task becomes a card, not a session: it goes to the
+      // board, and the board is where you watch it start.
+      const destination = taskDestination(kanban, shelve);
+      const request: Promise<{ id: string; card: boolean }> =
+        destination === "dispatch"
+          ? api.dispatch(input).then((result) =>
+              isDeferred(result)
+                ? { id: result.deferred.ref, card: true }
+                : { id: result.id as string, card: false },
+            )
+          : api
+              .createCard(
+                destination === "draft-card" ? { ...input, draft: true } : input,
+              )
+              .then((card) => ({ id: card.id, card: true }));
+      request
+        .then(({ id, card }) => {
+          // Only once the task is safely a session; a failed dispatch keeps it.
+          drafts.clear(NEW_SESSION_DRAFT);
+          if (card) setMode("board");
+          else select(id);
+        })
+        .catch((e: unknown) =>
+          onError(e instanceof Error ? e.message : String(e)),
+        )
+        .finally(() => setBusy(false));
+    },
+    [api, draft, choice, busy, select, drafts, onError, kanban, setMode],
+  );
+
+  const dispatch = useCallback(() => create(false), [create]);
 
   return (
     <Box
@@ -913,6 +948,17 @@ export function DispatchComposer(props: {
         <>
           <ModelSelector value={choice} onChange={setChoice} disabled={busy} />
           <span className="composer-spacer" />
+          {kanban === true && (
+            <button
+              type="button"
+              className="btn btn-quiet"
+              disabled={busy || draft.text.trim().length === 0}
+              title="Keep this card in Drafts; nothing runs until you queue it"
+              onClick={() => create(true)}
+            >
+              Save draft
+            </button>
+          )}
           <SendButton
             busy={busy}
             disabled={draft.text.trim().length === 0}

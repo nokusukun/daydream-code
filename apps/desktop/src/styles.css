@@ -5144,6 +5144,15 @@ table.fibers td:first-child {
   background: var(--hairline);
 }
 
+/* Trailing shortcut hint on a menu row (e.g. "Sidebar  ⌘B"). */
+.pop-row-hint {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
 .pop-row,
 .pop-run {
   display: flex;
@@ -6531,6 +6540,13 @@ table.fibers td:first-child {
     display: none;
   }
 
+  /* The rail itself is gone at this width, so a toggle for it would be a
+     control that visibly does nothing. Hide both affordances with it. */
+  .sidebar-toggle,
+  .sidebar-menu-row {
+    display: none;
+  }
+
   .change-bars {
     display: none;
   }
@@ -7763,9 +7779,16 @@ table.fibers td:first-child {
 
 /* ---------------------------------------------------------------------------
    Board mode. Six lanes on one sheet; cards reuse the rail's card vocabulary
-   (glyph, title, time, facts) so a card reads like the run it will become. */
+   (glyph, title, time, facts) so a card reads like the run it will become.
+
+   Lanes are columns, not boxes. They used to be bordered, tinted panels with
+   bordered cards inside them, which is the nested card DESIGN.md rules out:
+   two frames arguing about which one is the object. The lane is now a column
+   of a table — a hairline rule and a heading — and the card is the only
+   surface with an edge. */
 
 .board {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -7777,7 +7800,7 @@ table.fibers td:first-child {
 
 .board-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--s3);
   flex: none;
 }
@@ -7786,11 +7809,34 @@ table.fibers td:first-child {
   margin: 0;
   font-size: var(--text-md);
   font-weight: 620;
+  letter-spacing: -0.01em;
   color: var(--text-1);
 }
 
-.board-count {
-  font-family: var(--mono);
+/* The board used to print "N cards", which is the least useful number on it.
+   The one fact worth the header's width is whether anything is waiting on a
+   person, and that one is only true sometimes. */
+.board-alert {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: 1px var(--s2) 2px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--bad) 42%, var(--border));
+  background: color-mix(in oklab, var(--bad) 12%, transparent);
+  font-size: var(--text-xs);
+  font-weight: 560;
+  color: var(--text-1);
+}
+
+.board-alert .glyph {
+  color: var(--bad);
+}
+
+/* Null is "not answered yet", and an empty board is a claim. The lanes hold
+   skeletons for the same reason the status bar refuses to print Idle before
+   it has heard from a project. */
+.board-checking {
   font-size: var(--text-xs);
   color: var(--text-3);
 }
@@ -7808,50 +7854,69 @@ table.fibers td:first-child {
   color: var(--text-1);
 }
 
+/* Flex rather than grid so each lane can carry its own weight as a custom
+   property: the widths belong to the lane definition, not to a
+   grid-template-columns string that has to be kept in the same order. */
 .board-lanes {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: repeat(6, minmax(200px, 1fr));
+  display: flex;
   gap: var(--s3);
   overflow: auto hidden;
 }
 
 .board-lane {
+  flex: var(--lane-w, 1) 1 0;
+  min-width: 168px;
   display: flex;
   flex-direction: column;
-  min-width: 0;
   min-height: 0;
-  border-radius: var(--r-lg);
-  border: 1px solid var(--hairline);
-  background: var(--surface-2);
-  transition: border-color var(--t-fast) var(--ease-out-quart), background var(--t-fast) var(--ease-out-quart);
+  transition: opacity var(--t-fast) var(--ease-out-quart);
 }
 
-.board-lane.is-over {
-  border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
-  background: var(--accent-veil);
+.board-lane + .board-lane {
+  padding-left: var(--s3);
+  border-left: 1px solid var(--hairline);
 }
 
 .board-lane-head {
   display: flex;
   align-items: baseline;
   gap: var(--s2);
-  margin: 0;
-  padding: var(--s2) var(--s3);
+  margin: 0 0 var(--s2);
+  padding: 0 var(--s1) var(--s2);
   font-size: var(--text-xs);
   font-weight: 620;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-3);
   border-bottom: 1px solid var(--hairline);
 }
 
+.board-lane-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .board-lane-count {
+  margin-left: auto;
   font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
+}
+
+/* The verb replaces the count while a drag is in the air: the count is the
+   thing you stop caring about the moment you pick a card up. */
+.board-lane-move {
+  margin-left: auto;
+  font-weight: 560;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent-ink);
 }
 
 .board-lane-cards {
@@ -7860,18 +7925,45 @@ table.fibers td:first-child {
   display: flex;
   flex-direction: column;
   gap: var(--s2);
-  padding: var(--s2);
+  padding: 2px var(--s1) var(--s5);
   overflow-y: auto;
+  border-radius: var(--r-md);
+  transition:
+    background var(--t-fast) var(--ease-out-quart),
+    box-shadow var(--t-fast) var(--ease-out-quart);
+}
+
+/* Flex items shrink by default; in a full lane that squeezed cards down to
+   their own borders. Same rule as `.transcript > *` and `.runs > *`. */
+.board-lane-cards > * {
+  flex: none;
+}
+
+/* Only the lanes that would accept the card invite the drop. Everything else
+   goes quiet rather than lighting up and then silently doing nothing. */
+.board-lane.is-armed .board-lane-cards {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 34%, transparent);
+}
+
+.board-lane.is-over .board-lane-cards {
+  background: var(--accent-veil);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.board-lane.is-inert {
+  opacity: 0.4;
 }
 
 .board-lane-empty {
-  margin: var(--s3) 0 0;
-  text-align: center;
+  margin: var(--s2) var(--s1) 0;
   font-size: var(--text-xs);
+  line-height: 1.5;
   color: var(--text-3);
+  text-wrap: pretty;
 }
 
 .board-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -7880,74 +7972,153 @@ table.fibers td:first-child {
   border: 1px solid var(--hairline);
   background: var(--surface-1);
   cursor: grab;
-  transition: border-color var(--t-fast) var(--ease-out-quart), opacity var(--t-fast) var(--ease-out-quart);
+  transition:
+    border-color var(--t-fast) var(--ease-out-quart),
+    background var(--t-fast) var(--ease-out-quart),
+    opacity var(--t-fast) var(--ease-out-quart);
 }
 
 .board-card[draggable="false"] {
   cursor: default;
 }
 
+.board-card:active {
+  cursor: grabbing;
+}
+
+/*
+ * A card that points at a thread is a click target for it: the whole
+ * surface opens what the facts-row link opens. Pointer beats grab where a
+ * card is both draggable and openable (Working, Evaluating) — the legal
+ * drags are already taught by the lane hints on pickup, so the cursor's one
+ * job is to promise the click. After :active so the tie goes to pointer.
+ */
+.board-card.is-openable {
+  cursor: pointer;
+}
+
 .board-card:hover {
   border-color: var(--border);
+}
+
+.board-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .board-card.is-dragging {
   opacity: 0.45;
 }
 
+/*
+ * State is a full border and a wash of the semantic colour, plus the glyph
+ * and the label that were always there. The 3px left rules this replaces are
+ * on DESIGN.md's do-not-add list, and they read as decoration precisely
+ * because three of the six lanes wore one.
+ */
 .board-card-blocked {
-  border-left: 3px solid var(--warn);
+  border-color: color-mix(in oklab, var(--warn) 34%, var(--hairline));
+  background: color-mix(in oklab, var(--warn) 7%, var(--surface-1));
 }
 
 .board-card-attention {
-  border-left: 3px solid var(--bad);
+  border-color: color-mix(in oklab, var(--bad) 46%, var(--border));
+  background: color-mix(in oklab, var(--bad) 9%, var(--surface-1));
 }
 
 .board-card-working {
-  border-left: 3px solid var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 42%, var(--border));
+  background: color-mix(in oklab, var(--accent) 6%, var(--surface-1));
 }
 
+/* Done is quieter by colour, not by opacity: opacity dims the focus ring and
+   the text together, and a finished card still has to be readable. */
 .board-card-done {
-  opacity: 0.8;
+  background: none;
+  border-color: color-mix(in oklab, var(--hairline) 65%, transparent);
+}
+
+.board-card-done .board-card-title {
+  font-weight: 520;
+  color: var(--text-2);
+}
+
+/* The drop that lands on a card rather than a lane. `is-insert` draws the
+   seam the card would take; `is-target` claims the card itself, because
+   blocking changes that card and not the queue's order. */
+.board-card.is-insert::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.board-card.is-target {
+  border-color: var(--accent);
+  background: var(--accent-veil);
+}
+
+.board-card-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 560;
+  color: var(--accent-ink);
 }
 
 .board-card-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--s2);
 }
 
 .board-card-glyph {
   display: inline-flex;
   flex: none;
+  margin-top: 3px;
 }
 
+/* Two lines, not one truncated one. A lane is under 200px wide and a card
+   title is a sentence fragment, so a single nowrap line cut most of them at
+   three words — and the title is the thing a person reads to find the card
+   again. */
 .board-card-title {
   flex: 1;
   min-width: 0;
   font-size: var(--text-sm);
   font-weight: 560;
-  line-height: 1.4;
+  line-height: 1.35;
   color: var(--text-1);
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .board-card-time {
   flex: none;
+  margin-top: 1px;
   font-family: var(--mono);
   font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }
 
+/* Two lines, same as the title. The subtext is a short description of the
+   thread — what the task says beyond the title's sentence, deduped in
+   `taskSubtext` — and the full task stays in the tooltip, so more than two
+   lines here only pushed the lane down without saying anything new. */
 .board-card-task {
   margin: 0;
   font-size: var(--text-sm);
   line-height: 1.4;
   color: var(--text-2);
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-wrap: pretty;
@@ -7966,10 +8137,19 @@ table.fibers td:first-child {
   font-size: var(--text-xs);
   line-height: 1.4;
   color: var(--text-2);
+  /* The evaluator's verdict prose is the one unbounded text on the card —
+     a paragraph-long block reason was stretching its card past the whole
+     rest of the lane. Two lines, like the title; the full text stays a
+     click away in the thread the card now opens. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-wrap: pretty;
 }
 
 .board-card-reason-attention {
-  color: var(--bad);
+  color: var(--text-1);
 }
 
 .board-card-blockers {
@@ -8019,6 +8199,9 @@ table.fibers td:first-child {
   padding: 0;
   background: transparent;
   font: inherit;
+  /* A button centres its own text; wrapped session names were landing
+     centred in a row of otherwise left-aligned facts. */
+  text-align: left;
   color: var(--accent-ink);
   cursor: pointer;
 }
@@ -8027,16 +8210,44 @@ table.fibers td:first-child {
   text-decoration: underline;
 }
 
+/*
+ * Four buttons on every card meant a lane of twenty cards carried eighty
+ * controls competing with the sentences they act on. They keep their space —
+ * a row that appears on hover would move the card under the cursor — and
+ * fade in on hover or focus, so the keyboard reaches them too. Needs
+ * Attention keeps its actions lit: a card asking for a person should not
+ * hide what it offers.
+ */
+/* One row, never wrapped. Wrapping put three buttons on three lines in a
+   180px lane and made the reserved strip taller than the task it sat under. */
 .board-card-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
+  height: 20px;
   gap: var(--s1);
   margin-top: 2px;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease-out-quart);
+}
+
+.board-card:hover .board-card-actions,
+.board-card:focus-within .board-card-actions,
+.board-card-attention .board-card-actions,
+.board-card-actions.is-open {
+  opacity: 1;
+}
+
+.board-card-actions.is-open {
+  height: auto;
+  flex-wrap: wrap;
 }
 
 .board-card-actions .btn {
+  flex: none;
+  height: 20px;
   font-size: var(--text-xs);
-  padding: 2px var(--s2);
+  padding: 0 var(--s1);
 }
 
 .btn-danger-text {
@@ -8049,13 +8260,33 @@ table.fibers td:first-child {
   gap: var(--s1);
 }
 
-.board-draft-composer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s1);
+/*
+ * The Drafts lane's own way in. It is a door, not a composer: a card is
+ * described in the thread composer like every other one, so this only has to
+ * look like the empty slot a new card will land in.
+ */
+.board-lane-new {
+  flex: none;
   padding: var(--s2);
+  text-align: center;
   border-radius: var(--r-md);
   border: 1px dashed var(--border);
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast) var(--ease-out-quart),
+    color var(--t-fast) var(--ease-out-quart),
+    background var(--t-fast) var(--ease-out-quart);
+}
+
+.board-lane-new:hover,
+.board-lane-new:focus-visible {
+  border-color: var(--accent);
+  color: var(--text-1);
+  background: var(--surface-2);
 }
 
 .board-draft-input {
@@ -8070,23 +8301,45 @@ table.fibers td:first-child {
   font-size: var(--text-sm);
 }
 
-.board-bin {
-  flex: none;
-  padding: var(--s2);
-  text-align: center;
+.board-card-skel {
+  height: 56px;
   border-radius: var(--r-md);
-  border: 1px dashed var(--hairline);
+}
+
+/*
+ * The bin floats rather than sits. As a row in the layout it reserved a
+ * strip of every lane's height to stay invisible; over the board it costs
+ * nothing until a card that can actually be cancelled is in the air.
+ */
+.board-bin {
+  position: absolute;
+  left: 50%;
+  bottom: var(--s4);
+  z-index: 2;
+  padding: var(--s2) var(--s5);
+  border-radius: 999px;
+  border: 1px dashed var(--border);
+  box-shadow: 0 10px 28px -14px var(--glass-shade);
   font-size: var(--text-xs);
-  color: var(--text-3);
+  color: var(--text-2);
   opacity: 0;
-  transition: opacity var(--t-fast) var(--ease-out-quart), border-color var(--t-fast) var(--ease-out-quart);
+  pointer-events: none;
+  transform: translate(-50%, 10px);
+  transition:
+    opacity var(--t-fast) var(--ease-out-quart),
+    transform var(--t-base) var(--ease-out-expo),
+    border-color var(--t-fast) var(--ease-out-quart),
+    color var(--t-fast) var(--ease-out-quart);
 }
 
 .board-bin.is-armed {
   opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
 }
 
 .board-bin.is-over {
+  border-style: solid;
   border-color: var(--bad);
   color: var(--bad);
 }

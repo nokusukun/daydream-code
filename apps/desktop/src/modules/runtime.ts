@@ -16,6 +16,13 @@ export interface ModeContribution {
   order?: number;
   splitId: string;
   sidebar?: ComponentType;
+  /**
+   * Whether the sidebar starts visible for a user who has never toggled it
+   * in this mode. Undefined means visible. A mode declares its own default
+   * here — the shell resolving a hardcoded per-feature table would be the
+   * shell knowing about features.
+   */
+  sidebarDefault?: boolean;
   panel: ComponentType;
 }
 

@@ -108,6 +108,8 @@ export interface BlobContent extends BlobRef {
 
 export interface DriverModel {
   id: string;
+  /** Provider-resolved wire id when `id` is a selectable alias. */
+  resolvedId?: string;
   label: string;
   description?: string;
   isDefault?: boolean;
@@ -259,7 +261,8 @@ export class ApiClient {
   }
 
   models(): Promise<DriverCatalogEntry[]> {
-    return this.#request("/api/models");
+    // Catalogs are provider-owned and can change while the window is open.
+    return this.#request("/api/models", undefined, { cache: "no-store" });
   }
 
   skills(driver: string): Promise<AgentSkill[]> {

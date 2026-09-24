@@ -7,6 +7,7 @@ import SessionDrivers from "@daydream-code/driver/registry";
 import driverRoutes from "@daydream-code/driver/routes";
 import claudePlugin, {
   ClaudeDriver,
+  claudeModelsFromInfo,
   claudeFastSettings,
   jsonSchemaToZodShape,
   renderInitialPrompt,
@@ -14,6 +15,7 @@ import claudePlugin, {
 import codexPlugin, {
   CodexDriver,
   codexErrorMessage,
+  codexModelsFromResponse,
   codexServiceTier,
 } from "@daydream-code/driver/codex";
 import type { DriverRunInput } from "@daydream-code/driver";
@@ -62,7 +64,7 @@ describe("adapter plugins mount", () => {
     expect(ctx.drivers.get("codex-alt")?.id).toBe("codex-alt");
   });
 
-  it("serves each adapter's model catalog, replaceable via config", async () => {
+  it("keeps a configurable fallback catalog for provider outages", async () => {
     const app = new App();
     const ctx = app.rootCtx;
     ctx.plugin(SessionDrivers);
@@ -73,9 +75,13 @@ describe("adapter plugins mount", () => {
     });
     await app.settle();
 
-    const catalog = ctx.drivers.catalog();
+    const catalog = ctx.drivers.configuredCatalog();
     const claude = catalog.find((entry) => entry.driver === "claude");
     expect(claude?.models.map((m) => m.id)).toContain("claude-opus-5");
+    // The 5.1/5.5 generation ships in the fallback catalog, newest first,
+    // with Fable 5.1 leading the picker.
+    expect(claude?.models[0]?.id).toBe("claude-fable-5-1");
+    expect(claude?.models[1]?.id).toBe("claude-opus-5-5");
     expect(claude?.supportsFastMode).toBe(true);
     const codex = catalog.find((entry) => entry.driver === "codex");
     expect(codex?.supportsFastMode).toBe(true);
@@ -114,6 +120,49 @@ describe("adapter plugins mount", () => {
     );
   });
 
+  it("uses live provider catalogs and falls back one failing driver at a time", async () => {
+    const app = new App();
+    const ctx = app.rootCtx;
+    ctx.plugin(SessionDrivers);
+    await app.settle();
+    const roots: string[] = [];
+    ctx.drivers.register(ctx, {
+      id: "live",
+      models: [{ id: "old", label: "Old fallback" }],
+      discoverModels: async (workdir) => {
+        roots.push(workdir);
+        return [{ id: "new", label: "New from provider" }];
+      },
+      run: async () => {
+        throw new Error("not used");
+      },
+    });
+    ctx.drivers.register(ctx, {
+      id: "offline",
+      models: [{ id: "safe", label: "Safe fallback" }],
+      discoverModels: async () => {
+        throw new Error("provider offline");
+      },
+      run: async () => {
+        throw new Error("not used");
+      },
+    });
+
+    await expect(ctx.drivers.catalog("/current/project")).resolves.toEqual([
+      {
+        driver: "live",
+        models: [{ id: "new", label: "New from provider" }],
+        supportsFastMode: false,
+      },
+      {
+        driver: "offline",
+        models: [{ id: "safe", label: "Safe fallback" }],
+        supportsFastMode: false,
+      },
+    ]);
+    expect(roots).toEqual(["/current/project"]);
+  });
+
   it("serves provider skills from the current project root", async () => {
     const app = new App();
     const ctx = app.rootCtx;
@@ -150,6 +199,47 @@ describe("adapter plugins mount", () => {
         name: "root",
         invocation: "/",
         description: "Works in /current/project",
+      },
+    ]);
+  });
+
+  it("serves provider-discovered models from the current project root", async () => {
+    const app = new App();
+    const ctx = app.rootCtx;
+    ctx.plugin(HttpRoutes);
+    ctx.plugin(SessionDrivers);
+    ctx.plugin((owner) => {
+      owner.provide("store", { rootPath: "/current/project" } as never);
+    });
+    ctx.plugin(driverRoutes);
+    await app.settle();
+    ctx.drivers.register(ctx, {
+      id: "dynamic",
+      models: [{ id: "stale", label: "Stale fallback" }],
+      discoverModels: async (workdir) => [
+        { id: "current", label: `Current in ${workdir}` },
+      ],
+      run: async () => {
+        throw new Error("not used");
+      },
+    });
+
+    const match = ctx.routes.match("GET", "/api/models");
+    expect(match).toBeDefined();
+    await expect(
+      match!.route.handle({
+        method: "GET",
+        path: "/api/models",
+        params: {},
+        query: {},
+        headers: {},
+        body: undefined,
+      }),
+    ).resolves.toEqual([
+      {
+        driver: "dynamic",
+        models: [{ id: "current", label: "Current in /current/project" }],
+        supportsFastMode: false,
       },
     ]);
   });
@@ -250,6 +340,89 @@ describe("renderInitialPrompt", () => {
   });
 });
 
+describe("provider model discovery", () => {
+  it("maps Codex app-server models and their advertised effort levels", () => {
+    expect(codexModelsFromResponse({
+      data: [
+        {
+          id: "catalog-row",
+          model: "gpt-new",
+          displayName: "GPT New",
+          description: "Fresh from the provider",
+          hidden: false,
+          isDefault: true,
+          supportedReasoningEfforts: [
+            { reasoningEffort: "low", description: "fast" },
+            { reasoningEffort: "high", description: "deep" },
+          ],
+        },
+        {
+          id: "hidden",
+          model: "gpt-hidden",
+          displayName: "Hidden",
+          hidden: true,
+          supportedReasoningEfforts: [],
+        },
+      ],
+      nextCursor: null,
+    })).toEqual([
+      {
+        id: "gpt-new",
+        label: "GPT New",
+        description: "Fresh from the provider",
+        isDefault: true,
+        efforts: ["low", "high"],
+      },
+    ]);
+  });
+
+  it("maps Claude aliases and marks the row resolved by its default", () => {
+    expect(claudeModelsFromInfo([
+      {
+        value: "default",
+        resolvedModel: "claude-opus-new[1m]",
+        displayName: "Default (recommended)",
+        description: "The account default",
+      },
+      {
+        value: "opus[1m]",
+        resolvedModel: "claude-opus-new[1m]",
+        displayName: "Opus (1M context)",
+        description: "Most capable",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "high", "max"],
+      },
+      {
+        value: "haiku",
+        resolvedModel: "claude-haiku-new",
+        displayName: "Haiku",
+        description: "Fastest",
+      },
+    ])).toEqual([
+      {
+        id: "opus[1m]",
+        resolvedId: "claude-opus-new[1m]",
+        label: "Opus (1M context)",
+        description: "Most capable",
+        isDefault: true,
+        efforts: ["low", "high", "max"],
+      },
+      {
+        id: "haiku",
+        resolvedId: "claude-haiku-new",
+        label: "Haiku",
+        description: "Fastest",
+      },
+    ]);
+  });
+
+  it("rejects a malformed Codex catalog so the registry can use its fallback", () => {
+    expect(() => codexModelsFromResponse({ data: "not-an-array" })).toThrow(
+      "invalid model catalog",
+    );
+  });
+});
+
 describe("reasoning effort", () => {
   /**
    * The minimum input a driver's validation path needs. Events are collected
@@ -297,12 +470,29 @@ describe("reasoning effort", () => {
     const models = new ClaudeDriver("claude").models;
     const byId = new Map(models.map((m) => [m.id, m.efforts]));
     // Current generation carries the full union...
+    expect(byId.get("claude-fable-5-1")).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(byId.get("claude-opus-5-5")).toEqual(["low", "medium", "high", "xhigh", "max"]);
     expect(byId.get("claude-opus-5")).toEqual(["low", "medium", "high", "xhigh", "max"]);
     // ...the 4.6 generation predates xhigh...
     expect(byId.get("claude-opus-4-6")).not.toContain("xhigh");
     expect(byId.get("claude-sonnet-4-6")).not.toContain("xhigh");
     // ...and haiku rejects the parameter outright, so it offers none.
     expect(byId.get("claude-haiku-4-5")).toBeUndefined();
+  });
+
+  it("leads the codex fallback catalog with the GPT-6 generation", () => {
+    const models = new CodexDriver("codex").models;
+    expect(models.map((m) => m.id)).toEqual([
+      "gpt-6-sol",
+      "gpt-6-astra",
+      "gpt-6-luna",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+    ]);
+    // The default moved from gpt-5.6-sol to its successor — exactly one row
+    // may carry it, or the picker's "default" badge becomes ambiguous.
+    expect(models.filter((m) => m.isDefault).map((m) => m.id)).toEqual(["gpt-6-sol"]);
   });
 
   it("keeps efforts through the config layer instead of stripping them", async () => {
@@ -319,7 +509,7 @@ describe("reasoning effort", () => {
     });
     await app.settle();
 
-    const catalog = ctx.drivers.catalog();
+    const catalog = ctx.drivers.configuredCatalog();
     const claude = catalog.find((entry) => entry.driver === "claude");
     const opus = claude?.models.find((m) => m.id === "claude-opus-5");
     expect(opus?.efforts).toEqual(["low", "medium", "high", "xhigh", "max"]);

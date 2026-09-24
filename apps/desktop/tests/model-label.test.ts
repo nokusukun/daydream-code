@@ -48,6 +48,21 @@ describe("labelForModel", () => {
     });
   });
 
+  it("labels the canonical runtime id behind a provider alias", () => {
+    const dynamic: DriverCatalogEntry[] = [{
+      driver: "claude",
+      models: [{
+        id: "opus[1m]",
+        resolvedId: "claude-opus-new[1m]",
+        label: "Opus (1M context)",
+      }],
+      supportsFastMode: true,
+    }];
+    expect(labelForModel(dynamic, "claude", "claude-opus-new[1m]")).toEqual({
+      label: "Opus (1M context)",
+    });
+  });
+
   it("names the driver's advertised default when nothing is pinned", () => {
     expect(labelForModel(catalog, "codex", null)).toEqual({
       label: "GPT-5.6 Sol",

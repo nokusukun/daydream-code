@@ -18,6 +18,7 @@ import {
 import { ApiError, type SearchHit } from "../api.js";
 import { bridge } from "../bridge.js";
 import { useHarness } from "../harness.js";
+import { useSidebar } from "../use-sidebar.js";
 import { runPaletteAction } from "../palette-actions.js";
 import { useDesktopModules } from "../modules/react.js";
 import type { DesktopHost } from "../modules/host.js";
@@ -38,7 +39,8 @@ const SEARCH_PREFIX = "?";
 export function CommandPalette(props: {
   onSwitchProject?: (() => void) | undefined;
 }): ReactNode {
-  const { select, setOverlay, sidebar, toggleSidebar } = useHarness();
+  const { select, setOverlay } = useHarness();
+  const { sidebar, toggleSidebar } = useSidebar();
   const modules = useDesktopModules<DesktopHost>();
   const { sessions } = useSessions();
   const [query, setQuery] = useState("");

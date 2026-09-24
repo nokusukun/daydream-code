@@ -7,7 +7,15 @@
 export interface WindowLayout {
   mode: string;
   splitMode: string | null;
+  /**
+   * The global flag from before choices were per-mode. Kept as the last
+   * resolution fallback rather than migrated, so a user who hid the rail
+   * under the old scheme still finds it hidden — without inventing per-mode
+   * choices they never made.
+   */
   sidebar: boolean;
+  /** Explicit per-mode sidebar choices. Absence means "never toggled here". */
+  sidebarModes: Readonly<Record<string, boolean>>;
 }
 
 export interface LayoutStorage {
@@ -20,7 +28,22 @@ const DEFAULT_LAYOUT: WindowLayout = {
   mode: "agent",
   splitMode: null,
   sidebar: true,
+  sidebarModes: {},
 };
+
+/**
+ * Effective sidebar visibility for a mode: the user's explicit choice for
+ * that mode, else the mode's own declared default, else the legacy global
+ * flag. Both the ⌘B handler and the palette label resolve through this one
+ * function so the promise and the behavior cannot drift apart.
+ */
+export function sidebarVisible(
+  layout: Pick<WindowLayout, "sidebar" | "sidebarModes">,
+  modeId: string,
+  modeDefault?: boolean,
+): boolean {
+  return layout.sidebarModes[modeId] ?? modeDefault ?? layout.sidebar;
+}
 
 function browserStorage(): LayoutStorage | null {
   if (typeof window === "undefined") return null;
@@ -35,6 +58,17 @@ function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
     : null;
+}
+
+/** Keep only boolean-valued entries; anything else is stale-format noise. */
+function booleanRecord(value: unknown): Record<string, boolean> {
+  const source = record(value);
+  if (source === null) return {};
+  const out: Record<string, boolean> = {};
+  for (const [key, entry] of Object.entries(source)) {
+    if (typeof entry === "boolean") out[key] = entry;
+  }
+  return out;
 }
 
 /** Read defensively: a stale module id is validated once modules load. */
@@ -58,6 +92,7 @@ export function loadWindowLayout(
         typeof value?.sidebar === "boolean"
           ? value.sidebar
           : DEFAULT_LAYOUT.sidebar,
+      sidebarModes: booleanRecord(value?.sidebarModes),
     };
   } catch {
     return { ...DEFAULT_LAYOUT };

@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ProjectRecord } from "@daydream-code/shared";
 import { bridge } from "../bridge.js";
 import { useHarness } from "../harness.js";
+import { useKeepAwakePreference } from "../keep-awake.js";
 import { GearIcon } from "../ui.js";
 import { useDismiss } from "../overlay.js";
 import type { ThemeState, ThemeChoice } from "../appearance.js";
@@ -29,6 +30,10 @@ export function AppMenu(props: { theme: ThemeState }): ReactNode {
   const [project, setProject] = useState<ProjectRecord | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const hasBridge = bridge() !== undefined;
+  const keepAwake = useKeepAwakePreference();
+  // Feature-detected, not just bridged: a renderer reloaded against a preload
+  // built before the channel would show a switch wired to nothing.
+  const canKeepAwake = bridge()?.setKeepAwake !== undefined;
 
   useDismiss(rootRef, open, () => setOpen(false));
 
@@ -86,6 +91,33 @@ export function AppMenu(props: { theme: ThemeState }): ReactNode {
               ))}
             </div>
           </div>
+
+          {canKeepAwake && (
+            <div className="pop-field">
+              <span className="pop-field-label">Keep screen awake</span>
+              <div
+                className="segmented segmented-sm"
+                role="group"
+                aria-label="Keep screen awake"
+                title="Hold off display sleep while any loaded project has a thread running or waiting"
+              >
+                <button
+                  type="button"
+                  aria-pressed={!keepAwake.enabled}
+                  onClick={() => keepAwake.set(false)}
+                >
+                  Off
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={keepAwake.enabled}
+                  onClick={() => keepAwake.set(true)}
+                >
+                  On
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="pop-field">
             <span className="pop-field-label">Default model</span>

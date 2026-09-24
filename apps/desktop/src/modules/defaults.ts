@@ -38,6 +38,11 @@ export const defaultModuleLoaders: readonly DesktopModuleLoader<DesktopHost>[] =
     load: () => import("./features/quick-actions.js"),
   },
   {
+    id: "keep-awake",
+    name: "Keep screen awake",
+    load: () => import("./features/keep-awake.js"),
+  },
+  {
     id: "app-menu",
     name: "Application menu",
     load: () => import("./features/app-menu.js"),

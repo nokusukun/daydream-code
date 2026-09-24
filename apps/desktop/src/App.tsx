@@ -25,8 +25,10 @@ import { WindowControls } from "./WindowControls.js";
 import { useDismiss } from "./overlay.js";
 import { SplitPane } from "./split.js";
 import { loadWindowLayout, saveWindowLayout } from "./window-layout.js";
+import { useSidebar } from "./use-sidebar.js";
 import { ProjectPicker } from "./views/ProjectPicker.js";
 import { ProjectSwitcher, useSwitcherHotkey } from "./views/ProjectSwitcher.js";
+import { SidebarToggle } from "./views/SidebarToggle.js";
 import { ProjectFanoutProvider } from "./project-fanout.js";
 import {
   DesktopHostProvider,
@@ -169,9 +171,8 @@ function Workspace(props: {
     setMode,
     split: threadSplit,
     closeSplit: closeThreadSplit,
-    sidebar,
-    toggleSidebar,
   } = useHarness();
+  const { sidebar, toggleSidebar } = useSidebar();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [splitMode, setSplitMode] = useState<string | null>(
@@ -460,6 +461,40 @@ function Workspace(props: {
                   <span className="pop-row-title">{entry.label}</span>
                 </button>
               ))}
+              {/* The visible way to hide the rail. ⌘B and the palette do the
+                  same thing, but neither is discoverable from the chrome, and
+                  the toolbar slot that used to hold this is quick actions now.
+                  Hidden (not disabled) when the mode contributes no sidebar —
+                  Terminal opted out on purpose, and a toggle that could never
+                  do anything would read as broken rather than inapplicable. */}
+              {Sidebar !== undefined && (
+                <>
+                  <div className="pop-sep" role="separator" />
+                  <button
+                    type="button"
+                    className="pop-row mode-pop-row sidebar-menu-row"
+                    role="menuitemcheckbox"
+                    aria-checked={sidebar}
+                    aria-keyshortcuts="Meta+B"
+                    onClick={() => {
+                      setModeMenuOpen(false);
+                      toggleSidebar();
+                    }}
+                  >
+                    <span className="mode-pop-check" aria-hidden="true">
+                      {sidebar && (
+                        <svg viewBox="0 0 12 12">
+                          <path d="m2.25 6.25 2.35 2.2 5.15-5.1" />
+                        </svg>
+                      )}
+                    </span>
+                    <span className="pop-row-title">Sidebar</span>
+                    <span className="pop-row-hint" aria-hidden="true">
+                      ⌘B
+                    </span>
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -475,6 +510,9 @@ function Workspace(props: {
         <span className="toolbar-spacer" />
 
         <div className="toolbar-actions" role="group" aria-label="Toolbar actions">
+          {Sidebar !== undefined && (
+            <SidebarToggle visible={sidebar} onToggle={toggleSidebar} />
+          )}
           <button
             type="button"
             className="titlebar-search"

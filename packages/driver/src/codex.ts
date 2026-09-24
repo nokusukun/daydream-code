@@ -19,7 +19,6 @@ import {
   type Usage,
 } from "@daydream-code/shared";
 import {
-  DriverModelSchema,
   type AgentSkill,
   type DriverModel,
   type DriverRunInput,
@@ -100,11 +99,18 @@ function threadOptions(input: DriverRunInput): ThreadOptions {
   }
 }
 
-/** Baked-in catalog (config-replaceable): the current Codex lineup. */
+/** Last-known-good fallback used only when app-server discovery fails. */
 const CODEX_MODELS: DriverModel[] = [
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", description: "flagship", isDefault: true, efforts: [...CODEX_EFFORTS] },
+  // GPT-6 IDs verified against developers.openai.com (2026-09-24): the API
+  // names are `gpt-6-sol` / `gpt-6-luna` / `gpt-6-astra` — hyphenated, unlike
+  // the dotted 5.6 family. Sol inherits the default from gpt-5.6-sol; live
+  // app-server discovery overrides this whole list when reachable.
+  { id: "gpt-6-sol", label: "GPT-6 Sol", description: "flagship", isDefault: true, efforts: [...CODEX_EFFORTS] },
+  { id: "gpt-6-astra", label: "GPT-6 Astra", description: "agentic coding", efforts: [...CODEX_EFFORTS] },
+  { id: "gpt-6-luna", label: "GPT-6 Luna", description: "fast and affordable", efforts: [...CODEX_EFFORTS] },
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", efforts: [...CODEX_EFFORTS] },
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", description: "everyday workhorse", efforts: [...CODEX_EFFORTS] },
-  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", description: "fast and affordable", efforts: [...CODEX_EFFORTS] },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", efforts: [...CODEX_EFFORTS] },
 ];
 
 export class CodexDriver implements SessionDriver {
@@ -117,6 +123,10 @@ export class CodexDriver implements SessionDriver {
 
   skills(workdir: string): Promise<AgentSkill[]> {
     return codexSkills(workdir);
+  }
+
+  discoverModels(workdir: string): Promise<DriverModel[]> {
+    return codexModels(workdir);
   }
 
   async run(input: DriverRunInput): Promise<DriverSessionResult> {
@@ -355,6 +365,21 @@ interface CodexSkillsResponse {
   data: Array<{ cwd: string; skills: CodexSkillMetadata[] }>;
 }
 
+interface CodexModelMetadata {
+  id?: unknown;
+  model?: unknown;
+  displayName?: unknown;
+  description?: unknown;
+  hidden?: unknown;
+  supportedReasoningEfforts?: unknown;
+  isDefault?: unknown;
+}
+
+interface CodexModelsResponse {
+  data: unknown[];
+  nextCursor?: unknown;
+}
+
 interface CodexExecutable {
   executablePath: string;
   pathDirs: string[];
@@ -382,8 +407,16 @@ function codexExecutable(): CodexExecutable {
   return { executablePath, pathDirs } as CodexExecutable;
 }
 
-/** Query Codex's native registry. No thread or model turn is created. */
-export function codexSkills(workdir: string): Promise<AgentSkill[]> {
+/**
+ * Make one request against the app-server bundled with this exact SDK. Model
+ * and skill discovery share this control channel; keeping the handshake here
+ * prevents the two catalogs from quietly drifting onto different binaries.
+ */
+function codexAppServerRequest(
+  workdir: string,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
   const executable = codexExecutable();
   const env = { ...process.env };
   const pathKey = process.platform === "win32" ? "Path" : "PATH";
@@ -404,21 +437,21 @@ export function codexSkills(workdir: string): Promise<AgentSkill[]> {
     let stderr = "";
     let settled = false;
     const timer = setTimeout(
-      () => finish(new Error("Codex skill discovery timed out")),
+      () => finish(new Error(`Codex ${method} timed out`)),
       10_000,
     );
 
     const send = (value: unknown): void => {
       child.stdin.write(`${JSON.stringify(value)}\n`);
     };
-    const finish = (error?: Error, skills?: AgentSkill[]): void => {
+    const finish = (error?: Error, result?: unknown): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       lines.close();
       child.kill();
       if (error !== undefined) reject(error);
-      else resolve(skills ?? []);
+      else resolve(result);
     };
 
     child.stderr.on("data", (chunk: Buffer) => {
@@ -429,14 +462,14 @@ export function codexSkills(workdir: string): Promise<AgentSkill[]> {
       if (!settled) {
         finish(
           new Error(
-            `Codex skill discovery exited ${code ?? "early"}${stderr.trim().length > 0 ? `: ${stderr.trim()}` : ""}`,
+            `Codex ${method} exited ${code ?? "early"}${stderr.trim().length > 0 ? `: ${stderr.trim()}` : ""}`,
           ),
         );
       }
     });
     lines.on("line", (line) => {
       if (line.trim().length === 0) return;
-      let message: { id?: number; result?: unknown; error?: { message?: string } };
+      let message: { id?: number; result?: unknown; error?: unknown };
       try {
         message = JSON.parse(line) as typeof message;
       } catch {
@@ -448,35 +481,15 @@ export function codexSkills(workdir: string): Promise<AgentSkill[]> {
           return;
         }
         send({ method: "initialized" });
-        send({
-          id: 2,
-          method: "skills/list",
-          params: { cwds: [workdir], forceReload: false },
-        });
+        send({ id: 2, method, params });
         return;
       }
       if (message.id !== 2) return;
       if (message.error != null) {
-        finish(new Error(codexErrorMessage(message.error) ?? "Codex could not list skills"));
+        finish(new Error(codexErrorMessage(message.error) ?? `Codex ${method} failed`));
         return;
       }
-      const response = message.result as CodexSkillsResponse | undefined;
-      if (response === undefined || !Array.isArray(response.data)) {
-        finish(new Error("Codex returned an invalid skill catalog"));
-        return;
-      }
-      const skills = response.data
-        .flatMap((entry) => entry.skills)
-        .filter((skill) => skill.enabled)
-        .map(
-          (skill): AgentSkill => ({
-            name: skill.name,
-            invocation: "$",
-            description: skill.shortDescription ?? skill.description,
-            scope: skill.scope,
-          }),
-        );
-      finish(undefined, skills);
+      finish(undefined, message.result);
     });
 
     send({
@@ -494,6 +507,104 @@ export function codexSkills(workdir: string): Promise<AgentSkill[]> {
   });
 }
 
+/** Convert the provider's runtime response into Daydream's small wire shape. */
+export function codexModelsFromResponse(value: unknown): DriverModel[] {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !Array.isArray((value as CodexModelsResponse).data)
+  ) {
+    throw new Error("Codex returned an invalid model catalog");
+  }
+  const rows = (value as CodexModelsResponse).data as CodexModelMetadata[];
+  return rows.flatMap((row): DriverModel[] => {
+    if (typeof row !== "object" || row === null || row.hidden === true) return [];
+    const id =
+      typeof row.model === "string"
+        ? row.model
+        : typeof row.id === "string"
+          ? row.id
+          : null;
+    if (id === null || typeof row.displayName !== "string") return [];
+    const efforts = Array.isArray(row.supportedReasoningEfforts)
+      ? row.supportedReasoningEfforts.flatMap((option): string[] => {
+          if (typeof option !== "object" || option === null) return [];
+          const effort = (option as { reasoningEffort?: unknown }).reasoningEffort;
+          return typeof effort === "string" &&
+            (CODEX_EFFORTS as readonly string[]).includes(effort)
+            ? [effort]
+            : [];
+        })
+      : [];
+    return [
+      {
+        id,
+        label: row.displayName,
+        ...(typeof row.description === "string" && row.description.length > 0
+          ? { description: row.description }
+          : {}),
+        ...(row.isDefault === true ? { isDefault: true } : {}),
+        ...(efforts.length > 0 ? { efforts } : {}),
+      },
+    ];
+  });
+}
+
+function codexModelCursor(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Codex returned an invalid model catalog");
+  }
+  const cursor = (value as CodexModelsResponse).nextCursor;
+  if (cursor === undefined || cursor === null) return null;
+  if (typeof cursor !== "string") {
+    throw new Error("Codex returned an invalid model catalog cursor");
+  }
+  return cursor;
+}
+
+/** Query Codex's live ACP/app-server model registry. No turn is created. */
+export async function codexModels(workdir: string): Promise<DriverModel[]> {
+  const models: DriverModel[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  do {
+    const response = await codexAppServerRequest(workdir, "model/list", {
+      limit: 100,
+      includeHidden: false,
+      ...(cursor !== null ? { cursor } : {}),
+    });
+    models.push(...codexModelsFromResponse(response));
+    cursor = codexModelCursor(response);
+    if (cursor !== null && seen.has(cursor)) {
+      throw new Error("Codex returned a repeated model catalog cursor");
+    }
+    if (cursor !== null) seen.add(cursor);
+  } while (cursor !== null);
+  return models;
+}
+
+/** Query Codex's native skill registry. No thread or model turn is created. */
+export async function codexSkills(workdir: string): Promise<AgentSkill[]> {
+  const response = (await codexAppServerRequest(workdir, "skills/list", {
+    cwds: [workdir],
+    forceReload: false,
+  })) as CodexSkillsResponse | undefined;
+  if (response === undefined || !Array.isArray(response.data)) {
+    throw new Error("Codex returned an invalid skill catalog");
+  }
+  return response.data
+    .flatMap((entry) => entry.skills)
+    .filter((skill) => skill.enabled)
+    .map(
+      (skill): AgentSkill => ({
+        name: skill.name,
+        invocation: "$",
+        description: skill.shortDescription ?? skill.description,
+        scope: skill.scope,
+      }),
+    );
+}
+
 export const name = "driver-codex";
 export const inject = ["drivers"] as const;
 
@@ -505,8 +616,8 @@ export const { Config, settings } = defineConfig({
     advanced: true,
   }),
   models: field.list({
-    label: "model catalog",
-    help: "what the model picker offers. Removing one does not stop a session that already pinned it.",
+    label: "fallback model catalog",
+    help: "used only when Codex model discovery is unavailable. The normal picker comes from Codex app-server.",
     item: {
       id: field.string({ label: "model id", placeholder: "codex_models" }),
       label: field.string({ label: "shown as" }),

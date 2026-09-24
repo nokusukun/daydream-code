@@ -114,6 +114,8 @@ contextBridge.exposeInMainWorld("daydream", {
   getAppearance: () => ipcRenderer.invoke("daydream:get-appearance"),
   setThemeSource: (choice: "system" | "light" | "dark") =>
     ipcRenderer.invoke("daydream:set-theme-source", choice),
+  setKeepAwake: (active: boolean) =>
+    ipcRenderer.invoke("daydream:set-keep-awake", active),
   onAppearance: (callback: (appearance: Appearance) => void) => {
     const listener = (_event: unknown, appearance: Appearance): void => {
       callback(appearance);

@@ -320,9 +320,13 @@ export function ModelSelector(props: {
 }): ReactNode {
   const { value, onChange } = props;
   const persist = props.persist !== false;
-  const { api, modelLabel } = useHarness();
-  const [catalog, setCatalog] = useState<DriverCatalogEntry[]>(FALLBACK_CATALOG);
-  const [catalogReady, setCatalogReady] = useState(false);
+  const {
+    catalog: discoveredCatalog,
+    catalogReady,
+    refreshCatalog,
+    modelLabel,
+  } = useHarness();
+  const catalog = catalogReady ? discoveredCatalog : FALLBACK_CATALOG;
   // One slot for both popovers: they are siblings on one control cluster, and
   // a single state makes "opening one closes the other" structural rather
   // than something every handler has to remember.
@@ -370,21 +374,11 @@ export function ModelSelector(props: {
     onDismiss: dismiss,
   });
 
+  // Provider catalogs change independently of the app. Refresh on every open
+  // rather than freezing the first response for the lifetime of the window.
   useEffect(() => {
-    let stale = false;
-    api
-      .models()
-      .then((entries) => {
-        if (!stale && entries.length > 0) {
-          setCatalog(entries);
-          setCatalogReady(true);
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      stale = true;
-    };
-  }, [api]);
+    if (open) void refreshCatalog().catch(() => undefined);
+  }, [open, refreshCatalog]);
 
   // A configured driver can lose the capability after a saved choice was
   // written. Clear that stale flag once the real catalog arrives, so the next

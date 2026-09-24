@@ -114,6 +114,11 @@ export type QuickActionResult =
   | { ok: true; detail?: string }
   | { ok: false; error: string };
 
+/** Whether main is currently holding a display-sleep blocker. */
+export type KeepAwakeResult =
+  | { ok: true; active: boolean }
+  | { ok: false; error: string };
+
 export interface TerminalOpenRequest {
   terminalId: string;
   attachmentId: string;
@@ -192,6 +197,12 @@ export interface DaydreamBridge {
    * only half applied until this lands.
    */
   setThemeSource(choice: "system" | "light" | "dark"): Promise<void>;
+  /**
+   * This window's current keep-awake wish; main holds a display-sleep blocker
+   * while any window wants one. Optional because a reloaded renderer can be
+   * running against a preload built before the channel existed.
+   */
+  setKeepAwake?(active: boolean): Promise<KeepAwakeResult>;
   onAppearance(callback: (appearance: Appearance) => void): () => void;
   /** Show the platform context menu for selected code or a file-tree row. */
   showCodeContextMenu(

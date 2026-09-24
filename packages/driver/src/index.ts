@@ -22,6 +22,8 @@ declare module "@daydream-code/kernel" {
  */
 export const DriverModelSchema = z.object({
   id: z.string(),
+  /** Provider-resolved wire id when `id` is a selectable alias. */
+  resolvedId: z.string().optional(),
   label: z.string(),
   description: z.string().optional(),
   /** Preselected in pickers; omitting `modelId` on dispatch means "driver default". */
@@ -166,8 +168,14 @@ export interface DriverSessionResult extends SessionResult {
 
 export interface SessionDriver {
   readonly id: string;
-  /** Models this driver can dispatch with; empty/absent means "default only". */
+  /**
+   * Last-resort catalog when provider discovery is unavailable. Empty/absent
+   * means "default only". It is deliberately not the normal picker source:
+   * providers add and retire models independently of Daydream releases.
+   */
   readonly models?: readonly DriverModel[];
+  /** Ask the provider for the models this account can select right now. */
+  discoverModels?(workdir: string): Promise<readonly DriverModel[]>;
   /** Whether this driver can request its provider's lower-latency service tier. */
   readonly supportsFastMode?: boolean;
   /** Skills this provider would make available from the given project root. */
@@ -205,13 +213,39 @@ export class SessionDrivers extends Service {
     return [...this.#drivers.keys()];
   }
 
-  /** Every registered driver with its selectable models, in registration order. */
-  catalog(): DriverCatalogEntry[] {
+  /** The configured fallback catalog, useful when no project root is available. */
+  configuredCatalog(): DriverCatalogEntry[] {
     return [...this.#drivers.values()].map((driver) => ({
       driver: driver.id,
       models: [...(driver.models ?? [])],
       supportsFastMode: driver.supportsFastMode === true,
     }));
+  }
+
+  /**
+   * Every provider's live catalog, in registration order. Discovery failures
+   * degrade to the configured fallback one driver at a time, so an unavailable
+   * provider cannot empty the other providers from the picker.
+   */
+  async catalog(workdir: string): Promise<DriverCatalogEntry[]> {
+    return Promise.all(
+      [...this.#drivers.values()].map(async (driver) => {
+        let models = [...(driver.models ?? [])];
+        if (driver.discoverModels !== undefined) {
+          try {
+            models = [...(await driver.discoverModels(workdir))];
+          } catch {
+            // A stale fallback is more useful than losing the provider's
+            // entire picker when discovery is temporarily unavailable.
+          }
+        }
+        return {
+          driver: driver.id,
+          models,
+          supportsFastMode: driver.supportsFastMode === true,
+        };
+      }),
+    );
   }
 
   /** Ask the selected provider, rather than mirroring its discovery rules. */

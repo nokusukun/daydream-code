@@ -18,7 +18,10 @@ const driverRoutes = {
       {
         method: "GET",
         path: "/api/models",
-        handle: () => ctx.drivers.catalog(),
+        handle: () => {
+          const rootPath = (ctx as Context & StoreContext).store.rootPath;
+          return ctx.drivers.catalog(rootPath);
+        },
       },
       {
         method: "GET",

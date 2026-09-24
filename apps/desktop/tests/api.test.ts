@@ -6,6 +6,7 @@ interface Recorded {
   method: string;
   headers: Record<string, string>;
   body: string | undefined;
+  cache: RequestCache | undefined;
 }
 
 function fakeFetch(
@@ -18,6 +19,7 @@ function fakeFetch(
       method: init?.method ?? "GET",
       headers: (init?.headers ?? {}) as Record<string, string>,
       body: typeof init?.body === "string" ? init.body : undefined,
+      cache: init?.cache,
     };
     calls.push(recorded);
     const { status = 200, json = {} } = respond(recorded);
@@ -148,6 +150,15 @@ describe("ApiClient", () => {
     expect(calls[0]?.url).toBe(
       "http://127.0.0.1:4870/api/skills?driver=claude%2Fopus",
     );
+  });
+
+  it("bypasses the HTTP cache when refreshing provider models", async () => {
+    const { fetch: f, calls } = fakeFetch(() => ({ json: [] }));
+    await client(f).models();
+    expect(calls[0]).toMatchObject({
+      url: "http://127.0.0.1:4870/api/models",
+      cache: "no-store",
+    });
   });
 
   it("throws with the server's error message on non-ok responses", async () => {
