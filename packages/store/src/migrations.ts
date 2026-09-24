@@ -365,6 +365,32 @@ export const migrations: readonly Migration[] = [
   `
   ALTER TABLE thread_entries ADD COLUMN caused_by_json TEXT;
   `,
+  // v10 — board plans: many draft cards written by one planner session.
+  //
+  // A plan row exists before its planner does. The planner's task names the
+  // plan (see the board's PLAN_MARKER), so its first tool call can find the
+  // plan even if the dispatch has not resolved yet and `session_id` is still
+  // NULL. `request_json` is the agent every card the planner writes will run
+  // on. It has to be stored because the person can come back and refine the
+  // plan after a restart. `title` is the plan's own name. The planner thread's
+  // title follows the latest message, like any thread's, so it cannot name
+  // the plan.
+  `
+  ALTER TABLE board_cards ADD COLUMN plan_id TEXT;
+  CREATE INDEX IF NOT EXISTS board_cards_plan
+    ON board_cards (plan_id) WHERE plan_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS board_plans (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    session_id TEXT,
+    title TEXT NOT NULL,
+    request_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS board_plans_project
+    ON board_plans (project_id, created_at);
+  `,
 ];
 
 /** Bring the database up to the current schema version. Safe to call on every open. */

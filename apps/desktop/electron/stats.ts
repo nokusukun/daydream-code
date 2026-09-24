@@ -25,6 +25,7 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { LIVE_STATUSES } from "@daydream-code/shared";
+import { projectIconUrl } from "./project-icon.js";
 import type { RegistryEntry } from "./registry.js";
 
 // better-sqlite3 reaches this package through @daydream-code/store rather than
@@ -158,6 +159,11 @@ export interface ProjectSummary extends RegistryEntry {
   active: boolean;
   /** Null when the store is absent or unreadable. */
   stats: ProjectStats | null;
+  /**
+   * The project's own icon as a data URL (see `project-icon.ts`). Null when it
+   * has none, and the renderer draws a generated mark instead.
+   */
+  icon: string | null;
 }
 
 /**
@@ -181,6 +187,7 @@ export function summarizeProjects(
       stats: exists
         ? readProjectStats(entry.rootPath, liveRootPaths.has(entry.rootPath))
         : null,
+      icon: exists ? projectIconUrl(entry.rootPath) : null,
     };
   });
 }

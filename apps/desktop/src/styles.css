@@ -604,9 +604,12 @@ pre {
   box-shadow: none;
 }
 
-/* Apply segment dividers after the button reset so direct button siblings
-   keep the same line as module-wrapped actions. */
-.toolbar-actions > * + * {
+/* Segment dividers. Source order alone doesn't beat the button reset above:
+   `.toolbar-actions .toolbar-icon` is (0,2,0) against a bare `> * + *` at
+   (0,1,0), which stripped the line from every direct button (search, theme)
+   and left it only on module-wrapped actions. The `:is()` lifts this to
+   (0,2,0) so the later rule wins for both kinds of segment. */
+.toolbar-actions > * + :is(*, .toolbar-icon) {
   border-left: 1px solid var(--border);
 }
 
@@ -630,7 +633,9 @@ pre {
 
 .toolbar-actions .titlebar-search:hover,
 .toolbar-actions .toolbar-icon:hover {
-  border-color: transparent;
+  /* Only the divider has width here; keep it rather than inheriting the
+     standalone button's accent hover border. */
+  border-color: var(--border);
   background: var(--tb-control-hi);
   box-shadow: none;
 }
@@ -916,6 +921,39 @@ pre {
 
 .glyph-running-light {
   opacity: 0.95;
+}
+
+/* Evaluating: three dots taking turns, the "thinking it over" beat. Same
+   accent as the ring, since both are live, but a different shape. */
+.glyph-evaluating {
+  color: var(--accent-ink);
+}
+
+.glyph-evaluating circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: glyph-deliberate 1.2s ease-in-out infinite;
+}
+
+.glyph-evaluating circle:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.glyph-evaluating circle:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes glyph-deliberate {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.72);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .glyph-completed {
@@ -1539,6 +1577,76 @@ pre {
   align-items: center;
   gap: var(--s3);
   padding: 0 var(--s4) var(--s3);
+}
+
+/*
+ * The footer has to fit whatever pane the field lands in, not only the main
+ * panel's measure. Plan mode and split view put a whole thread composer in a
+ * 360–520px pane, and with nothing in the row allowed to give, the model pills
+ * pushed stop and send out past the field's rounded edge. The breakpoints are
+ * container queries on the field because the window is wide in exactly the
+ * case that breaks; only the pane is narrow.
+ *
+ * What gives, in order: the model name ellipsizes (it is the one long label,
+ * and its icon still says which agent), then the token facts go, then the pill
+ * kickers ("Effort", "Fast") fold to their values and icons, whose tooltips
+ * and accessible names still say them. The actions never shrink.
+ */
+.composer-field {
+  container: composer / inline-size;
+}
+
+.composer-row > .btn,
+.composer-row > .composer-send-split,
+.composer-row > .composer-facts,
+.composer-row .model-select > .effort-trigger,
+.composer-row .model-select > .fast-trigger,
+.composer-row .model-trigger .provider-icon,
+.composer-row .model-caret {
+  flex: none;
+}
+
+.composer-row .model-select,
+.composer-row .model-select > .model-trigger:first-child {
+  min-width: 0;
+}
+
+@container composer (max-width: 640px) {
+  .composer-row .composer-facts {
+    display: none;
+  }
+}
+
+/* Facts never wrap: "48.2k" over "tokens" read as two unrelated numbers. */
+.composer-facts {
+  white-space: nowrap;
+}
+
+@container composer (max-width: 520px) {
+  .composer-row {
+    gap: var(--s2);
+  }
+
+  .composer-row .effort-kicker,
+  .composer-row .fast-trigger > span {
+    display: none;
+  }
+}
+
+/* At the split's minimum the pills and the actions cannot share one line at
+   any label length, so the pills take a line of their own above the actions
+   instead of the actions leaving the field. */
+@container composer (max-width: 380px) {
+  .composer-row {
+    flex-wrap: wrap;
+    row-gap: var(--s2);
+    padding-inline: var(--s3);
+  }
+
+  .composer-row .model-select {
+    order: -1;
+    flex-basis: 100%;
+  }
 }
 
 .composer-hint {
@@ -3165,6 +3273,16 @@ table.fibers td:first-child {
     animation: none;
     transform: rotate(32deg);
   }
+  /* The dots hold a graded ramp, so they still read as "in progress". */
+  .glyph-evaluating circle {
+    animation: none;
+  }
+  .glyph-evaluating circle:nth-child(1) {
+    opacity: 0.35;
+  }
+  .glyph-evaluating circle:nth-child(2) {
+    opacity: 0.65;
+  }
   /* Press feedback still has to read, so only the movement goes. */
   .btn:active:not(:disabled),
   .toolbar-icon:active,
@@ -4074,7 +4192,7 @@ table.fibers td:first-child {
 
 .proj-row {
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto;
+  grid-template-columns: 12px auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--s2);
   width: 100%;
@@ -4155,6 +4273,14 @@ table.fibers td:first-child {
 .proj-row:hover:not(:disabled) .proj-when,
 .proj-row-cursor:not(:disabled) .proj-when {
   color: color-mix(in oklab, var(--accent-text) 80%, transparent);
+}
+
+/* On the accent bar a blue tile, or a transparent favicon, would melt into
+   the highlight; a hairline keeps its edge. */
+.proj-row:hover:not(:disabled) .proj-mark,
+.proj-row-cursor:not(:disabled) .proj-mark {
+  /* An outline, not a shadow, so the tile keeps its own inset lighting. */
+  outline: 1px solid color-mix(in oklab, var(--accent-text) 38%, transparent);
 }
 
 .proj-row:disabled {
@@ -4912,20 +5038,56 @@ table.fibers td:first-child {
   box-shadow: var(--glass-control-shadow-hi);
 }
 
-/* The project's initial, in the accent. A window that can hold any repo needs
-   one fixed mark that says which one it is holding now. */
-.proj-glyph {
+/*
+ * The project's mark: its own icon, or a generated tile of its initials in a
+ * hue of its own. A window that can hold any repo needs one fixed mark that
+ * says which one it is holding now, and the rows under it wear the same one.
+ * Squircle-ish rather than round: it is an app-icon shape, and real icons are
+ * drawn for that shape and clip badly to a circle.
+ */
+.proj-mark {
+  --mark-size: 22px;
   flex: none;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--accent-solid);
-  color: var(--accent-text);
+  width: var(--mark-size);
+  height: var(--mark-size);
+  border-radius: calc(var(--mark-size) * 0.26);
+  overflow: hidden;
+}
+
+.proj-mark-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* Downscaling a 256px raster to 22px: let the browser pick its best filter
+     rather than the default, which shimmers on hard-edged marks. */
+  image-rendering: auto;
+}
+
+/* Two stops a few degrees apart, lit from the top: flat enough to read as a
+   letter at 22px, not so flat it reads as a coloured div. The dark stop bends
+   warmer, not cooler, because amber bent the other way goes olive. */
+.proj-mark-glyph {
+  --mark-h: 245;
+  background: linear-gradient(
+    165deg,
+    oklch(0.71 0.14 var(--mark-h)),
+    oklch(0.56 0.15 calc(var(--mark-h) - 10))
+  );
+  box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.14),
+    inset 0 1px 0 oklch(1 0 0 / 0.28);
+  color: oklch(1 0 0);
   font-family: var(--mono);
-  font-size: var(--text-sm);
+  font-size: calc(var(--mark-size) * 0.5);
   font-weight: 600;
+  line-height: 1;
+  text-shadow: 0 0.5px 1px oklch(0 0 0 / 0.18);
+}
+
+.proj-mark-pair {
+  font-size: calc(var(--mark-size) * 0.4);
+  letter-spacing: -0.02em;
 }
 
 .title-text {
@@ -8587,4 +8749,393 @@ table.fibers td:first-child {
 .board-empty .board-notice {
   margin-top: var(--s3);
   justify-content: center;
+}
+
+/* ==========================================================================
+   Board: thread peek (hold a card)
+   ========================================================================== */
+
+/*
+ * The scrim takes no pointer events. The person is still holding the button,
+ * and the release has to reach the window listener wherever it lands; a
+ * scrim that caught it would also be the target of the click that follows.
+ * Only the panel itself is hit-testable, so the wheel can scroll it.
+ */
+.thread-peek-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: color-mix(in oklab, var(--glass-shade) 55%, transparent);
+  animation: scrim-in var(--t-fast) var(--ease-out-quart);
+}
+
+.thread-peek {
+  pointer-events: auto;
+  width: min(760px, 86vw);
+  height: min(78vh, 820px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-xl);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-pop), inset 0 1px 0 var(--glass-specular);
+  overflow: hidden;
+  /* A peek is not a place to work; selecting text in it would start on
+     press, which is the gesture that opened it. */
+  user-select: none;
+  transform-origin: center;
+  animation: thread-peek-in var(--t-base) var(--ease-out-expo);
+}
+
+@keyframes thread-peek-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+.thread-peek-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.thread-peek-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.thread-peek-hint {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+/* The panel's transcript clears a floating head and composer; the peek has
+   neither, so the gutters shrink to ordinary padding. */
+.thread-peek-feed {
+  --panel-head-clear: var(--s4);
+  --composer-clear: var(--s4);
+  flex: 1;
+  min-height: 0;
+  user-select: none;
+}
+
+.thread-peek-empty {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-peek {
+    animation-name: scrim-in;
+  }
+}
+
+/* ==========================================================================
+   Board plan mode — one large prompt in, many draft cards out
+   ==========================================================================
+   Its own section at the end of the file so it does not tangle with the
+   board rules sibling sessions keep editing. It reuses the board's header,
+   notice and edit vocabulary, and the split view's glass thread pane, so the
+   planner's thread reads as the same object it is everywhere else. */
+
+.plan-compose {
+  flex: 1;
+  min-height: 0;
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding-top: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  overflow: auto;
+}
+
+.plan-compose-lede {
+  margin: 0;
+  max-width: 62ch;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+/* The prompt is the whole point of the screen, so it gets the height a
+   pasted spec needs rather than a composer's three lines. */
+.plan-compose-input {
+  flex: none;
+  width: 100%;
+  min-height: 260px;
+  height: 42vh;
+  resize: vertical;
+  padding: var(--s3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-base);
+  line-height: 1.55;
+  user-select: text;
+}
+
+.plan-compose-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.plan-compose-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+.plan-compose-hint {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+.plan-resume {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--s3);
+}
+
+.plan-resume-head {
+  margin: 0 0 var(--s1);
+  font-size: var(--text-xs);
+  font-weight: 620;
+  color: var(--text-3);
+}
+
+.plan-resume-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.plan-resume-row:hover {
+  background: color-mix(in oklab, var(--text-3) 10%, transparent);
+}
+
+.plan-resume-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.plan-resume-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-resume-meta {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The board header's Plan pull-down, once a plan is in progress. It drops
+   from the right edge of the header, so it opens leftward like the settings
+   menu rather than running off the window. */
+.plan-menu {
+  position: relative;
+  flex: none;
+}
+
+.plan-menu-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-veil);
+  color: var(--text-1);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: center;
+}
+
+.plan-pop {
+  right: 0;
+  width: 320px;
+}
+
+.plan-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-writing {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+.plan-split {
+  gap: 0;
+}
+
+.plan-cards {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.plan-empty {
+  margin: var(--s2) var(--s1);
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+
+.plan-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+/* The order number sits in its own gutter: a plan is read top to bottom as
+   the order things will run in, and the number is what the planner's thread
+   and the person's replies point at ("merge 3 into 2"). */
+.plan-card {
+  display: flex;
+  gap: var(--s3);
+  padding: var(--s3);
+  border-radius: var(--r-md);
+  border: 1px solid var(--hairline);
+  background: var(--surface-1);
+}
+
+.plan-card.is-locked {
+  opacity: 0.62;
+}
+
+.plan-card-order {
+  flex: none;
+  width: 2ch;
+  padding-top: 1px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.plan-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.plan-card-top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.plan-card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.plan-card-lane {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+/* Unlike a board card, a plan card shows its whole task: reviewing the task
+   is what this screen is for, and a clamp would hide exactly the part that
+   needs reading. */
+.plan-card-task {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.plan-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  margin-top: 2px;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease-out-quart);
+}
+
+.plan-card:hover .plan-card-actions,
+.plan-card:focus-within .plan-card-actions {
+  opacity: 1;
+}
+
+.plan-card-actions .btn {
+  height: 20px;
+  font-size: var(--text-xs);
+  padding: 0 var(--s1);
+}
+
+.plan-card-actions .btn-icon {
+  width: 20px;
+  padding: 0;
+}
+
+.plan-card-title-input {
+  font-weight: 600;
+}
+
+.plan-thread {
+  height: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plan-card-actions {
+    transition: none;
+  }
 }

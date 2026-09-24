@@ -38,12 +38,33 @@ import {
 } from "react";
 import { titleFromTask, type SessionRecord } from "@daydream-code/shared";
 import { ApiError, type BoardCard } from "../api.js";
-import { LANES, enableKanban, laneOf, useBoard } from "../board.js";
+import { LANES, enableKanban, laneOf, useBoard, usePlans } from "../board.js";
 import { useHarness } from "../harness.js";
 import { isArchived, useSessions } from "../sessions.js";
 import { ArchiveIcon, StatusGlyph, UnarchiveIcon, fmtAgo } from "../ui.js";
+import { PlanMenu } from "./PlanMenu.js";
+import { PlanView, planStorage } from "./PlanView.js";
+import { useLongPress } from "../long-press.js";
+import { ThreadPeek } from "./ThreadPeek.js";
 
 const DRAG_TYPE = "application/x-daydream-card";
+const PLAN_KEY = "daydream.board.plan";
+
+/**
+ * The plan screen board mode is on, if any: `"new"` for the composer or a
+ * plan id. Remembered across reloads, because a reload is the common way to
+ * pick up a renderer change, and it should not drop you out of a plan you
+ * were halfway through reviewing.
+ */
+function usePlanning(): [string | null, (id: string | null) => void] {
+  const [planning, setPlanningState] = useState<string | null>(() => planStorage()?.getItem(PLAN_KEY) ?? null);
+  const setPlanning = useCallback((id: string | null) => {
+    if (id === null) planStorage()?.removeItem(PLAN_KEY);
+    else planStorage()?.setItem(PLAN_KEY, id);
+    setPlanningState(id);
+  }, []);
+  return [planning, setPlanning];
+}
 
 /**
  * Lanes are not equally important and were not equally sized on purpose.
@@ -301,6 +322,8 @@ export function moveVerb(move: Move): string {
 export function BoardView(): ReactNode {
   const { api, select, newSession } = useHarness();
   const board = useBoard();
+  const plans = usePlans();
+  const [planning, setPlanning] = usePlanning();
   const { sessions } = useSessions();
   const [notice, setNotice] = useState<string | null>(null);
   const [enabling, setEnabling] = useState(false);
@@ -495,6 +518,19 @@ export function BoardView(): ReactNode {
     );
   }
 
+  if (planning !== null && board.enabled === true && plans.available === true) {
+    return (
+      <PlanView
+        planId={planning}
+        plans={plans.plans}
+        cards={board.cards}
+        sessions={byId}
+        onOpen={setPlanning}
+        onClose={() => setPlanning(null)}
+      />
+    );
+  }
+
   const known = board.enabled !== null;
   const needsYou = board.cards.filter((card) => card.column === "attention").length;
   const sessionOf = (card: BoardCard) => (card.sessionId === null ? undefined : byId.get(card.sessionId));
@@ -568,6 +604,9 @@ export function BoardView(): ReactNode {
             </button>
           )}
         </div>
+        {plans.available === true && (
+          <PlanMenu plans={plans.plans} cards={board.cards} sessions={byId} onOpen={setPlanning} />
+        )}
         <button
           type="button"
           className="btn"
@@ -707,6 +746,11 @@ export function BoardView(): ReactNode {
                       onDragLeave={() => setOverCard((id) => (id === card.id ? null : id))}
                       onDrop={lane.id === "queued" ? (event) => drop({ lane: "queued", card }, event) : undefined}
                       onOpen={(id) => select(id)}
+                      onOpenPlan={
+                        card.planId !== null && plans.plans.some((plan) => plan.id === card.planId)
+                          ? () => setPlanning(card.planId)
+                          : undefined
+                      }
                       onStart={() => attempt(() => api.startCard(card.id))}
                       onSubmit={() => attempt(() => api.submitCard(card.id))}
                       onCancel={() => attempt(() => api.cancelCard(card.id))}
@@ -796,6 +840,8 @@ function Card(props: {
   onDragLeave(): void;
   onDrop?: ((event: DragEvent) => void) | undefined;
   onOpen(sessionId: string): void;
+  /** Open the plan this card came from. Absent for cards no plan wrote. */
+  onOpenPlan?: (() => void) | undefined;
   onStart(): void;
   onSubmit(): void;
   onCancel(): void;
@@ -810,6 +856,10 @@ function Card(props: {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(card.task);
   const openId = openTargetOf(card, session, evaluator);
+  // Holding the card peeks at the same thread a click would open. Off while
+  // editing (the press belongs to the textarea) and while this card is the
+  // one being dragged.
+  const press = useLongPress(openId !== null && !editing && !props.dragging);
   /**
    * The whole card is a hit target for the thread it points at. The
    * `.board-link` in the facts row stays as the labelled, accessible
@@ -820,6 +870,8 @@ function Card(props: {
    * browser does not fire click on its source.
    */
   const openFromClick = (event: MouseEvent<HTMLElement>) => {
+    // Letting go of a peek must leave you on the board, not in the thread.
+    if (press.consumeClick()) return;
     if (openId === null) return;
     if ((event.target as HTMLElement).closest("button, a, textarea, input") !== null) return;
     // Only a selection inside this card swallows the click. Cards are
@@ -840,11 +892,15 @@ function Card(props: {
   // Enter opens only when the article itself holds focus (the roving tab
   // stop), never when it bubbles up out of the editor or a button.
   const openFromKey = (event: KeyboardEvent<HTMLElement>) => {
+    if (press.keyDown(event)) return;
     if (openId === null || event.key !== "Enter" || event.target !== event.currentTarget) return;
     event.preventDefault();
     props.onOpen(openId);
   };
-  const status = session?.status ?? (card.column === "evaluating" ? "running" : card.column);
+  // Evaluating wins over the session's own status: a follow-up card carries
+  // the finished session it continues, and a check on a card that is still
+  // being judged would say it is done.
+  const status = card.column === "evaluating" ? "evaluating" : (session?.status ?? card.column);
   const subtext = taskSubtext(card.title, card.task);
   const acts = [
     card.column === "draft" && { label: "Queue", run: props.onSubmit, danger: false },
@@ -858,147 +914,174 @@ function Card(props: {
   ].filter((a): a is { label: string; run: () => void; danger: boolean } => a !== false);
 
   return (
-    <article
-      data-card={card.id}
-      tabIndex={props.tabbable ? 0 : -1}
-      onFocus={props.onFocus}
-      className={`board-card board-card-${card.column}${props.dragging ? " is-dragging" : ""}${
-        target === "block" ? " is-target" : ""
-      }${target === "reorder" || target === "queue" ? " is-insert" : ""}${
-        openId !== null ? " is-openable" : ""
-      }${props.archived ? " is-archived" : ""}`}
-      {...(openId !== null && !editing ? { onClick: openFromClick, onKeyDown: openFromKey } : {})}
-      draggable={draggable(card)}
-      onDragStart={props.onDragStart}
-      onDragEnd={props.onDragEnd}
-      {...(props.onDrop !== undefined
-        ? { onDragOver: props.onDragOver, onDragLeave: props.onDragLeave, onDrop: props.onDrop }
-        : {})}
-      {...(props.reorderable ? { title: "⌥↑ / ⌥↓ to reorder" } : {})}
-    >
-      <div className="board-card-top">
-        <span className="board-card-glyph">
-          <StatusGlyph status={status} />
-        </span>
-        <span className="board-card-title">{card.title}</span>
-        <span className="board-card-end">
-          <span className="board-card-time" title={new Date(card.updatedAt).toLocaleString()}>
-            {fmtAgo(card.updatedAt)}
+    <>
+      <article
+        data-card={card.id}
+        tabIndex={props.tabbable ? 0 : -1}
+        onFocus={props.onFocus}
+        className={`board-card board-card-${card.column}${props.dragging ? " is-dragging" : ""}${
+          target === "block" ? " is-target" : ""
+        }${target === "reorder" || target === "queue" ? " is-insert" : ""}${
+          openId !== null ? " is-openable" : ""
+        }${props.archived ? " is-archived" : ""}`}
+        {...(openId !== null && !editing ? { onClick: openFromClick, onKeyDown: openFromKey } : {})}
+        {...press.bind}
+        draggable={draggable(card)}
+        onDragStart={(event) => {
+          // A drag that starts under an open peek would move a card the person
+          // cannot see. Past the slop the press already gave up, so a real drag
+          // never meets this.
+          if (press.peeking) {
+            event.preventDefault();
+            return;
+          }
+          press.end();
+          props.onDragStart(event);
+        }}
+        onDragEnd={props.onDragEnd}
+        {...(props.onDrop !== undefined
+          ? { onDragOver: props.onDragOver, onDragLeave: props.onDragLeave, onDrop: props.onDrop }
+          : {})}
+        {...(props.reorderable ? { title: "⌥↑ / ⌥↓ to reorder" } : {})}
+      >
+        <div className="board-card-top">
+          <span className="board-card-glyph">
+            <StatusGlyph status={status} />
           </span>
-          {props.onArchive !== undefined && (
-            <button
-              type="button"
-              className="btn btn-quiet btn-icon board-card-archive"
-              aria-label={props.archived ? "Restore from archive" : "Archive"}
-              title={props.archived ? "Restore from archive" : "Archive"}
-              onClick={props.onArchive}
-            >
-              {props.archived ? <UnarchiveIcon /> : <ArchiveIcon />}
-            </button>
-          )}
-        </span>
-      </div>
-
-      {card.column === "blocked" && (
-        <div className="board-card-blockers">
-          <span className="board-card-label">blocked by</span>
-          {card.blockedBy.map((block) => (
-            <span key={block.blockerSessionId} className="board-chip" title={block.reason ?? undefined}>
-              {block.blockerName}
+          <span className="board-card-title">{card.title}</span>
+          <span className="board-card-end">
+            <span className="board-card-time" title={new Date(card.updatedAt).toLocaleString()}>
+              {fmtAgo(card.updatedAt)}
+            </span>
+            {props.onArchive !== undefined && (
               <button
                 type="button"
-                className="board-chip-x"
-                aria-label={`stop waiting on ${block.blockerName}`}
-                onClick={() => props.onUnblock(block.blockerName)}
+                className="btn btn-quiet btn-icon board-card-archive"
+                aria-label={props.archived ? "Restore from archive" : "Archive"}
+                title={props.archived ? "Restore from archive" : "Archive"}
+                onClick={props.onArchive}
               >
-                ×
+                {props.archived ? <UnarchiveIcon /> : <ArchiveIcon />}
               </button>
-            </span>
-          ))}
+            )}
+          </span>
         </div>
-      )}
 
-      {card.column === "attention" && card.attentionReason !== null && (
-        <p className="board-card-reason board-card-reason-attention" title={card.attentionReason}>
-          {card.attentionReason}
-        </p>
-      )}
-      {card.verdict !== null && card.column !== "attention" && (
-        <p
-          className="board-card-reason"
-          title={`evaluator: ${card.verdict.decision} — ${card.verdict.reason}`}
-        >
-          <span className="board-card-label">{card.verdict.decision}</span>
-          {card.verdict.reason}
-        </p>
-      )}
-
-      {editing ? (
-        <div className="board-card-edit">
-          <textarea
-            className="board-draft-input"
-            value={text}
-            rows={3}
-            onChange={(event) => setText(event.target.value)}
-          />
-          <div className="board-card-actions is-open">
-            <button
-              type="button"
-              className="btn btn-quiet"
-              onClick={() => {
-                props.onSave(text.trim());
-                setEditing(false);
-              }}
-              disabled={text.trim().length === 0}
-            >
-              Save
-            </button>
-            <button type="button" className="btn btn-quiet" onClick={() => setEditing(false)}>
-              Cancel
-            </button>
+        {card.column === "blocked" && (
+          <div className="board-card-blockers">
+            <span className="board-card-label">blocked by</span>
+            {card.blockedBy.map((block) => (
+              <span key={block.blockerSessionId} className="board-chip" title={block.reason ?? undefined}>
+                {block.blockerName}
+                <button
+                  type="button"
+                  className="board-chip-x"
+                  aria-label={`stop waiting on ${block.blockerName}`}
+                  onClick={() => props.onUnblock(block.blockerName)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
           </div>
-        </div>
-      ) : (
-        subtext.length > 0 && (
-          <p className="board-card-task" title={card.task}>
-            {subtext}
+        )}
+
+        {card.column === "attention" && card.attentionReason !== null && (
+          <p className="board-card-reason board-card-reason-attention" title={card.attentionReason}>
+            {card.attentionReason}
           </p>
-        )
-      )}
+        )}
+        {card.verdict !== null && card.column !== "attention" && (
+          // The lane already says proceed (Working) or block (Blocked), so only
+          // the reason is shown. A defer is the exception: it sends the card
+          // back to Queued, where nothing else says it is being held.
+          <p className="board-card-reason" title={card.verdict.reason}>
+            {card.verdict.decision === "defer" && <span className="board-card-label">deferred</span>}
+            {card.verdict.reason}
+          </p>
+        )}
 
-      {target === "block" && props.blockerName !== undefined && (
-        <p className="board-card-hint">hold until {props.blockerName} finishes</p>
-      )}
+        {editing ? (
+          <div className="board-card-edit">
+            <textarea
+              className="board-draft-input"
+              value={text}
+              rows={3}
+              onChange={(event) => setText(event.target.value)}
+            />
+            <div className="board-card-actions is-open">
+              <button
+                type="button"
+                className="btn btn-quiet"
+                onClick={() => {
+                  props.onSave(text.trim());
+                  setEditing(false);
+                }}
+                disabled={text.trim().length === 0}
+              >
+                Save
+              </button>
+              <button type="button" className="btn btn-quiet" onClick={() => setEditing(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          subtext.length > 0 && (
+            <p className="board-card-task" title={card.task}>
+              {subtext}
+            </p>
+          )
+        )}
 
-      <div className="board-card-facts">
-        {card.request.driver !== undefined && <span>{card.request.driver}</span>}
-        {session !== undefined && (
-          <button type="button" className="board-link" onClick={() => props.onOpen(session.id as string)}>
-            {session.name}
+        {target === "block" && props.blockerName !== undefined && (
+          <p className="board-card-hint">hold until {props.blockerName} finishes</p>
+        )}
+
+        <div className="board-card-facts">
+          {card.request.driver !== undefined && <span>{card.request.driver}</span>}
+          {session !== undefined && (
+            <button type="button" className="board-link" onClick={() => props.onOpen(session.id as string)}>
+              {session.name}
+            </button>
+          )}
+          {props.onOpenPlan !== undefined && (
+          <button
+            type="button"
+            className="board-link"
+            title="Open the plan this card came from"
+            onClick={props.onOpenPlan}
+          >
+            plan
           </button>
         )}
         {evaluator !== undefined && card.column === "evaluating" && (
-          <button type="button" className="board-link" onClick={() => props.onOpen(evaluator.id as string)}>
-            evaluator: {evaluator.name}
-          </button>
-        )}
-      </div>
-
-      {!editing && acts.length > 0 && (
-        <div className="board-card-actions">
-          {acts.map((act) => (
-            <button
-              key={act.label}
-              type="button"
-              className={`btn btn-quiet${act.danger ? " btn-danger-text" : ""}`}
-              {...(act.label === "Start now" ? { title: "Skip evaluation and run now" } : {})}
-              onClick={act.run}
-            >
-              {act.label}
+            <button type="button" className="board-link" onClick={() => props.onOpen(evaluator.id as string)}>
+              evaluator: {evaluator.name}
             </button>
-          ))}
+          )}
         </div>
-      )}
-    </article>
+
+        {!editing && acts.length > 0 && (
+          <div className="board-card-actions">
+            {acts.map((act) => (
+              <button
+                key={act.label}
+                type="button"
+                className={`btn btn-quiet${act.danger ? " btn-danger-text" : ""}`}
+                {...(act.label === "Start now" ? { title: "Skip evaluation and run now" } : {})}
+                onClick={act.run}
+              >
+                {act.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </article>
+      {/* A sibling, not a child: the peek is portaled, and React bubbles a
+          portal's events through its owner, so inside the article every press
+          on the peek would count as a press on the card. */}
+      {press.peeking && openId !== null && <ThreadPeek sessionId={openId} fallbackTitle={card.title} />}
+    </>
   );
 }

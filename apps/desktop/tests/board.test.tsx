@@ -65,6 +65,7 @@ function card(column: BoardColumn, over: Partial<BoardCard> = {}): BoardCard {
     blockedBy: [],
     attentionReason: null,
     verdict: null,
+    planId: null,
     createdAt: "2026-09-24T00:00:00.000Z",
     updatedAt: "2026-09-24T00:00:00.000Z",
     ...over,
@@ -143,13 +144,13 @@ describe("enableKanban", () => {
     outcomes: [{ id, status }] as never,
   });
 
-  it("flips exactly the four kanban rows, in the project layer, routes last", async () => {
+  it("flips exactly the kanban rows, in the project layer, routes before the planner", async () => {
     const writeSetting = vi.fn((request: { id: string }) =>
       Promise.resolve(outcome(request.id, "mounted")),
     );
     expect(await enableKanban({ writeSetting: writeSetting as never })).toBeNull();
     expect(writeSetting.mock.calls.map(([request]) => request)).toEqual(
-      ["board", "board-evaluator", "board-writeback", "board-routes"].map((id) => ({
+      ["board", "board-evaluator", "board-writeback", "board-routes", "board-planner"].map((id) => ({
         layer: "project",
         id,
         set: { disabled: false },
@@ -170,7 +171,7 @@ describe("enableKanban", () => {
     expect(message).toContain("no driver");
     // The other rows were still written: a half-flipped switch that stops
     // silently would leave no way to see which half from the board.
-    expect(writeSetting).toHaveBeenCalledTimes(4);
+    expect(writeSetting).toHaveBeenCalledTimes(5);
   });
 
   it("reports a saved-but-not-live row as needing a restart, not as a failure", async () => {
@@ -289,6 +290,30 @@ describe("a card", () => {
     expect(evaluating).toContain("is-openable");
   });
 
+  it("marks an evaluating card with its own glyph, not the working ring", async () => {
+    const working = await render(
+      [card("working", { sessionId: "s1" as BoardCard["sessionId"] })],
+      true,
+      [session("s1", "sess-one")],
+    );
+    // Positive control: the working ring renders, so its absence below is
+    // the evaluating glyph taking over, not a renamed class.
+    expect(working).toContain("glyph-running");
+    expect(working).not.toContain("glyph-evaluating");
+
+    // A follow-up card carries its finished session; while it is being
+    // evaluated it must not show that session's check.
+    const done = { ...session("s1", "sess-one"), status: "completed" } as SessionRecord;
+    const evaluating = await render(
+      [card("evaluating", { sessionId: "s1" as BoardCard["sessionId"] })],
+      true,
+      [done],
+    );
+    expect(evaluating).toContain("glyph-evaluating");
+    expect(evaluating).not.toContain("glyph-running");
+    expect(evaluating).not.toContain("glyph-completed");
+  });
+
   it("offers one tab stop per lane rather than one per card", async () => {
     const html = await render([
       card("queued", { id: "q1" }),
@@ -359,7 +384,23 @@ describe("the subtext", () => {
     // The task line carries the full task; the reason line carries the full
     // verdict prose — the clamp hides text, it must not lose it.
     expect(html).toContain(`title="${task}"`);
-    expect(html).toContain("evaluator: proceed — no overlap with the working session");
+    expect(html).toContain('title="no overlap with the working session"');
+  });
+
+  it("drops the decision the lane already shows, but names a defer", async () => {
+    const at = "2026-09-24T00:00:00.000Z";
+    const proceeded = await render([
+      card("working", { verdict: { decision: "proceed", reason: "no overlap", at } }),
+    ]);
+    expect(proceeded).toContain("no overlap");
+    expect(proceeded).not.toContain(">proceed<");
+    expect(proceeded).not.toContain("board-card-label");
+    // Queued looks the same whether a card is waiting its turn or held by a
+    // defer, so a deferred card keeps its label.
+    const deferred = await render([
+      card("queued", { verdict: { decision: "defer", reason: "same lane code", deferTo: "card_x", at } }),
+    ]);
+    expect(deferred).toContain('<span class="board-card-label">deferred</span>');
   });
 });
 

@@ -25,6 +25,7 @@ function card(column: BoardColumn, over: Partial<BoardCard> = {}): BoardCard {
     blockedBy: [],
     attentionReason: null,
     verdict: null,
+    planId: null,
     createdAt: "2026-09-24T00:00:00.000Z",
     updatedAt: "2026-09-24T00:00:00.000Z",
     ...over,
@@ -98,7 +99,7 @@ describe("BoardHoldNotice", () => {
     });
     expect(html).toContain("Evaluating before this runs");
     expect(html).toContain("I can&#x27;t scroll to the right");
-    expect(html).toContain("glyph-running");
+    expect(html).toContain("glyph-evaluating");
     expect(html).toContain(">Watch<");
     expect(html).toContain(">Start now<");
   });
@@ -109,6 +110,6 @@ describe("BoardHoldNotice", () => {
     // Positive control above proves the label is real; its absence here means
     // there is no evaluator to open, not that the button was renamed.
     expect(html).not.toContain(">Watch<");
-    expect(html).not.toContain("glyph-running");
+    expect(html).not.toContain("glyph-evaluating");
   });
 });

@@ -20,6 +20,13 @@ declare module "@daydream-code/kernel" {
     "board/moved"(card: BoardCard, from: BoardColumn | null): void;
     /** @mode emit — after the card's row and its blocks are gone. */
     "board/removed"(card: BoardCard): void;
+    /**
+     * @mode emit — after a plan's row is committed with its planner linked.
+     * A planner can write cards before this fires, since its first tool call
+     * may land before its dispatch resolves. A listener may therefore see
+     * cards whose `planId` it does not know yet.
+     */
+    "board/planned"(plan: BoardPlan): void;
   }
 }
 
@@ -113,19 +120,58 @@ export interface BoardCard {
   /** Why it sits in Needs Attention; null elsewhere. */
   attentionReason: string | null;
   verdict: Verdict | null;
+  /**
+   * The plan that wrote this card, if a planner did. Kept after the card
+   * leaves Drafts, so a card on the board can still point back to the plan
+   * it came from. From then on only a person can change the card.
+   */
+  planId: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
+/**
+ * Many draft cards written by one planner session from one large prompt. The
+ * person reviews the cards, edits them by hand or asks the planner to change
+ * them, and queues the plan as a whole.
+ */
+export interface BoardPlan {
+  id: string;
+  /** The planner. Null only while it is being dispatched. */
+  sessionId: SessionId | null;
+  /** From the person's prompt. The planner thread's own title moves on with the conversation. */
+  title: string;
+  /** The agent each card the planner writes will run on. */
+  request: CardRequest;
+  createdAt: string;
+}
+
+export interface BeginPlanInput {
+  title: string;
+  /** The planner's dispatch. The board puts the plan's title and marker above its task. */
+  planner: DispatchRequest;
+  /** The agent the planner's cards will run on. */
+  cards: CardRequest;
+}
+
 export interface CreateCardInput {
   task: string;
+  /** Omit to derive from `task`, the way every other card is titled. */
+  title?: string;
   request?: CardRequest;
   /** Land in Drafts instead of Queued. */
   draft?: boolean;
+  /** The plan writing this card. The card lands in Drafts regardless of `draft`. */
+  planId?: string;
 }
 
 export interface CardPatch {
   task?: string;
+  /**
+   * Omit to keep the title in step with the task. A title that was derived
+   * from the old task is derived again; one that was set explicitly is kept.
+   */
+  title?: string;
   request?: CardRequest;
 }
 
@@ -134,7 +180,8 @@ export type BoardErrorCode =
   | "illegal-move"
   | "not-evaluator"
   | "bad-blocker"
-  | "bad-defer";
+  | "bad-defer"
+  | "not-planner";
 
 /**
  * A refused board operation. `code` is what a route maps to a status and what
@@ -188,6 +235,28 @@ export abstract class Board extends Service {
   ): BoardCard;
   /** Drafts, Queued and Blocked only. */
   abstract cancel(id: string): BoardCard;
+
+  abstract listPlans(): BoardPlan[];
+  abstract getPlan(id: string): BoardPlan | undefined;
+  /** The plan a session is the planner of, if it is one. */
+  abstract planFor(sessionId: SessionId): BoardPlan | undefined;
+  /** A plan's cards, every column, in queue order. */
+  abstract planCards(planId: string): BoardCard[];
+  /**
+   * Create a plan and dispatch its planner. Like `beginEvaluation`, the board
+   * makes the dispatch itself so that its own intercept lets it through.
+   * Otherwise the planner would become a card.
+   */
+  abstract beginPlan(input: BeginPlanInput): Promise<{ plan: BoardPlan; handle: SessionHandle }>;
+  /**
+   * Queue every draft of a plan, keeping the plan's order, at the back of the
+   * queue. The back and not their old places, because the cards were written
+   * when the plan was started, and a plan reviewed for an hour must not jump
+   * ahead of work queued in that hour.
+   */
+  abstract submitPlan(planId: string): BoardCard[];
+  /** Cancel every draft of a plan. Cards already queued are left alone. */
+  abstract discardPlan(planId: string): BoardCard[];
 
   /**
    * Dispatch the evaluator session for a card in Evaluating. The board makes

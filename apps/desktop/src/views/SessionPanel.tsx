@@ -449,7 +449,7 @@ function Head(props: {
   );
 }
 
-function TranscriptSkeleton(): ReactNode {
+export function TranscriptSkeleton(): ReactNode {
   return (
     <div aria-busy="true" style={{ display: "grid", gap: 12 }}>
       <div className="skeleton" style={{ height: 58, width: "62%" }} />
@@ -726,7 +726,7 @@ function summarize(
   return { label, calls, errors };
 }
 
-function ToolGroup(props: {
+export function ToolGroup(props: {
   events: JournalEvent[];
   names: ReadonlyMap<string, string>;
   changed: ReadonlyMap<string, ChangedFile>;

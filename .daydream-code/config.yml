@@ -9,3 +9,5 @@
   disabled: false
 - id: board-routes
   disabled: false
+- id: board-planner
+  disabled: false

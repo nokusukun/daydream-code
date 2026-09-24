@@ -24,6 +24,7 @@ import {
 } from "react";
 import { bridge, type ProjectSummary } from "../bridge.js";
 import { useDismiss } from "../overlay.js";
+import { ProjectMark } from "../project-mark.js";
 import { displayParent, projectActivityAt, projectFacts, rankProjects } from "../projects.js";
 import { useWorkspace } from "../workspace.js";
 import { fmtAgo, fmtDateTime } from "../ui.js";
@@ -122,6 +123,12 @@ export function ProjectRow(props: {
           </svg>
         )}
       </span>
+      <ProjectMark
+        name={project.name}
+        rootPath={project.rootPath}
+        icon={project.icon}
+        size={28}
+      />
       <span className="proj-row-text">
         <span className="proj-name">{project.name}</span>
         <span className="proj-meta">{facts.join(" · ")}</span>
@@ -163,6 +170,7 @@ export function ProjectSwitcher(props: {
   }, [open]);
 
   const rows = useMemo(() => rankProjects(projects, query), [projects, query]);
+  const current = projects.find((project) => project.rootPath === props.rootPath);
 
   useEffect(() => setActive(0), [query, open]);
 
@@ -215,9 +223,11 @@ export function ProjectSwitcher(props: {
         onClick={() => onOpenChange(!open)}
         title={`${props.rootPath}\nSwitch project (⌘⇧O)`}
       >
-        <span className="proj-glyph" aria-hidden="true">
-          {props.name.slice(0, 1).toUpperCase()}
-        </span>
+        {/* The same mark as the project's row, so the button and the list
+            agree on what this project looks like. Until the list loads it is
+            the generated tile, which is also what a project without an icon
+            keeps. */}
+        <ProjectMark name={props.name} rootPath={props.rootPath} icon={current?.icon} />
         <span className="title-text">
           <span className="title-name">{props.name}</span>
           {/* The branch, not the path: the path is fixed for the life of the

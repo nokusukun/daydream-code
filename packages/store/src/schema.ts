@@ -162,11 +162,31 @@ export const boardCards = sqliteTable(
     verdictJson: text("verdict_json"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
+    planId: text("plan_id"),
   },
   (t) => [
     index("board_cards_project_column").on(t.projectId, t.column, t.position),
     uniqueIndex("board_cards_session").on(t.sessionId),
+    index("board_cards_plan").on(t.planId),
   ],
+);
+
+/**
+ * A plan: the draft cards one planner session wrote from one large prompt.
+ * `sessionId` is null only while the planner is being dispatched. See
+ * migration v10.
+ */
+export const boardPlans = sqliteTable(
+  "board_plans",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    sessionId: text("session_id"),
+    title: text("title").notNull(),
+    requestJson: text("request_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [index("board_plans_project").on(t.projectId, t.createdAt)],
 );
 
 /**

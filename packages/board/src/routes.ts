@@ -28,6 +28,7 @@ const CreateBody = RequestBody.extend({
 
 const PatchBody = z.object({
   task: z.string().optional(),
+  title: z.string().optional(),
   request: RequestBody.optional(),
 });
 
@@ -126,6 +127,7 @@ const boardRoutes = {
           return attempt(() =>
             ctx.board.update(req.params.id!, {
               ...(body.task !== undefined ? { task: body.task } : {}),
+              ...(body.title !== undefined ? { title: body.title } : {}),
               ...(body.request !== undefined ? { request: requestOf(body.request) } : {}),
             }),
           );

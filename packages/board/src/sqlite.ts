@@ -27,6 +27,8 @@ import {
   type BoardBlock,
   type BoardCard,
   type BoardColumn,
+  type BeginPlanInput,
+  type BoardPlan,
   type CardPatch,
   type CardRequest,
   type CreateCardInput,
@@ -48,7 +50,22 @@ export function evaluationMarker(cardId: string): string {
   return `[board evaluation of card ${cardId}]`;
 }
 
+/**
+ * The marker line in every planner's task: the planner's tie to its plan
+ * before `beginPlan` has written `session_id`, for the same reason as
+ * EVALUATION_MARKER. A planner's first tool call can land before its
+ * dispatch resolves. It is the task's second line, not its first. A thread
+ * is titled from its first line, and "Plan: …" is a better title in the
+ * sidebar than a plan id.
+ */
+export const PLAN_MARKER = /^\[board plan (\S+)\]$/m;
+
+export function planMarker(planId: string): string {
+  return `[board plan ${planId}]`;
+}
+
 type Row = typeof schema.boardCards.$inferSelect;
+type PlanRow = typeof schema.boardPlans.$inferSelect;
 
 /** Columns of a card that has not started yet and is still in queue order. */
 const WAITING: readonly BoardColumn[] = ["queued", "evaluating", "blocked"];
@@ -104,6 +121,7 @@ export default class BoardSqlite extends Board {
         this.#interceptContinue(request, next),
     );
     ctx.on("session/updated", (session: SessionRecord) => this.#onUpdated(session));
+    ctx.on("session/dispatched", (session: SessionRecord) => this.#onDispatched(session));
     ctx.on("session/ended", (session: SessionRecord) => this.#onEnded(session));
     ctx.on("session/deleted", (session: SessionRecord) => this.#onDeleted(session));
     this.#pump();
@@ -161,16 +179,23 @@ export default class BoardSqlite extends Board {
     const now = nowIso();
     const id = newId("card");
     const request = this.#durableRequest(input.request ?? {});
+    if (input.planId !== undefined && this.getPlan(input.planId) === undefined) {
+      throw new BoardError("not-found", `unknown plan: ${input.planId}`);
+    }
+    const title = input.title?.trim();
     this.ctx.store.db
       .insert(schema.boardCards)
       .values({
         id,
         projectId: this.#projectId,
-        column: input.draft === true ? "draft" : "queued",
+        // A plan's cards are drafts until the person queues the plan: the
+        // review step is the point of planning.
+        column: input.draft === true || input.planId !== undefined ? "draft" : "queued",
         position: this.#tailPosition(),
-        title: titleFromTask(input.task),
+        title: title !== undefined && title.length > 0 ? title : titleFromTask(input.task),
         task: input.task,
         requestJson: JSON.stringify(request),
+        planId: input.planId ?? null,
         createdAt: now,
         updatedAt: now,
       })
@@ -187,12 +212,21 @@ export default class BoardSqlite extends Board {
     const task = patch.task ?? card.task;
     const request =
       patch.request !== undefined ? this.#durableRequest(patch.request) : card.request;
-    this.#write(id, {
-      task,
-      title: card.sessionId === null ? titleFromTask(task) : card.title,
-      requestJson: JSON.stringify(request),
-    });
-    return this.get(id)!;
+    // A derived title follows the task. One set explicitly (by a planner, or
+    // by a session that renamed its thread) is kept. Otherwise a person
+    // fixing a typo in a planned card's task would lose the title the
+    // planner gave it.
+    const asked = patch.title?.trim();
+    const derived = card.sessionId === null && card.title === titleFromTask(card.task);
+    const title =
+      asked !== undefined && asked.length > 0 ? asked : derived ? titleFromTask(task) : card.title;
+    this.#write(id, { task, title, requestJson: JSON.stringify(request) });
+    const updated = this.get(id)!;
+    // An edit is a write a board mirror has to see. Before plans, a card was
+    // edited only from the board itself, which could re-read it. Now a
+    // planner rewrites cards the person is looking at.
+    this.ctx.emit("board/moved", updated, updated.column);
+    return updated;
   }
 
   submit(id: string): BoardCard {
@@ -282,6 +316,105 @@ export default class BoardSqlite extends Board {
     this.#allow(card, ["draft", "queued", "blocked"], "cancel");
     this.#delete(card);
     return card;
+  }
+
+  // -------------------------------------------------------------------------
+  // Plans
+
+  listPlans(): BoardPlan[] {
+    return this.ctx.store.db
+      .select()
+      .from(schema.boardPlans)
+      .where(eq(schema.boardPlans.projectId, this.#projectId))
+      .orderBy(asc(schema.boardPlans.createdAt))
+      .all()
+      .map((row) => this.#toPlan(row));
+  }
+
+  getPlan(id: string): BoardPlan | undefined {
+    const row = this.ctx.store.db
+      .select()
+      .from(schema.boardPlans)
+      .where(eq(schema.boardPlans.id, id))
+      .get();
+    return row ? this.#toPlan(row) : undefined;
+  }
+
+  planFor(sessionId: SessionId): BoardPlan | undefined {
+    const row = this.ctx.store.db
+      .select()
+      .from(schema.boardPlans)
+      .where(eq(schema.boardPlans.sessionId, sessionId))
+      .get();
+    if (row) return this.#toPlan(row);
+    // Not linked yet (see PLAN_MARKER). As with evaluators, only an unlinked
+    // plan can be claimed this way.
+    const match = this.ctx.sessions.get(sessionId)?.task.match(PLAN_MARKER);
+    const plan = match ? this.getPlan(match[1]!) : undefined;
+    return plan?.sessionId === null ? plan : undefined;
+  }
+
+  planCards(planId: string): BoardCard[] {
+    return this.list().filter((card) => card.planId === planId);
+  }
+
+  async beginPlan(input: BeginPlanInput): Promise<{ plan: BoardPlan; handle: SessionHandle }> {
+    const id = newId("plan");
+    const title = input.title.trim().length > 0 ? input.title.trim() : "untitled plan";
+    this.ctx.store.db
+      .insert(schema.boardPlans)
+      .values({
+        id,
+        projectId: this.#projectId,
+        sessionId: null,
+        title,
+        requestJson: JSON.stringify(this.#durableRequest(input.cards)),
+        createdAt: nowIso(),
+      })
+      .run();
+    const owned: DispatchRequest = {
+      ...input.planner,
+      task: `Plan: ${title}\n${planMarker(id)}\n\n${input.planner.task}`,
+    };
+    this.#owned.add(owned);
+    let handle: SessionHandle;
+    try {
+      handle = await this.ctx.sessions.dispatch(owned);
+    } catch (error) {
+      // No planner means no plan. A card written in the instant before the
+      // driver failed is still a card and stays in Drafts. Only the empty
+      // plan row goes.
+      this.ctx.store.db.delete(schema.boardPlans).where(eq(schema.boardPlans.id, id)).run();
+      throw error;
+    }
+    this.ctx.store.db
+      .update(schema.boardPlans)
+      .set({ sessionId: handle.record.id })
+      .where(eq(schema.boardPlans.id, id))
+      .run();
+    const plan = this.getPlan(id)!;
+    this.ctx.emit("board/planned", plan);
+    return { plan, handle };
+  }
+
+  submitPlan(planId: string): BoardCard[] {
+    if (this.getPlan(planId) === undefined) throw new BoardError("not-found", `unknown plan: ${planId}`);
+    const drafts = this.planCards(planId).filter((card) => card.column === "draft");
+    const moved = drafts.map((card) => {
+      this.#write(card.id, { position: this.#tailPosition() });
+      return this.#move(this.get(card.id)!, "queued");
+    });
+    // One pump for the whole plan, after every card is in line. The head then
+    // meets its evaluator with the rest of the plan already behind it.
+    this.#pump();
+    return moved.map((card) => this.get(card.id) ?? card);
+  }
+
+  discardPlan(planId: string): BoardCard[] {
+    if (this.getPlan(planId) === undefined) throw new BoardError("not-found", `unknown plan: ${planId}`);
+    const drafts = this.planCards(planId).filter((card) => card.column === "draft");
+    for (const card of drafts) this.#delete(card);
+    return drafts;
   }
 
   // -------------------------------------------------------------------------
@@ -438,6 +571,23 @@ export default class BoardSqlite extends Board {
     }
   }
 
+  /**
+   * An idle session that is continued comes back through `#revive`, which
+   * emits `session/dispatched` and not `session/updated`, so `#onUpdated`
+   * never sees a card in Needs Attention (killed, failed, interrupted) start
+   * running again, and the card stayed there for the rest of the run.
+   * A Done card never gets here on a follow-up, because `#interceptContinue`
+   * re-queues it first.
+   */
+  #onDispatched(session: SessionRecord): void {
+    const card = this.forSession(session.id);
+    if (card === undefined || card.column !== "attention") return;
+    // A message delivered into a live run that is still waiting on a person
+    // does not answer that person's question.
+    if (this.ctx.questions.current(session.id) !== undefined) return;
+    this.#move(card, "working");
+  }
+
   #onEnded(session: SessionRecord): void {
     this.#releaseBlocker(session.id, `session ${session.name} ${session.status}`);
     const card = this.forSession(session.id);
@@ -483,6 +633,18 @@ export default class BoardSqlite extends Board {
         else if (session.status === "completed") this.#move(card, "done");
         else if (!LIVE_STATUSES.includes(session.status)) {
           this.#move(card, "attention", `session ${session.name} ${session.status} across a restart`);
+        }
+        continue;
+      }
+      // A card left in Needs Attention while its session was revived and then
+      // completed: before `#onDispatched` existed, the card never went back to
+      // Working, so `#onEnded` passed it over. The session ending *after* the
+      // card last moved is what tells it apart from a card parked here for its
+      // own reason (an evaluator that died on a follow-up of a finished run).
+      if (card.column === "attention" && card.sessionId !== null) {
+        const session = this.ctx.sessions.get(card.sessionId);
+        if (session?.status === "completed" && session.endedAt !== null && session.endedAt > card.updatedAt) {
+          this.#move(card, "done");
         }
       }
     }
@@ -805,6 +967,16 @@ export default class BoardSqlite extends Board {
     });
   }
 
+  #toPlan(row: PlanRow): BoardPlan {
+    return {
+      id: row.id,
+      sessionId: row.sessionId === null ? null : SessionId(row.sessionId),
+      title: row.title,
+      request: JSON.parse(row.requestJson) as CardRequest,
+      createdAt: row.createdAt,
+    };
+  }
+
   #toCard(row: Row, blockedBy: BoardBlock[]): BoardCard {
     return {
       id: row.id,
@@ -819,6 +991,7 @@ export default class BoardSqlite extends Board {
       blockedBy,
       attentionReason: row.attentionReason,
       verdict: row.verdictJson === null ? null : (JSON.parse(row.verdictJson) as Verdict),
+      planId: row.planId,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };

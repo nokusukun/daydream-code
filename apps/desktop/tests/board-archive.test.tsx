@@ -46,6 +46,7 @@ function card(id: string, column: BoardColumn, sessionId: string | null): BoardC
     blockedBy: [],
     attentionReason: null,
     verdict: null,
+    planId: null,
     createdAt: "2026-09-24T00:00:00.000Z",
     updatedAt: "2026-09-24T00:00:00.000Z",
   };

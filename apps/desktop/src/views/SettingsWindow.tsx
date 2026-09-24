@@ -75,8 +75,8 @@ const SECTIONS: Section[] = [
   {
     id: "kanban",
     label: "kanban",
-    blurb: "queue every new thread as a card that an evaluator clears before it runs. Turn all four on together.",
-    rows: ["board", "board-evaluator", "board-writeback", "board-routes"],
+    blurb: "queue every new thread as a card that an evaluator clears before it runs. The first four run as a set; the planner adds plan mode, which turns one large prompt into cards.",
+    rows: ["board", "board-evaluator", "board-writeback", "board-routes", "board-planner"],
   },
   {
     id: "storage",

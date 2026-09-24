@@ -4,7 +4,7 @@
  * could point at a remote core just as well as the local one.
  */
 import type { QuickActionRecord } from "@daydream-code/actions";
-import type { BoardCard, CardRequest } from "@daydream-code/board";
+import type { BoardCard, BoardPlan, CardRequest } from "@daydream-code/board";
 import type { BlobRef } from "@daydream-code/blobs";
 import type { AgentSkill } from "@daydream-code/driver";
 import type { AttachmentInput, NextMessage } from "@daydream-code/session";
@@ -25,7 +25,7 @@ import type {
 } from "@daydream-code/shared";
 
 export type { QuickActionRecord } from "@daydream-code/actions";
-export type { BoardCard, BoardColumn, CardRequest } from "@daydream-code/board";
+export type { BoardCard, BoardColumn, BoardPlan, CardRequest } from "@daydream-code/board";
 export type { AgentSkill } from "@daydream-code/driver";
 export type { SettingsView, EntryView, SettingDescriptor, WriteResult } from "@daydream-code/settings";
 export type {
@@ -77,6 +77,15 @@ export function isDeferred(value: unknown): value is Deferred {
 export interface CreateCardInput extends CardRequest {
   task: string;
   draft?: boolean;
+}
+
+/** A large prompt for a planner to break into draft cards, and the agent for both. */
+export interface CreatePlanInput {
+  prompt: string;
+  driver?: string;
+  modelId?: string;
+  effort?: string;
+  fastMode?: boolean;
 }
 
 /**
@@ -528,7 +537,7 @@ export class ApiClient {
     return this.#post("/api/board/cards", input);
   }
 
-  patchCard(id: string, patch: { task?: string; request?: CardRequest }): Promise<BoardCard> {
+  patchCard(id: string, patch: { task?: string; title?: string; request?: CardRequest }): Promise<BoardCard> {
     return this.#request(`/api/board/cards/${encodeURIComponent(id)}`, undefined, {
       method: "PATCH",
       body: JSON.stringify(patch),
@@ -559,6 +568,29 @@ export class ApiClient {
 
   cancelCard(id: string): Promise<BoardCard> {
     return this.#request(`/api/board/cards/${encodeURIComponent(id)}`, undefined, {
+      method: "DELETE",
+    });
+  }
+
+  // Plan mode. These 404 when the planner row is off, even with the board on.
+
+  plans(): Promise<BoardPlan[]> {
+    return this.#request("/api/board/plans");
+  }
+
+  /** Create a plan and dispatch its planner; resolves once the planner exists. */
+  createPlan(input: CreatePlanInput): Promise<BoardPlan> {
+    return this.#post("/api/board/plans", input);
+  }
+
+  /** Queue every draft of the plan, in plan order, at the back of the queue. */
+  submitPlan(id: string): Promise<BoardCard[]> {
+    return this.#post(`/api/board/plans/${encodeURIComponent(id)}/submit`, {});
+  }
+
+  /** Cancel the plan's drafts and stop its planner if it is still writing. */
+  discardPlan(id: string): Promise<BoardCard[]> {
+    return this.#request(`/api/board/plans/${encodeURIComponent(id)}`, undefined, {
       method: "DELETE",
     });
   }

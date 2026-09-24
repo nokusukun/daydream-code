@@ -58,7 +58,11 @@ const boardWriteback = {
     // card changed column — the shape that once started a session with a turn
     // spent reading about its own dispatch.
     const note = (card: BoardCard, content: string): void => {
-      const causedBy = [card.sessionId, card.evaluatorSessionId].filter(
+      // The planner that wrote the card is told nothing either: it queued the
+      // plan, or watched the person do it from its own thread, and a note per
+      // card would wake it once for each card.
+      const planner = card.planId === null ? null : (ctx.board.getPlan(card.planId)?.sessionId ?? null);
+      const causedBy = [card.sessionId, card.evaluatorSessionId, planner].filter(
         (id): id is SessionId => id !== null,
       );
       ctx.threads.append({

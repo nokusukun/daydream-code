@@ -547,6 +547,64 @@ describe("kanban mode", () => {
     await cardIn(ctx, card.id, "done");
   });
 
+  it("continuing a stopped card's session brings it back from Needs Attention to Working", async () => {
+    const { ctx, hang } = await bootProject({
+      work: [{ tool: "hang" }, { turn: "picked it back up" }],
+      evaluator: [verdict({ decision: "proceed", reason: "clear" })],
+    });
+    const card = await queue(ctx, "long job");
+    const working = await cardIn(ctx, card.id, "working");
+    const sessionId = working.sessionId!;
+    await until(ctx, "the run to hang", () => hang.count() === 1);
+    // `hang` ignores the abort signal, so the stop only lands once it returns.
+    const stopped = ctx.sessions.stop(sessionId);
+    hang.release();
+    await stopped;
+    const attention = await cardIn(ctx, card.id, "attention");
+    expect(attention.attentionReason).toMatch(/killed/);
+
+    // A revive emits `session/dispatched`, not `session/updated`; the card has
+    // to follow it anyway, and while the run is still going.
+    await ctx.sessions.continueSession(sessionId, "keep going");
+    await until(ctx, "the revived run to hang", () => hang.count() === 1);
+    expect(ctx.board.get(card.id)!.column).toBe("working");
+    hang.release();
+    await cardIn(ctx, card.id, "done");
+  });
+
+  it("boot repair finishes a Needs Attention card whose session completed after it got there", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ddc-board-stranded-"));
+    dirs.push(root);
+    const first = await bootProject({
+      root,
+      work: [{ tool: "hang" }],
+      evaluator: [verdict({ decision: "proceed", reason: "clear" })],
+    });
+    const stranded = await queue(first.ctx, "stranded");
+    const failed = await queue(first.ctx, "failed evaluation");
+    await until(first.ctx, "both runs to hang", () => first.hang.count() === 2);
+    // `release` lets every hung run go, so both stops go out before it.
+    const stops = [stranded, failed].map((card) => first.ctx.sessions.stop(first.ctx.board.get(card.id)!.sessionId!));
+    first.hang.release();
+    await Promise.all(stops);
+    await cardIn(first.ctx, stranded.id, "attention");
+    await cardIn(first.ctx, failed.id, "attention");
+    // What a core without `#onDispatched` left behind: one session revived and
+    // completed after its card went to Needs Attention, one that completed
+    // before its card got there. Only the first is stranded.
+    const at = (card: BoardCard, ms: number) =>
+      new Date(Date.parse(first.ctx.board.get(card.id)!.updatedAt) + ms).toISOString();
+    const finish = first.ctx.store.sqlite.prepare("UPDATE sessions SET status = 'completed', ended_at = ? WHERE id = ?");
+    finish.run(at(stranded, 1_000), first.ctx.board.get(stranded.id)!.sessionId);
+    finish.run(at(failed, -1_000), first.ctx.board.get(failed.id)!.sessionId);
+    await first.app.dispose(first.app.rootFiber);
+    systems = systems.filter((s) => s !== first);
+
+    const second = await bootProject({ root, work: [], evaluator: [] });
+    expect(second.ctx.board.get(stranded.id)!.column).toBe("done");
+    expect(second.ctx.board.get(failed.id)!.column).toBe("attention");
+  });
+
   it("drafts, edits, submit, reorder and cancel", async () => {
     const { ctx } = await bootProject({ work: [], evaluator: [{ tool: "hang" }] });
     const draft = ctx.board.create({ task: "maybe later", draft: true });

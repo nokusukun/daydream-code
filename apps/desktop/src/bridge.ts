@@ -44,6 +44,11 @@ export interface ProjectSummary extends RegistryEntry {
   active: boolean;
   /** Null when the store is absent or unreadable. */
   stats: ProjectStats | null;
+  /**
+   * The project's own icon as a data URL, null when it has none. Optional
+   * because a window reload keeps the old main process, which never sends it.
+   */
+  icon?: string | null;
 }
 
 /**

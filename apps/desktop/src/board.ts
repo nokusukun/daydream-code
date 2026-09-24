@@ -7,7 +7,7 @@
  * normal state and not an error; anything else is.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, type ApiClient, type BoardCard, type BoardColumn } from "./api.js";
+import { ApiError, type ApiClient, type BoardCard, type BoardColumn, type BoardPlan } from "./api.js";
 import { useHarness } from "./harness.js";
 
 export interface BoardState {
@@ -74,14 +74,75 @@ export function useBoard(): BoardState {
   return useMemo(() => ({ enabled, cards, error, refresh }), [enabled, cards, error, refresh]);
 }
 
+export interface PlansState {
+  /** Null until the first answer; false when the planner row is off. */
+  available: boolean | null;
+  /** Oldest first. */
+  plans: BoardPlan[];
+}
+
 /**
- * The composition rows that are kanban mode — the same four switches the
- * settings window's kanban section shows. Routes last: each write mounts its
- * row live, and the board asks `/api/board` the moment the flow resolves, so
- * the row that answers that request should be the one that cannot land
- * before the rows it depends on.
+ * The project's plans, kept live off the websocket. Like the board itself,
+ * whether plan mode exists is learned from the server: `/api/board/plans`
+ * 404s exactly when the planner row is off.
  */
-export const KANBAN_ROWS = ["board", "board-evaluator", "board-writeback", "board-routes"] as const;
+export function usePlans(): PlansState {
+  const { api, subscribe, resyncTick } = useHarness();
+  const [available, setAvailable] = useState<boolean | null>(null);
+  const [plans, setPlans] = useState<BoardPlan[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .plans()
+      .then((list) => {
+        if (cancelled) return;
+        setAvailable(true);
+        setPlans(list);
+      })
+      .catch(() => {
+        // A 404 is "plan mode is off". Anything else leaves the button
+        // hidden too: there is nothing a person could do with a plan the
+        // core cannot list.
+        if (!cancelled) setAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, resyncTick]);
+
+  useEffect(
+    () =>
+      subscribe((frame) => {
+        if (frame.kind !== "board-plan") return;
+        setAvailable(true);
+        setPlans((prev) =>
+          prev.some((plan) => plan.id === frame.plan.id)
+            ? prev.map((plan) => (plan.id === frame.plan.id ? frame.plan : plan))
+            : [...prev, frame.plan],
+        );
+      }),
+    [subscribe],
+  );
+
+  return useMemo(() => ({ available, plans }), [available, plans]);
+}
+
+/**
+ * The composition rows that are kanban mode — the same switches the settings
+ * window's kanban section shows. Routes before the planner: each write mounts
+ * its row live, and the board asks `/api/board` the moment the flow resolves,
+ * so the row that answers that request should be the one that cannot land
+ * before the rows it depends on. The planner is plan mode on top. It is
+ * written last because the board works without it.
+ */
+export const KANBAN_ROWS = [
+  "board",
+  "board-evaluator",
+  "board-writeback",
+  "board-routes",
+  "board-planner",
+] as const;
 
 /**
  * Turn kanban mode on for this project, from the board screen itself.

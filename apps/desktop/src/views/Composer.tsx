@@ -794,7 +794,7 @@ export function BoardHoldNotice(props: {
       role="status"
       aria-live="polite"
     >
-      {hold.kind === "evaluating" && <StatusGlyph status="running" />}
+      {hold.kind === "evaluating" && <StatusGlyph status="evaluating" />}
       <span className="context-rebuild-copy">
         <strong>{holdHeadline(hold)}</strong>
         <span title={hold.kind === "blocked" && hold.reason !== null ? hold.reason : hold.message}>

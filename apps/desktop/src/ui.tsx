@@ -223,6 +223,18 @@ export function StatusGlyph(props: { status: string }): ReactNode {
           />
         </svg>
       );
+    // A board card being read against the running work, before it may start.
+    // Deliberating is not working, so it gets its own silhouette rather than
+    // the ring: a card in Evaluating and a card in Working must not look alike
+    // even in grayscale.
+    case "evaluating":
+      return (
+        <svg {...common} className="glyph glyph-evaluating" fill="currentColor">
+          <circle cx="1.6" cy="5" r="1.2" />
+          <circle cx="5" cy="5" r="1.2" />
+          <circle cx="8.4" cy="5" r="1.2" />
+        </svg>
+      );
     case "completed":
       return (
         <svg

@@ -40,6 +40,7 @@ function card(id: string, patch: Partial<BoardCard> = {}, column: BoardColumn = 
     blockedBy: [],
     attentionReason: null,
     verdict: null,
+    planId: null,
     createdAt: "2026-09-24T00:00:00.000Z",
     updatedAt: "2026-09-24T00:00:00.000Z",
     ...patch,

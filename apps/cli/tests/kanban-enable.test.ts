@@ -14,7 +14,7 @@ import type {} from "@daydream-code/routes";
  * degrades into a message, and this test is the early warning.
  */
 
-const KANBAN_ROWS = ["board", "board-evaluator", "board-writeback", "board-routes"] as const;
+const KANBAN_ROWS = ["board", "board-evaluator", "board-writeback", "board-routes", "board-planner"] as const;
 
 let dirs: string[] = [];
 let systems: BootResult[] = [];
@@ -58,6 +58,8 @@ describe("enabling kanban from the board screen", () => {
 
     const match = ctx.routes.match("GET", "/api/board");
     expect(match).toBeDefined();
+    // Plan mode rides along with the same switch.
+    expect(ctx.routes.match("POST", "/api/board/plans")).toBeDefined();
     const body = (await match!.route.handle({
       method: "GET",
       path: "/api/board",
