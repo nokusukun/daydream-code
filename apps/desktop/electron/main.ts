@@ -32,12 +32,13 @@ import { boot, type BootResult } from "@daydream-code/boot";
 import type { HarnessServer } from "@daydream-code/server";
 import {
   defaultRegistryPath,
+  forgetProject,
   readRegistry,
   touchProject,
   writeRegistry,
   type RegistryEntry,
 } from "./registry.js";
-import { summarizeProjects, type ProjectSummary } from "./stats.js";
+import { readProjectStats, summarizeProjects, type ProjectSummary } from "./stats.js";
 import {
   runQuickAction,
   type QuickActionResult,
@@ -85,6 +86,8 @@ export interface ConnectionInfo {
 export type OpenResult =
   | { ok: true; connection: ConnectionInfo }
   | { ok: false; error: string };
+
+export type RemoveResult = { ok: true } | { ok: false; error: string };
 
 type CodeContextMenuAction = "ask-selection" | "open" | "toggle";
 
@@ -286,6 +289,57 @@ function openProjectSafe(rootPath: string): Promise<OpenResult> {
   const next = chain.then(async (): Promise<OpenResult> => {
     try {
       return { ok: true, connection: await openProject(rootPath) };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  chain = next;
+  return next;
+}
+
+/**
+ * Take a project off the list. The folder and its store are never touched.
+ *
+ * The open project is refused: it is the one this window is rendering, and the
+ * next switch back would re-add it anyway. A project kept alive in the
+ * background is also refused while sessions run in it, because forgetting it
+ * means stopping its core and that would kill their turns. An idle background
+ * core is stopped, so the activity menu does not keep watching a project the
+ * user has just said they are done with.
+ *
+ * Queued on `chain` with opens, so a remove never races a boot of the same
+ * folder.
+ */
+function removeProject(rootPath: string): Promise<RemoveResult> {
+  const next = chain.then(async (): Promise<RemoveResult> => {
+    const normalizedRoot = resolve(rootPath);
+    if (normalizedRoot === activeRootPath) {
+      return { ok: false, error: "This project is open. Switch to another one to remove it." };
+    }
+    const retained = projects.get(normalizedRoot);
+    if (retained !== undefined) {
+      // The retained core has run boot repair, so its `running` rows are true.
+      const live = readProjectStats(normalizedRoot, true)?.live ?? 0;
+      if (live > 0) {
+        const name = retained.connection.name;
+        return { ok: false, error: `Sessions are still running in ${name}.` };
+      }
+      projects.delete(normalizedRoot);
+      broadcast("daydream:project-cores", projectConnections());
+      await retained.result.app.dispose(retained.result.app.rootFiber).catch((error: unknown) => {
+        console.error(`[desktop] dispose failed for ${normalizedRoot}:`, error);
+      });
+    }
+    try {
+      const registryFile = defaultRegistryPath();
+      // The registry stores roots as they were opened; match both spellings so
+      // an entry written before normalization still goes.
+      const kept = forgetProject(
+        forgetProject(readRegistry(registryFile), rootPath),
+        normalizedRoot,
+      );
+      writeRegistry(registryFile, kept);
+      return { ok: true };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -807,6 +861,13 @@ function registerIpc(): void {
       return { ok: false, error: "invalid project path" } satisfies OpenResult;
     }
     return openProjectSafe(rootPath);
+  });
+
+  ipcMain.handle("daydream:remove-project", (_event, rootPath: unknown) => {
+    if (typeof rootPath !== "string" || rootPath.length === 0) {
+      return { ok: false, error: "invalid project path" } satisfies RemoveResult;
+    }
+    return removeProject(rootPath);
   });
 
   ipcMain.handle("daydream:pick-project", async (): Promise<OpenResult | null> => {

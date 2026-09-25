@@ -14,6 +14,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { createPortal } from "react-dom";
 import type { JournalEvent, SessionRecord } from "@daydream-code/shared";
 import { useHarness } from "../harness.js";
+import { useShownThread } from "../board-read.js";
 import { isLive } from "../sessions.js";
 import { toolNames } from "../tool-view.js";
 import { useWorkspace } from "../workspace.js";
@@ -27,6 +28,7 @@ export function ThreadPeek(props: { sessionId: string; fallbackTitle: string }):
   const [session, setSession] = useState<SessionRecord | null>(null);
   const [events, setEvents] = useState<JournalEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useShownThread(events === null ? null : sessionId, "peek");
 
   useEffect(() => {
     let cancelled = false;

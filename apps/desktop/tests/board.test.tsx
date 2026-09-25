@@ -47,7 +47,7 @@ vi.mock("../src/board.js", async () => {
   const actual = await vi.importActual<typeof import("../src/board.js")>("../src/board.js");
   return {
     ...actual,
-    useBoard: () => ({ enabled: state.enabled, cards: state.cards, error: null, refresh: vi.fn() }),
+    useBoard: () => ({ enabled: state.enabled, cards: state.cards, display: { unread: "highlight", peekMarksRead: true }, error: null, refresh: vi.fn() }),
   };
 });
 
@@ -66,6 +66,7 @@ function card(column: BoardColumn, over: Partial<BoardCard> = {}): BoardCard {
     attentionReason: null,
     verdict: null,
     planId: null,
+    seenAt: "2026-09-24T00:00:00.000Z",
     createdAt: "2026-09-24T00:00:00.000Z",
     updatedAt: "2026-09-24T00:00:00.000Z",
     ...over,

@@ -918,6 +918,11 @@ export function taskDestination(
 export function DispatchComposer(props: {
   autoFocus: boolean;
   onError(message: string): void;
+  /**
+   * Called once the task is safely a card or a session. The board's new-card
+   * popup closes on it; the master panel has nothing to close and omits it.
+   */
+  onCreated?(): void;
 }): ReactNode {
   const { api, select, drafts, setMode } = useHarness();
   const { enabled: kanban } = useBoard();
@@ -927,6 +932,7 @@ export function DispatchComposer(props: {
   const [choice, setChoice] = useState<ModelChoice>(loadChoice);
   const [busy, setBusy] = useState(false);
   const onError = props.onError;
+  const onCreated = props.onCreated;
   const { pending, take, remove } = useAttachments(NEW_SESSION_DRAFT, onError);
 
   /**
@@ -974,13 +980,14 @@ export function DispatchComposer(props: {
           drafts.clear(NEW_SESSION_DRAFT);
           if (card) setMode("board");
           else select(id);
+          onCreated?.();
         })
         .catch((e: unknown) =>
           onError(e instanceof Error ? e.message : String(e)),
         )
         .finally(() => setBusy(false));
     },
-    [api, draft, choice, busy, select, drafts, onError, kanban, setMode],
+    [api, draft, choice, busy, select, drafts, onError, onCreated, kanban, setMode],
   );
 
   const dispatch = useCallback(() => create(false), [create]);

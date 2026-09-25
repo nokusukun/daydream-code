@@ -27,7 +27,7 @@ vi.mock("../src/board.js", async () => {
   );
   return {
     ...actual,
-    useBoard: () => ({ enabled: true, cards, error: null, refresh: vi.fn() }),
+    useBoard: () => ({ enabled: true, cards, display: { unread: "highlight", peekMarksRead: true }, error: null, refresh: vi.fn() }),
   };
 });
 
@@ -46,14 +46,50 @@ describe("where a described task goes", () => {
 });
 
 describe("the board's Drafts lane", () => {
-  it("opens a new thread instead of holding a composer of its own", async () => {
+  it("opens a popup instead of holding a composer of its own", async () => {
     const { BoardView } = await import("../src/views/BoardView.js");
     const html = renderToStaticMarkup(createElement(BoardView));
     expect(html).toContain("board-lane-new");
     expect(html).toContain("+ New card");
+    // The lane's button is the only one: the header's copy next to Plan was
+    // removed as redundant with it and ⌘N. Counted by button text, since the
+    // lane button's own tooltip says "New card (⌘N)".
+    expect(html.match(/New card</g)).toHaveLength(1);
+    // It opens a popup over the board rather than leaving for agent mode.
+    expect(html).toContain('aria-haspopup="dialog"');
+    // Closed until asked for.
+    expect(html).not.toContain("new-card-sheet");
     // The lane-local textarea is the thing being replaced; it coming back
     // means two ways to make a card again, one of them impoverished.
     expect(html).not.toContain("board-draft-composer");
     expect(html).not.toContain("Jot a task to queue later");
+  });
+});
+
+describe("the new-card popup", () => {
+  it("is a modal dialog holding the thread composer", async () => {
+    // The composer itself needs the whole harness; what this pins is the
+    // shell around it, and that it is the composer and not a second form.
+    vi.doMock("../src/views/Composer.js", async () => ({
+      ...(await vi.importActual<typeof import("../src/views/Composer.js")>("../src/views/Composer.js")),
+      DispatchComposer: (props: { autoFocus: boolean; onCreated?: () => void }) =>
+        createElement("div", {
+          "data-dispatch": "",
+          "data-autofocus": String(props.autoFocus),
+          "data-closes": String(props.onCreated !== undefined),
+        }),
+    }));
+    vi.resetModules();
+    const { NewCardSheet } = await import("../src/views/NewCardSheet.js");
+    const html = renderToStaticMarkup(createElement(NewCardSheet, { onClose: vi.fn() }));
+    vi.doUnmock("../src/views/Composer.js");
+
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-modal="true"');
+    expect(html).toContain(">New card</h2>");
+    // Focus goes straight to the task, and making the card closes the popup.
+    expect(html).toContain('data-autofocus="true"');
+    expect(html).toContain('data-closes="true"');
+    expect(html).toContain(">Cancel</button>");
   });
 });

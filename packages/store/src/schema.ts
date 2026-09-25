@@ -163,6 +163,7 @@ export const boardCards = sqliteTable(
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     planId: text("plan_id"),
+    seenAt: text("seen_at"),
   },
   (t) => [
     index("board_cards_project_column").on(t.projectId, t.column, t.position),

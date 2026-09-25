@@ -5,6 +5,7 @@
  */
 import type { QuickActionRecord } from "@daydream-code/actions";
 import type { BoardCard, BoardPlan, CardRequest } from "@daydream-code/board";
+import type { BoardDisplay } from "@daydream-code/board/routes";
 import type { BlobRef } from "@daydream-code/blobs";
 import type { AgentSkill } from "@daydream-code/driver";
 import type { AttachmentInput, NextMessage } from "@daydream-code/session";
@@ -26,6 +27,7 @@ import type {
 
 export type { QuickActionRecord } from "@daydream-code/actions";
 export type { BoardCard, BoardColumn, BoardPlan, CardRequest } from "@daydream-code/board";
+export type { BoardDisplay } from "@daydream-code/board/routes";
 export type { AgentSkill } from "@daydream-code/driver";
 export type { SettingsView, EntryView, SettingDescriptor, WriteResult } from "@daydream-code/settings";
 export type {
@@ -529,7 +531,8 @@ export class ApiClient {
   // Kanban board. Every call 404s when the project is not in kanban mode;
   // `board()` is how a client finds that out.
 
-  board(): Promise<{ enabled: boolean; cards: BoardCard[] }> {
+  /** `display` is absent from a core that predates it. */
+  board(): Promise<{ enabled: boolean; cards: BoardCard[]; display?: BoardDisplay }> {
     return this.#request("/api/board");
   }
 
@@ -548,6 +551,11 @@ export class ApiClient {
     return this.#post(`/api/board/cards/${encodeURIComponent(id)}/submit`, {});
   }
 
+  /** Queue several drafts in one write; ids that are no longer drafts are skipped. */
+  submitCards(ids: readonly string[]): Promise<BoardCard[]> {
+    return this.#post("/api/board/cards/submit", { ids });
+  }
+
   /** Move before another card, or to the tail with null. */
   reorderCard(id: string, before: string | null): Promise<BoardCard> {
     return this.#post(`/api/board/cards/${encodeURIComponent(id)}/reorder`, { before });
@@ -564,6 +572,11 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify({ sessions, ...(reason !== undefined ? { reason } : {}) }),
     });
+  }
+
+  /** A person has looked at this Done card's result. A no-op on any other card. */
+  markCardSeen(id: string): Promise<BoardCard> {
+    return this.#post(`/api/board/cards/${encodeURIComponent(id)}/seen`, {});
   }
 
   cancelCard(id: string): Promise<BoardCard> {

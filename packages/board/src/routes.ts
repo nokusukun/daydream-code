@@ -1,9 +1,39 @@
 import { z } from "zod";
+import { defineConfig, field, type ConfigOf } from "@daydream-code/config";
 import type { Context } from "@daydream-code/kernel";
 import { HttpError, type RouteRequest } from "@daydream-code/routes";
 import type { SessionId } from "@daydream-code/shared";
 import type {} from "@daydream-code/session";
 import { BoardError, type BoardCard, type CardRequest } from "./index.js";
+
+type UnreadMark = "highlight" | "dot" | "off";
+const UNREAD_MARKS: ReadonlyArray<{ value: UnreadMark; label: string }> = [
+  { value: "highlight", label: "highlight" },
+  { value: "dot", label: "dot" },
+  { value: "off", label: "off" },
+];
+
+/**
+ * How the board draws what the server knows. They sit on the routes row
+ * because this is the plugin that hands the board to clients. The provider
+ * tracks reads whatever these say, so turning the mark on later shows the
+ * cards that really are unread, not a backlog of everything finished since.
+ */
+export const { Config, settings } = defineConfig({
+  unread: field.enum({
+    label: "unread finished cards",
+    help: "how a Done card stands out until you open its thread. highlight keeps it at full contrast with a dot; dot marks it and leaves it as quiet as any other finished card.",
+    options: UNREAD_MARKS,
+    default: "highlight" as const,
+  }),
+  peekMarksRead: field.boolean({
+    label: "a peek counts as read",
+    help: "holding a card to peek at its thread marks it read, like opening it does.",
+    default: true,
+  }),
+});
+
+export type BoardDisplay = ConfigOf<typeof Config>;
 
 const AttachmentBody = z.union([
   z.object({ path: z.string() }),
@@ -33,6 +63,8 @@ const PatchBody = z.object({
 });
 
 const ReorderBody = z.object({ before: z.string().nullable() });
+
+const SubmitManyBody = z.object({ ids: z.array(z.string()) });
 
 const BlockersBody = z.object({
   /** Session names or ids; each must belong to a Working card. */
@@ -76,8 +108,13 @@ function status(error: unknown): never {
 const boardRoutes = {
   name: "board-routes",
   inject: ["routes", "board", "sessions"] as const,
-  apply(ctx: Context) {
+  apply(ctx: Context, display: BoardDisplay) {
+    // A settings write remounts this row with the new values. Windows that
+    // are already open learn them from this frame; the next `GET /api/board`
+    // carries them for everyone else.
+    ctx.emit("stream/publish", { kind: "board-display", display });
     ctx.on("board/moved", (card: BoardCard) => ctx.emit("stream/publish", { kind: "board", card }));
+    ctx.on("board/seen", (card: BoardCard) => ctx.emit("stream/publish", { kind: "board", card }));
     ctx.on("board/removed", (card: BoardCard) =>
       ctx.emit("stream/publish", { kind: "board-removed", id: card.id }),
     );
@@ -94,7 +131,7 @@ const boardRoutes = {
       {
         method: "GET",
         path: "/api/board",
-        handle: () => ({ enabled: true, cards: ctx.board.list() }),
+        handle: () => ({ enabled: true, cards: ctx.board.list(), display }),
       },
       {
         method: "GET",
@@ -140,6 +177,14 @@ const boardRoutes = {
       },
       {
         method: "POST",
+        path: "/api/board/cards/submit",
+        handle: (req: RouteRequest) => {
+          const body = SubmitManyBody.parse(req.body);
+          return attempt(() => ctx.board.submitMany(body.ids));
+        },
+      },
+      {
+        method: "POST",
         path: "/api/board/cards/:id/reorder",
         handle: (req: RouteRequest) => {
           const body = ReorderBody.parse(req.body);
@@ -174,6 +219,11 @@ const boardRoutes = {
         },
       },
       {
+        method: "POST",
+        path: "/api/board/cards/:id/seen",
+        handle: (req: RouteRequest) => attempt(() => ctx.board.markSeen(req.params.id!)),
+      },
+      {
         method: "DELETE",
         path: "/api/board/cards/:id",
         handle: (req: RouteRequest) => attempt(() => ctx.board.cancel(req.params.id!)),
@@ -182,4 +232,4 @@ const boardRoutes = {
   },
 };
 
-export default boardRoutes;
+export default { ...boardRoutes, Config, settings };

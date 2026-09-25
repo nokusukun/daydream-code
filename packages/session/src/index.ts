@@ -69,11 +69,18 @@ declare module "@daydream-code/kernel" {
      * and add to `causes` the sessions whose activity those blocks report.
      * When nothing but these blocks wakes the next turn, that turn is a
      * reaction to `causes`, and its own end is not reported back to them.
+     *
+     * `withInput` is whether a turn is starting anyway: a run is opening, or
+     * input is queued. When it is false the model has stopped and any block
+     * pushed here starts a new turn by itself, so a listener whose news does
+     * not justify waking a finished session contributes nothing, and keeps it
+     * for the next call where `withInput` is true.
      */
     "session/collect-injections"(
       session: SessionRecord,
       blocks: string[],
       causes: Set<SessionId>,
+      withInput: boolean,
     ): void;
     /**
      * @mode emit — session reached a terminal status, after final write-back

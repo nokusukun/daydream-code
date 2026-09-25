@@ -159,6 +159,31 @@ export function ArchiveIcon(): ReactNode {
 }
 
 /**
+ * Queue every draft: a short stack with an arrow leaving it to the right,
+ * toward the Queued lane beside Drafts. Same stroke family as the archive
+ * box so the two lane-head actions read as one set.
+ */
+export function QueueAllIcon(): ReactNode {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={15}
+      height={15}
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M2.4 4h6M2.4 8h4.2M2.4 12h6" />
+      <path d="M8.6 8h5M11.4 5.8 13.6 8l-2.2 2.2" />
+    </svg>
+  );
+}
+
+/**
  * Restore from the archive: the same box with the slot turned into an arrow
  * leaving it, so the pair reads as one action and its undo.
  */

@@ -101,6 +101,8 @@ contextBridge.exposeInMainWorld("daydream", {
   openProject: (rootPath: string) =>
     ipcRenderer.invoke("daydream:open-project", rootPath),
   pickProject: () => ipcRenderer.invoke("daydream:pick-project"),
+  removeProject: (rootPath: string) =>
+    ipcRenderer.invoke("daydream:remove-project", rootPath),
   onConnection: (callback: (info: ConnectionInfo) => void) => {
     const listener = (_event: unknown, info: ConnectionInfo): void => {
       callback(info);

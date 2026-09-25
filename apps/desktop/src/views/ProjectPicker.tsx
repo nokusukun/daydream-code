@@ -19,7 +19,7 @@ export function ProjectPicker(props: {
   onOpen(rootPath: string): void;
   onPick(): void;
 }): ReactNode {
-  const { home, projects, loaded } = useProjectList();
+  const { home, projects, loaded, remove, removing, removeError } = useProjectList();
 
   return (
     <div className="picker">
@@ -42,6 +42,7 @@ export function ProjectPicker(props: {
         )}
 
         {props.error !== null && <div className="error-bar">{props.error}</div>}
+        {removeError !== null && <div className="error-bar">{removeError}</div>}
 
         {loaded && projects.length > 0 && (
           <div className="picker-recent">
@@ -53,6 +54,8 @@ export function ProjectPicker(props: {
                 home={home}
                 opening={props.opening === project.rootPath}
                 onOpen={props.onOpen}
+                onRemove={remove}
+                removing={removing === project.rootPath}
               />
             ))}
           </div>

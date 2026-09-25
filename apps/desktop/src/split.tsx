@@ -51,6 +51,12 @@ export function SplitPane(props: {
   className?: string;
   /** What the handle resizes, for the accessible name. */
   label?: string;
+  /**
+   * Show the first pane alone. It stays mounted either way, so opening and
+   * closing the second pane never remounts (and resets the scroll of) what
+   * was already on screen.
+   */
+  collapsed?: boolean;
 }): ReactNode {
   const { id, direction, initial, min, max } = props;
   const fixed = props.fixed ?? "second";
@@ -175,30 +181,34 @@ export function SplitPane(props: {
       >
         {props.first}
       </div>
-      <div
-        className="split-handle"
-        role="separator"
-        tabIndex={0}
-        aria-orientation={isRow ? "vertical" : "horizontal"}
-        aria-label={props.label ?? "Resize panes"}
-        aria-valuenow={Math.round(size)}
-        aria-valuemin={min}
-        aria-valuemax={max}
-        title="drag to resize · double-click to reset"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onDoubleClick={reset}
-        onKeyDown={onKeyDown}
-      />
-      <div
-        className="split-second"
-        {...(fixed === "second"
-          ? { style: isRow ? { width: size } : { height: size } }
-          : {})}
-      >
-        {props.second}
-      </div>
+      {props.collapsed !== true && (
+        <>
+          <div
+            className="split-handle"
+            role="separator"
+            tabIndex={0}
+            aria-orientation={isRow ? "vertical" : "horizontal"}
+            aria-label={props.label ?? "Resize panes"}
+            aria-valuenow={Math.round(size)}
+            aria-valuemin={min}
+            aria-valuemax={max}
+            title="drag to resize · double-click to reset"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onDoubleClick={reset}
+            onKeyDown={onKeyDown}
+          />
+          <div
+            className="split-second"
+            {...(fixed === "second"
+              ? { style: isRow ? { width: size } : { height: size } }
+              : {})}
+          >
+            {props.second}
+          </div>
+        </>
+      )}
     </div>
   );
 }

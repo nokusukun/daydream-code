@@ -1,7 +1,20 @@
+import type { ReactNode } from "react";
 import type { DesktopModule } from "../runtime.js";
 import type { DesktopHost } from "../host.js";
 import { ThreadRail } from "../../views/ThreadRail.js";
 import { BoardView } from "../../views/BoardView.js";
+import { useMarkRead } from "../../board-read.js";
+
+/**
+ * Headless, for the same reason as keep-awake's driver: the toolbar is the one
+ * slot that renders in every mode. A card's thread is read in agent mode, so a
+ * driver that lived in the board panel would be unmounted exactly when it had
+ * something to report.
+ */
+function MarkRead(): ReactNode {
+  useMarkRead();
+  return null;
+}
 
 /**
  * Board mode: the kanban lanes, full width by default. The same thread rail
@@ -25,6 +38,7 @@ const board: DesktopModule<DesktopHost> = {
       sidebarDefault: false,
       panel: BoardView,
     });
+    context.registerToolbar({ id: "board-read", position: "actions", Component: MarkRead });
   },
 };
 

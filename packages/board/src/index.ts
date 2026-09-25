@@ -27,6 +27,13 @@ declare module "@daydream-code/kernel" {
      * cards whose `planId` it does not know yet.
      */
     "board/planned"(plan: BoardPlan): void;
+    /**
+     * @mode emit — after a Done card's `seenAt` is committed. Separate from
+     * `board/moved` because nothing moved: a mirror of the board wants the new
+     * card, but a listener narrating moves (the master thread) would announce
+     * the card as done a second time.
+     */
+    "board/seen"(card: BoardCard): void;
   }
 }
 
@@ -126,8 +133,21 @@ export interface BoardCard {
    * it came from. From then on only a person can change the card.
    */
   planId: string | null;
+  /**
+   * When a person first looked at the card's result after it last reached
+   * Done. Cleared every time the card reaches Done, so a Done card with null
+   * here is unread. Outside Done it is left over from an earlier round and
+   * means nothing. Kept apart from `updatedAt`, which is the card's "finished
+   * 2h ago": reading a result must not make it look freshly finished.
+   */
+  seenAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A Done card whose result nobody has looked at yet. */
+export function isUnread(card: Pick<BoardCard, "column" | "seenAt">): boolean {
+  return card.column === "done" && card.seenAt === null;
 }
 
 /**
@@ -224,6 +244,14 @@ export abstract class Board extends Service {
   abstract update(id: string, patch: CardPatch): BoardCard;
   /** Draft → Queued. */
   abstract submit(id: string): BoardCard;
+  /**
+   * Draft → Queued for several cards at once, keeping their order relative
+   * to each other, then one pump. Ids that are not drafts (any more) are
+   * skipped rather than refused: the caller is queuing what it saw, and a
+   * draft that was queued, cancelled or rewritten into a plan in between is
+   * already dealt with. Returns the cards that moved.
+   */
+  abstract submitMany(ids: readonly string[]): BoardCard[];
   /** Move before another card, or to the tail with `null`. */
   abstract reorder(id: string, before: string | null): BoardCard;
   /** Force start: skip or abandon evaluation, drop blockers, run now. */
@@ -235,6 +263,13 @@ export abstract class Board extends Service {
   ): BoardCard;
   /** Drafts, Queued and Blocked only. */
   abstract cancel(id: string): BoardCard;
+  /**
+   * A person has looked at a Done card's result. Idempotent, and a no-op
+   * off Done rather than a refusal: the client that reports it is racing
+   * the card, and a follow-up can re-queue the card between the person
+   * opening its thread and the report arriving.
+   */
+  abstract markSeen(id: string): BoardCard;
 
   abstract listPlans(): BoardPlan[];
   abstract getPlan(id: string): BoardPlan | undefined;

@@ -56,10 +56,10 @@ function reader(): SessionRecord {
   return { id: READER, lastSeenMasterSeq: 0 } as SessionRecord;
 }
 
-function collect(ctx: App["rootCtx"]) {
+function collect(ctx: App["rootCtx"], session = reader(), withInput = true) {
   const blocks: string[] = [];
   const causes = new Set<SessionId>();
-  ctx.emit("session/collect-injections", reader(), blocks, causes);
+  ctx.emit("session/collect-injections", session, blocks, causes, withInput);
   return { text: blocks.join("\n"), causes };
 }
 
@@ -122,5 +122,25 @@ describe("master-inject echo suppression", () => {
     const { text, causes } = collect(ctx);
     expect(text).toContain("heads up");
     expect([...causes]).toEqual([]);
+  });
+});
+
+describe("master-inject never wakes a session on its own", () => {
+  it("holds the backlog when no turn is starting, and delivers it with the next one", async () => {
+    const { ctx, threads, master } = await mount();
+    threads.append(
+      entry(master, "session_turn_end", "session a turn end, summary: s", { sessionId: A }),
+    );
+    const session = reader();
+
+    const idle = collect(ctx, session, false);
+    expect(idle.text).toBe("");
+    expect([...idle.causes]).toEqual([]);
+    // Not stepped over: the cursor stays put so nothing is lost.
+    expect(session.lastSeenMasterSeq).toBe(0);
+
+    const next = collect(ctx, session, true);
+    expect(next.text).toContain("session ses_a turn end");
+    expect(session.lastSeenMasterSeq).toBeGreaterThan(0);
   });
 });

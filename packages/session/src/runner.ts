@@ -28,7 +28,7 @@ import {
   type Usage,
 } from "@daydream-code/shared";
 import { schema } from "@daydream-code/store";
-import type { Injection } from "@daydream-code/driver";
+import { injectedPayload, type Injection } from "@daydream-code/driver";
 import { onAbort } from "@daydream-code/driver/abort";
 import {
   Sessions,
@@ -1635,7 +1635,10 @@ export default class SessionRunner extends Sessions {
       const queued = active.injections.splice(0);
       const blocks: string[] = [];
       const causes = new Set<SessionId>();
-      ctx.emit("session/collect-injections", record, blocks, causes);
+      // Every driver calls this once the model has stopped, and anything
+      // returned starts another turn. With nothing queued, the collectors
+      // alone decide whether the session wakes, so they are told as much.
+      ctx.emit("session/collect-injections", record, blocks, causes, queued.length > 0);
       // A turn with the user's words in it is the user's turn, whatever else
       // rides along; only one woken by harness-authored updates alone is a
       // reaction to the sessions those updates report.
@@ -1679,6 +1682,27 @@ export default class SessionRunner extends Sessions {
             ...(taskImages.length > 0 ? { images: taskImages } : {}),
           },
         });
+        // Updates held back because they were not worth a turn of their own
+        // ride with the message that opens this one. Journaled after
+        // `session_started` so the transcript shows them in this cycle, and
+        // placed before the task in the prompt so the request is what the
+        // model reads last. A new dispatch forked master at its cursor, so it
+        // has nothing to collect here.
+        const opening: string[] = [];
+        const openingCauses = new Set<SessionId>();
+        ctx.emit("session/collect-injections", record, opening, openingCauses, true);
+        for (const text of opening) {
+          ctx.journal.append({
+            sessionId: record.id,
+            type: "user_injected",
+            payload: injectedPayload({ kind: "master_update", text }),
+          });
+        }
+        // The same rule as a drain: a run the user started is the user's
+        // turn; one a sibling started is a reaction to whatever rode along.
+        if (active.causedBy.size > 0) {
+          for (const cause of openingCauses) active.causedBy.add(cause);
+        }
         let result;
         try {
           result = await driver.run({
@@ -1686,7 +1710,7 @@ export default class SessionRunner extends Sessions {
             sessionId: record.id,
             workdir: ctx.store.rootPath,
             context,
-            task,
+            task: [...opening, task].join("\n\n"),
             ...(taskImages.length > 0 ? { taskImages } : {}),
             modelId: record.modelId,
             effort: record.effort,

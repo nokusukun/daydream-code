@@ -24,6 +24,7 @@ import type {} from "@daydream-code/blobs";
 import {
   Board,
   BoardError,
+  isUnread,
   type BoardBlock,
   type BoardCard,
   type BoardColumn,
@@ -237,6 +238,20 @@ export default class BoardSqlite extends Board {
     return moved;
   }
 
+  submitMany(ids: readonly string[]): BoardCard[] {
+    // Drafts keep their positions, as `submit` does, so the queue order is
+    // the order they sat in. Every card is in line before the one pump, so
+    // an evaluator never starts with the rest of the batch still in Drafts
+    // and misses a card it should have deferred to.
+    const drafts = [...new Set(ids)]
+      .map((id) => this.get(id))
+      .filter((card): card is BoardCard => card?.column === "draft")
+      .sort((a, b) => a.position - b.position);
+    const moved = drafts.map((card) => this.#move(card, "queued"));
+    if (moved.length > 0) this.#pump();
+    return moved.map((card) => this.get(card.id) ?? card);
+  }
+
   reorder(id: string, before: string | null): BoardCard {
     const card = this.#require(id);
     this.#allow(card, ["draft", "queued", "blocked"], "reorder");
@@ -316,6 +331,21 @@ export default class BoardSqlite extends Board {
     this.#allow(card, ["draft", "queued", "blocked"], "cancel");
     this.#delete(card);
     return card;
+  }
+
+  markSeen(id: string): BoardCard {
+    const card = this.#require(id);
+    if (!isUnread(card)) return card;
+    // Not `#write`: that stamps `updatedAt`, which the card shows as when it
+    // finished.
+    this.ctx.store.db
+      .update(schema.boardCards)
+      .set({ seenAt: nowIso() })
+      .where(eq(schema.boardCards.id, id))
+      .run();
+    const seen = this.get(id)!;
+    this.ctx.emit("board/seen", seen);
+    return seen;
   }
 
   // -------------------------------------------------------------------------
@@ -759,6 +789,8 @@ export default class BoardSqlite extends Board {
       column: to,
       attentionReason,
       ...(to === "evaluating" ? { evaluatorSessionId: null } : {}),
+      // Every arrival in Done is a new result, including a follow-up's.
+      ...(to === "done" ? { seenAt: null } : {}),
     });
     const moved = this.get(card.id)!;
     this.ctx.emit("board/moved", moved, card.column);
@@ -992,6 +1024,7 @@ export default class BoardSqlite extends Board {
       attentionReason: row.attentionReason,
       verdict: row.verdictJson === null ? null : (JSON.parse(row.verdictJson) as Verdict),
       planId: row.planId,
+      seenAt: row.seenAt,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };

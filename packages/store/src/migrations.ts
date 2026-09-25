@@ -391,6 +391,16 @@ export const migrations: readonly Migration[] = [
   CREATE INDEX IF NOT EXISTS board_plans_project
     ON board_plans (project_id, created_at);
   `,
+  // v11 — when a person last looked at a Done card's result.
+  //
+  // NULL while a Done card is unread; the board clears it every time a card
+  // reaches Done. Cards already in Done are backfilled as read: they finished
+  // before anything tracked reading, and marking the whole backlog unread on
+  // upgrade would bury the one distinction this column exists to draw.
+  `
+  ALTER TABLE board_cards ADD COLUMN seen_at TEXT;
+  UPDATE board_cards SET seen_at = updated_at WHERE lane = 'done';
+  `,
 ];
 
 /** Bring the database up to the current schema version. Safe to call on every open. */

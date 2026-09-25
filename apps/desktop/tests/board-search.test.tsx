@@ -23,7 +23,7 @@ vi.mock("../src/sessions.js", async () => ({
 }));
 vi.mock("../src/board.js", async () => ({
   ...(await vi.importActual<typeof import("../src/board.js")>("../src/board.js")),
-  useBoard: () => ({ enabled: true, cards: state.cards, error: null, refresh: vi.fn() }),
+  useBoard: () => ({ enabled: true, cards: state.cards, display: { unread: "highlight", peekMarksRead: true }, error: null, refresh: vi.fn() }),
 }));
 
 function card(id: string, patch: Partial<BoardCard> = {}, column: BoardColumn = "done"): BoardCard {
@@ -41,6 +41,7 @@ function card(id: string, patch: Partial<BoardCard> = {}, column: BoardColumn = 
     attentionReason: null,
     verdict: null,
     planId: null,
+    seenAt: "2026-09-24T00:00:00.000Z",
     createdAt: "2026-09-24T00:00:00.000Z",
     updatedAt: "2026-09-24T00:00:00.000Z",
     ...patch,

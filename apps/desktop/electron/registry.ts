@@ -77,3 +77,15 @@ export function touchProject(
     b.lastOpenedAt.localeCompare(a.lastOpenedAt),
   );
 }
+
+/**
+ * Return a new list without `rootPath`. Forgetting is all removal means: the
+ * folder and its `.daydream-code` store are untouched, so opening the folder
+ * again brings the project back with its history intact.
+ */
+export function forgetProject(
+  entries: readonly RegistryEntry[],
+  rootPath: string,
+): RegistryEntry[] {
+  return entries.filter((e) => e.rootPath !== rootPath);
+}

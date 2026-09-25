@@ -75,6 +75,12 @@ export function PanelHead(props: {
   /** Controls between the subtitle and the tabs — a stop button, a toggle. */
   children?: ReactNode;
   close?: PanelCloseAction;
+  /**
+   * Show this thread somewhere roomier. The board's side pane uses it to hand
+   * the thread to Threads mode; panels that already are Threads mode have
+   * nowhere bigger to go and leave it out.
+   */
+  expand?: PanelCloseAction;
 }): ReactNode {
   return (
     <header className="panel-bar">
@@ -83,6 +89,19 @@ export function PanelHead(props: {
       <span className="bar-spacer" />
       {props.children}
       <ViewTabs />
+      {props.expand !== undefined && (
+        <button
+          type="button"
+          className="panel-close panel-expand"
+          aria-label={props.expand.label}
+          title={props.expand.label}
+          onClick={props.expand.onClick}
+        >
+          <svg viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M7 2.5h2.5V5M9.5 2.5 6 6M5 3H2.5v6.5H9V7" />
+          </svg>
+        </button>
+      )}
       {props.close !== undefined && (
         <button
           type="button"

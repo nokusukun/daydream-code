@@ -18,6 +18,7 @@ import { ApiError, type BoardCard, type BoardPlan } from "../api.js";
 import { laneOf } from "../board.js";
 import { useHarness } from "../harness.js";
 import { loadChoice, ModelSelector, type ModelChoice } from "../model-selector.js";
+import { InlineMarkdown, Markdown } from "../prose.js";
 import { isLive } from "../sessions.js";
 import { SplitPane } from "../split.js";
 import { StatusGlyph, fmtAgo } from "../ui.js";
@@ -95,6 +96,26 @@ export function planStanding(
  * down (+1). Undefined at the edge it is moving toward. Null is the back of
  * the whole queue, which is below the plan's last card wherever that sits.
  */
+/**
+ * The glyph a card that left the plan wears, matching the board's own: a
+ * person who reads "working" beside a ring here and on the board should be
+ * looking at the same fact.
+ */
+function laneGlyph(card: BoardCard): string {
+  switch (card.column) {
+    case "done":
+      return "completed";
+    case "working":
+      return "running";
+    case "evaluating":
+      return "evaluating";
+    case "attention":
+      return "waiting";
+    default:
+      return "queued";
+  }
+}
+
 export function planNudge(order: readonly BoardCard[], at: number, step: 1 | -1): string | null | undefined {
   if (step === -1) return at <= 0 ? undefined : order[at - 1]!.id;
   if (at >= order.length - 1) return undefined;
@@ -202,48 +223,61 @@ function PlanComposer(props: {
       </header>
       <div className="plan-compose">
         <p className="plan-compose-lede">
-          Paste a plan, a spec or a long request. A planner reads the code and breaks it into cards.
-          You review and refine them with it. Nothing runs until you queue the plan, with the button
-          or by telling the planner to.
+          Paste a plan, a spec or a long request. A planner reads the code, breaks the work into
+          cards, and refines them with you. Nothing runs until you queue the plan, or tell the
+          planner to.
         </p>
         {failure !== null && <div className="error-bar">{failure}</div>}
-        <textarea
-          ref={inputRef}
-          className="plan-compose-input"
-          aria-label="What should be planned"
-          placeholder="Describe the work: goals, constraints, the order things need to happen in…"
-          value={prompt}
-          disabled={busy}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              start();
-            }
-          }}
-        />
-        <footer className="plan-compose-foot">
-          <ModelSelector value={choice} onChange={setChoice} disabled={busy} persist={false} />
-          <span className="plan-compose-hint">Plans with this agent. The cards run on it too.</span>
-          <span className="composer-spacer" />
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={busy || prompt.trim().length === 0}
-            onClick={start}
-            title="Draft cards (⌘↵)"
-          >
-            {busy ? "Starting planner…" : "Draft cards"}
-          </button>
-        </footer>
+        {/* One field, like every other composer in the app: the prompt, the
+            agent it goes to and the send are a single object, not a textarea
+            with controls parked underneath it. */}
+        <div className={`plan-compose-field${busy ? " is-busy" : ""}`}>
+          <textarea
+            ref={inputRef}
+            className="plan-compose-input"
+            aria-label="What should be planned"
+            placeholder="Describe the work: goals, constraints, the order things need to happen in…"
+            value={prompt}
+            disabled={busy}
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                start();
+              }
+            }}
+          />
+          <footer className="plan-compose-foot">
+            <ModelSelector value={choice} onChange={setChoice} disabled={busy} persist={false} />
+            <span className="plan-compose-hint">Plans with this agent. The cards run on it too.</span>
+            <span className="composer-spacer" />
+            <kbd className="plan-compose-kbd" aria-hidden="true">
+              ⌘↵
+            </kbd>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy || prompt.trim().length === 0}
+              onClick={start}
+              title="Draft cards (⌘↵)"
+            >
+              {busy ? "Starting planner…" : "Draft cards"}
+            </button>
+          </footer>
+        </div>
         {props.resumable.length > 0 && (
           <section className="plan-resume" aria-label="Plans in progress">
-            <h2 className="plan-resume-head">In progress</h2>
+            <h2 className="plan-resume-head">
+              <span>In progress</span>
+              <span className="plan-resume-count">{props.resumable.length}</span>
+            </h2>
             {props.resumable.map((plan) => {
               const standing = planStanding(plan, props.cards, props.planner(plan));
               return (
                 <button key={plan.id} type="button" className="plan-resume-row" onClick={() => props.onOpen(plan.id)}>
-                  <StatusGlyph status={standing.glyph} />
+                  <span className="plan-glyph">
+                    <StatusGlyph status={standing.glyph} />
+                  </span>
                   <span className="plan-resume-title">{plan.title}</span>
                   <span className="plan-resume-meta">
                     {standing.meta} · {fmtAgo(plan.createdAt)}
@@ -320,11 +354,13 @@ function PlanWorkspace(props: {
         <h1 className="board-title plan-title" title={plan.title}>
           {plan.title}
         </h1>
-        {writing && (
+        {writing ? (
           <span className="plan-writing" role="status">
             <StatusGlyph status="running" />
             planner is writing
           </span>
+        ) : (
+          cards.length > 0 && <span className="plan-standing">{planStanding(plan, cards, planner).meta}</span>
         )}
         <span className="composer-spacer" />
         {drafts.length > 0 && (
@@ -338,19 +374,25 @@ function PlanWorkspace(props: {
             {confirmDiscard ? `Discard ${drafts.length} ${drafts.length === 1 ? "draft" : "drafts"}?` : "Discard"}
           </button>
         )}
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={busy || writing || drafts.length === 0}
-          onClick={queueAll}
-          title={
-            writing
-              ? "Wait for the planner to finish its turn"
-              : "Queue every draft in this order, behind what is already queued. You can also tell the planner to."
-          }
-        >
-          {drafts.length === 0 ? "Nothing to queue" : `Queue ${drafts.length} ${drafts.length === 1 ? "card" : "cards"}`}
-        </button>
+        {/* Only while there is something to queue. A disabled "Nothing to
+            queue" was the loudest thing on a finished plan's screen and the
+            one thing on it with nothing to say; the count beside the title
+            already says where the plan stands. */}
+        {drafts.length > 0 && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || writing}
+            onClick={queueAll}
+            title={
+              writing
+                ? "Wait for the planner to finish its turn"
+                : "Queue every draft in this order, behind what is already queued. You can also tell the planner to."
+            }
+          >
+            {`Queue ${drafts.length} ${drafts.length === 1 ? "card" : "cards"}`}
+          </button>
+        )}
       </header>
       {notice !== null && (
         <p className="board-notice" role="status">
@@ -375,9 +417,20 @@ function PlanWorkspace(props: {
               writing ? (
                 <>
                   <p className="plan-empty">The planner is reading the code and writing cards…</p>
-                  {[0, 1, 2].map((i) => (
-                    <div key={i} className="skeleton board-card-skel" />
-                  ))}
+                  {/* Shaped like the rows they stand in for: a number, a
+                      title, two lines of task. */}
+                  <ol className="plan-list" aria-hidden="true">
+                    {[0.46, 0.62, 0.38].map((width, i) => (
+                      <li key={i} className="plan-card plan-card-skel">
+                        <span className="plan-card-order">{i + 1}</span>
+                        <div className="plan-card-body">
+                          <span className="skeleton plan-skel-line" style={{ width: `${width * 100}%` }} />
+                          <span className="skeleton plan-skel-line is-text" />
+                          <span className="skeleton plan-skel-line is-text" style={{ width: "72%" }} />
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
                 </>
               ) : (
                 <p className="plan-empty">No cards yet. Ask the planner for some in its thread.</p>
@@ -449,7 +502,7 @@ function PlanCard(props: {
 
   return (
     <li
-      className={`plan-card${draft ? "" : " is-locked"}`}
+      className={`plan-card${draft ? "" : " is-locked"}${editing ? " is-editing" : ""}`}
       onKeyDown={(event) => {
         // ⌥↑ / ⌥↓ moves a card, the same chord that reorders the Queued lane.
         if (!draft || editing || !event.altKey) return;
@@ -484,52 +537,60 @@ function PlanCard(props: {
                 if (event.key === "Escape") setEditing(false);
               }}
             />
-            <div className="board-card-actions is-open">
-              <button type="button" className="btn btn-quiet" onClick={save} disabled={task.trim().length === 0}>
-                Save
-              </button>
+            <div className="plan-card-edit-foot">
+              <span className="plan-card-edit-hint">⌘↵ to save · esc to cancel</span>
               <button type="button" className="btn btn-quiet" onClick={() => setEditing(false)}>
                 Cancel
+              </button>
+              <button type="button" className="btn btn-primary" onClick={save} disabled={task.trim().length === 0}>
+                Save
               </button>
             </div>
           </div>
         ) : (
           <>
             <div className="plan-card-top">
-              <span className="plan-card-title">{card.title}</span>
-              {!draft && <span className="plan-card-lane">{laneOf(card)}</span>}
+              <span className="plan-card-title">
+                <InlineMarkdown text={card.title} />
+              </span>
+              {!draft && (
+                <span className="plan-card-state">
+                  <StatusGlyph status={laneGlyph(card)} />
+                  <span className="plan-card-lane">{laneOf(card)}</span>
+                </span>
+              )}
+              {draft && (
+                <div className="plan-card-actions">
+                  <button type="button" className="btn btn-quiet" onClick={() => setEditing(true)}>
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-quiet btn-icon"
+                    aria-label="Move up"
+                    title="Move up (⌥↑)"
+                    disabled={!props.canUp}
+                    onClick={() => props.onNudge(-1)}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-quiet btn-icon"
+                    aria-label="Move down"
+                    title="Move down (⌥↓)"
+                    disabled={!props.canDown}
+                    onClick={() => props.onNudge(1)}
+                  >
+                    ↓
+                  </button>
+                  <button type="button" className="btn btn-quiet btn-danger-text" onClick={props.onRemove}>
+                    Remove
+                  </button>
+                </div>
+              )}
             </div>
-            <p className="plan-card-task">{card.task}</p>
-            {draft && (
-              <div className="plan-card-actions">
-                <button type="button" className="btn btn-quiet" onClick={() => setEditing(true)}>
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-quiet btn-icon"
-                  aria-label="Move up"
-                  title="Move up (⌥↑)"
-                  disabled={!props.canUp}
-                  onClick={() => props.onNudge(-1)}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-quiet btn-icon"
-                  aria-label="Move down"
-                  title="Move down (⌥↓)"
-                  disabled={!props.canDown}
-                  onClick={() => props.onNudge(1)}
-                >
-                  ↓
-                </button>
-                <button type="button" className="btn btn-quiet btn-danger-text" onClick={props.onRemove}>
-                  Remove
-                </button>
-              </div>
-            )}
+            <Markdown text={card.task} className="plan-card-task" />
           </>
         )}
       </div>

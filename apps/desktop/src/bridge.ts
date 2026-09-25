@@ -60,6 +60,8 @@ export interface ProjectList {
   projects: ProjectSummary[];
 }
 
+export type RemoveResult = { ok: true } | { ok: false; error: string };
+
 export type OpenResult =
   | { ok: true; connection: ConnectionInfo }
   | { ok: false; error: string };
@@ -192,6 +194,11 @@ export interface DaydreamBridge {
   listProjects(): Promise<ProjectList>;
   openProject(rootPath: string): Promise<OpenResult>;
   pickProject(): Promise<OpenResult | null>;
+  /**
+   * Forget a project: it leaves the list, its folder and history stay put.
+   * Refused for the open project and for one with sessions still running.
+   */
+  removeProject(rootPath: string): Promise<RemoveResult>;
   onConnection(callback: (info: ConnectionInfo) => void): () => void;
   /** Open (or focus) the settings window. */
   openSettings(): Promise<void>;

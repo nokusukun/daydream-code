@@ -484,7 +484,7 @@ describe("headless end-to-end (mock driver)", () => {
     expect(blob).toContain("second note after B forked");
   });
 
-  it("a turn woken only by a sibling's updates is not reported back to that sibling", async () => {
+  it("sibling news never reopens a finished turn; it rides the next real one", async () => {
     const root = tempProject();
     const { ctx } = await bootProject(root, [{ tool: "hang" }, { turn: "own work" }]);
     let waiters: Array<() => void> = [];
@@ -494,11 +494,6 @@ describe("headless end-to-end (mock driver)", () => {
       parameters: { type: "object", properties: {} },
       execute: () => new Promise<unknown>((resolve) => waiters.push(() => resolve({ released: true }))),
     });
-    const release = () => {
-      const pending = waiters;
-      waiters = [];
-      for (const w of pending) w();
-    };
     const waitFor = async (what: string, predicate: () => boolean) => {
       const deadline = Date.now() + 5_000;
       while (!predicate()) {
@@ -506,45 +501,44 @@ describe("headless end-to-end (mock driver)", () => {
         await new Promise((r) => setTimeout(r, 5));
       }
     };
+    const injected = (id: SessionId) =>
+      ctx.journal.read({ sessionId: id }).filter((e) => e.type === "user_injected");
 
-    // A is live and mid-tool while B runs to completion, so B's turn end and
-    // run end reach A as a master update at A's next boundary.
+    // B finishes while A is live, so B's news is on master at A's boundaries.
     const a = await ctx.sessions.dispatch({ task: "alpha", driver: "mock" });
     await waitFor("A hanging", () => waiters.length === 1);
     const b = await ctx.sessions.dispatch({ task: "beta", driver: "mock" });
     await waitFor("B hanging", () => waiters.length === 2);
-    waiters.pop()!(); // B's hang: B finishes
+    waiters.pop()!();
     await b.done;
     const master = ThreadId(ctx.threads.ensureMaster().id);
     await waitFor("B's run end on master", () =>
       ctx.threads.entries(master).some((e) => e.kind === "session_summary" && e.sessionId === b.record.id),
     );
-    release(); // A reacts to B, then does its own work
+    waiters.pop()!();
     await a.done;
-    await waitFor("A's turn ends on master", () =>
-      ctx.threads.entries(master).filter((e) => e.kind === "session_turn_end" && e.sessionId === a.record.id).length >= 2,
-    );
 
-    const aTurns = ctx.threads
-      .entries(master)
-      .filter((e) => e.kind === "session_turn_end" && e.sessionId === a.record.id);
-    // One reaction to B, recorded as B's echo; one of A's own, recorded as nobody's.
-    expect(aTurns.map((e) => e.causedBy ?? [])).toEqual(
-      expect.arrayContaining([[b.record.id], []]),
-    );
+    // Before this rule, A took an extra turn at every boundary just to read
+    // that B had finished. Now its run is its own script and nothing else.
+    expect(injected(a.record.id)).toEqual([]);
+    const aTurnEnds = ctx.journal.read({ sessionId: a.record.id }).filter((e) => e.type === "turn_end");
+    expect(aTurnEnds).toHaveLength(1);
 
-    // B, continued by the user, hears about A's own turn but not A's reaction to it.
-    const revived = await ctx.sessions.continueSession(b.record.id, "keep going");
-    await waitFor("B hanging again", () => waiters.length === 1);
-    release();
+    // The held backlog is not lost: it arrives with the user's next message,
+    // journaled in that cycle, and the task itself stays the user's words.
+    const revived = await ctx.sessions.continueSession(a.record.id, "keep going");
+    await waitFor("A hanging again", () => waiters.length === 1);
+    waiters.pop()!();
     await revived.done;
-    const blob = ctx.journal
-      .read({ sessionId: b.record.id })
-      .filter((e) => e.type === "user_injected")
-      .map((e) => JSON.stringify(e.payload))
-      .join("\n");
-    const aName = ctx.sessions.get(a.record.id)!.name;
-    expect(blob.split(`session ${aName} turn end`).length - 1).toBe(1);
+    const events = ctx.journal.read({ sessionId: a.record.id });
+    const lastStart = events.map((e) => e.type).lastIndexOf("session_started");
+    expect((events[lastStart]!.payload as { task: string }).task).toBe("keep going");
+    const opening = events[lastStart + 1]!;
+    expect(opening.type).toBe("user_injected");
+    const bName = ctx.sessions.get(b.record.id)!.name;
+    expect(JSON.stringify(opening.payload)).toContain(`session ${bName} ended (completed)`);
+    // Delivered once, at the opening, not again at a later boundary.
+    expect(injected(a.record.id)).toHaveLength(1);
   });
 
   it("broadcasts that a sibling's turn ended, without its summary text", async () => {

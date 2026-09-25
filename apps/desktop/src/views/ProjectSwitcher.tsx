@@ -37,13 +37,24 @@ interface ProjectListState {
 
 const EMPTY: ProjectListState = { home: "", projects: [], loaded: false };
 
+export interface ProjectList extends ProjectListState {
+  /** Null when this bridge cannot remove projects (an older preload). */
+  remove: ((rootPath: string) => void) | null;
+  /** Root being removed, so its row can say so instead of going dead. */
+  removing: string | null;
+  /** Why the last removal was refused, until the next one starts. */
+  removeError: string | null;
+}
+
 /**
  * Load the registry with its per-project facts. `nonce` re-reads: the numbers
  * move while the app is open, so the popover asks again every time it opens
  * rather than showing what was true when the window booted.
  */
-export function useProjectList(nonce: unknown = 0): ProjectListState {
+export function useProjectList(nonce: unknown = 0): ProjectList {
   const [state, setState] = useState<ProjectListState>(EMPTY);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   useEffect(() => {
     const b = bridge();
@@ -65,7 +76,37 @@ export function useProjectList(nonce: unknown = 0): ProjectListState {
     };
   }, [nonce]);
 
-  return state;
+  // A refusal is about the list as it was when the popover opened.
+  useEffect(() => setRemoveError(null), [nonce]);
+
+  const b = bridge();
+  const canRemove = b !== undefined && typeof b.removeProject === "function";
+  const remove = useCallback((rootPath: string) => {
+    const api = bridge();
+    if (api === undefined) return;
+    setRemoving(rootPath);
+    setRemoveError(null);
+    void api
+      .removeProject(rootPath)
+      .then((result) => {
+        if (!result.ok) {
+          setRemoveError(result.error);
+          return;
+        }
+        // Drop the row here rather than re-reading: the rest of the list has
+        // not changed, and a re-read would reopen every project's store.
+        setState((prev) => ({
+          ...prev,
+          projects: prev.projects.filter((p) => p.rootPath !== rootPath),
+        }));
+      })
+      .catch((error: unknown) => {
+        setRemoveError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => setRemoving(null));
+  }, []);
+
+  return { ...state, remove: canRemove ? remove : null, removing, removeError };
 }
 
 /**
@@ -88,58 +129,94 @@ export function ProjectRow(props: {
   highlighted?: boolean;
   onOpen(rootPath: string): void;
   onHover?: (() => void) | undefined;
+  /**
+   * Forget this project. Absent when removal is unavailable; never offered for
+   * the open project, which the main process would refuse anyway.
+   */
+  onRemove?: ((rootPath: string) => void) | null | undefined;
+  removing?: boolean;
 }): ReactNode {
   const { project, home } = props;
   const isCurrent = props.active ?? project.active;
   const facts = [displayParent(project.rootPath, home), ...projectFacts(project)];
   const when = projectActivityAt(project);
+  const onRemove = isCurrent ? null : (props.onRemove ?? null);
+  const removing = props.removing === true;
 
+  // The row is a button, so the remove control cannot live inside it: it is a
+  // sibling laid over the time column, which it replaces while shown. It stays
+  // clickable on a missing folder's disabled row, which is the row most worth
+  // removing.
   return (
-    <button
-      type="button"
-      className={
-        "proj-row" +
-        (isCurrent ? " proj-row-current" : "") +
-        (props.highlighted === true ? " proj-row-cursor" : "") +
-        (project.exists ? "" : " proj-row-missing")
-      }
-      disabled={props.opening || !project.exists}
-      aria-current={isCurrent ? "true" : undefined}
+    <div
+      className={"proj-item" + (onRemove !== null ? " proj-item-removable" : "")}
       onMouseEnter={props.onHover}
-      onClick={() => props.onOpen(project.rootPath)}
-      title={project.rootPath}
     >
-      <span className="proj-check" aria-hidden="true">
-        {isCurrent && (
-          <svg viewBox="0 0 10 10" width="18" height="18" focusable="false">
+      <button
+        type="button"
+        className={
+          "proj-row" +
+          (isCurrent ? " proj-row-current" : "") +
+          (props.highlighted === true ? " proj-row-cursor" : "") +
+          (project.exists ? "" : " proj-row-missing")
+        }
+        disabled={props.opening || removing || !project.exists}
+        aria-current={isCurrent ? "true" : undefined}
+        onClick={() => props.onOpen(project.rootPath)}
+        title={project.rootPath}
+      >
+        <span className="proj-check" aria-hidden="true">
+          {isCurrent && (
+            <svg viewBox="0 0 10 10" width="18" height="18" focusable="false">
+              <path
+                d="M1.6 5.3 3.9 7.6 8.4 2.6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
+        </span>
+        <ProjectMark
+          name={project.name}
+          rootPath={project.rootPath}
+          icon={project.icon}
+          size={28}
+        />
+        <span className="proj-row-text">
+          <span className="proj-name">{project.name}</span>
+          <span className="proj-meta">{facts.join(" · ")}</span>
+        </span>
+        <span
+          className="proj-when"
+          title={`last active ${fmtDateTime(when)}`}
+        >
+          {props.opening ? "opening…" : removing ? "removing…" : fmtAgo(when)}
+        </span>
+      </button>
+      {onRemove !== null && !removing && (
+        <button
+          type="button"
+          className="proj-remove"
+          aria-label={`Remove ${project.name} from the list`}
+          title="Remove from list. The folder is not touched."
+          disabled={props.opening}
+          onClick={() => onRemove(project.rootPath)}
+        >
+          <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true" focusable="false">
             <path
-              d="M1.6 5.3 3.9 7.6 8.4 2.6"
+              d="M2.5 2.5 7.5 7.5M7.5 2.5 2.5 7.5"
               fill="none"
               stroke="currentColor"
-              strokeWidth="1.5"
+              strokeWidth="1.4"
               strokeLinecap="round"
-              strokeLinejoin="round"
             />
           </svg>
-        )}
-      </span>
-      <ProjectMark
-        name={project.name}
-        rootPath={project.rootPath}
-        icon={project.icon}
-        size={28}
-      />
-      <span className="proj-row-text">
-        <span className="proj-name">{project.name}</span>
-        <span className="proj-meta">{facts.join(" · ")}</span>
-      </span>
-      <span
-        className="proj-when"
-        title={`last active ${fmtDateTime(when)}`}
-      >
-        {props.opening ? "opening…" : fmtAgo(when)}
-      </span>
-    </button>
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -160,7 +237,7 @@ export function ProjectSwitcher(props: {
   const [nonce, setNonce] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const { home, projects, loaded } = useProjectList(nonce);
+  const { home, projects, loaded, remove, removing, removeError } = useProjectList(nonce);
   const branch = useWorkspace().status.branch;
 
   // Re-read on every open: sessions have run since the last time.
@@ -173,6 +250,10 @@ export function ProjectSwitcher(props: {
   const current = projects.find((project) => project.rootPath === props.rootPath);
 
   useEffect(() => setActive(0), [query, open]);
+  // A removal shortens the list under the cursor; keep it on a real row.
+  useEffect(() => {
+    setActive((i) => Math.min(i, Math.max(0, rows.length - 1)));
+  }, [rows.length]);
 
   // Outside-click, Escape and focus restore all come from the shared hook. The
   // hand-rolled version listened for Escape on the popover itself, so one Tab
@@ -205,7 +286,9 @@ export function ProjectSwitcher(props: {
         setActive((i) => (i + delta + rows.length) % rows.length);
         return;
       }
-      if (event.key === "Enter") {
+      // Only from the filter field. Enter on a focused button (a row's remove
+      // control, the footer) is that button's own click.
+      if (event.key === "Enter" && event.target === searchRef.current) {
         event.preventDefault();
         choose(rows[active]);
       }
@@ -297,6 +380,8 @@ export function ProjectSwitcher(props: {
                 highlighted={i === active}
                 onHover={() => setActive(i)}
                 onOpen={() => choose(project)}
+                onRemove={remove}
+                removing={removing === project.rootPath}
               />
             ))}
             {loaded && rows.length === 0 && (
@@ -308,6 +393,7 @@ export function ProjectSwitcher(props: {
             )}
           </div>
           {props.error !== null && <div className="proj-error">{props.error}</div>}
+          {removeError !== null && <div className="proj-error">{removeError}</div>}
           <div className="proj-foot">
             <button
               type="button"

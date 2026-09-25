@@ -45,6 +45,7 @@ function card(id: string, position: number, planId: string | null, column: Board
     attentionReason: null,
     verdict: null,
     planId,
+    seenAt: null,
     createdAt: "2026-09-24T00:00:00.000Z",
     updatedAt: "2026-09-24T00:00:00.000Z",
   };
@@ -171,6 +172,21 @@ describe("the plan screens", () => {
     expect(html).toMatch(/plan-card is-locked[\s\S]*?plan-card-lane">queued</);
     expect(html).toContain("Queue 2 cards");
     expect(html).not.toContain("elsewhere");
+  });
+
+  it("shows a queued plan's progress rather than a queue button with nothing to queue", () => {
+    const html = render("p1", [card("a", 1, "p1", "done"), card("b", 2, "p1", "working"), card("c", 3, "p1", "queued")]);
+    expect(html).toContain("1 of 3 done");
+    expect(html).not.toContain("Queue ");
+    expect(html).not.toContain("Nothing to queue");
+    // Where each card went wears the board's glyph for it, not a faded row.
+    expect(html).toMatch(/glyph-completed[\s\S]*?plan-card-lane">done</);
+    expect(html).toMatch(/glyph-running[\s\S]*?plan-card-lane">working</);
+  });
+
+  it("renders a task's inline code instead of printing the backticks", () => {
+    const html = render("p1", [{ ...card("a", 1, "p1"), task: "Add a `region` column" }]);
+    expect(html).toContain('<code class="md-code">region</code>');
   });
 
   it("offers the plans still in progress on the composer", () => {

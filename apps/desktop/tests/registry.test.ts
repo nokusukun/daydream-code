@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  forgetProject,
   readRegistry,
   touchProject,
   writeRegistry,
@@ -82,5 +83,15 @@ describe("registry", () => {
     expect(next[0]).toMatchObject({ name: "custom-a", lastOpenedAt: now.toISOString() });
     // input untouched
     expect(existing[0]?.lastOpenedAt).toBe("2026-08-01T00:00:00.000Z");
+  });
+
+  it("forgetProject drops only the named root and leaves the input alone", () => {
+    const existing: RegistryEntry[] = [
+      { rootPath: "/p/a", name: "a", lastOpenedAt: "2026-08-10T00:00:00.000Z" },
+      { rootPath: "/p/b", name: "b", lastOpenedAt: "2026-08-01T00:00:00.000Z" },
+    ];
+    expect(forgetProject(existing, "/p/a").map((e) => e.rootPath)).toEqual(["/p/b"]);
+    expect(forgetProject(existing, "/p/missing")).toEqual(existing);
+    expect(existing).toHaveLength(2);
   });
 });

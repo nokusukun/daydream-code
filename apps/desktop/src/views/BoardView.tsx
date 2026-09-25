@@ -37,15 +37,17 @@ import {
   type ReactNode,
 } from "react";
 import { titleFromTask, type SessionRecord } from "@daydream-code/shared";
-import { ApiError, type BoardCard } from "../api.js";
-import { LANES, enableKanban, laneOf, useBoard, usePlans } from "../board.js";
+import { ApiError, type BoardCard, type BoardPlan } from "../api.js";
+import { LANES, enableKanban, isUnread, laneOf, useBoard, usePlans } from "../board.js";
 import { useHarness } from "../harness.js";
-import { isArchived, useSessions } from "../sessions.js";
-import { ArchiveIcon, StatusGlyph, UnarchiveIcon, fmtAgo } from "../ui.js";
+import { isArchived, isLive, useSessions } from "../sessions.js";
+import { ArchiveIcon, QueueAllIcon, StatusGlyph, UnarchiveIcon, fmtAgo } from "../ui.js";
 import { PlanMenu } from "./PlanMenu.js";
 import { PlanView, planStorage } from "./PlanView.js";
 import { useLongPress } from "../long-press.js";
 import { ThreadPeek } from "./ThreadPeek.js";
+import { BoardSplit, useBoardThread } from "./BoardThread.js";
+import { NewCardSheet } from "./NewCardSheet.js";
 
 const DRAG_TYPE = "application/x-daydream-card";
 const PLAN_KEY = "daydream.board.plan";
@@ -260,6 +262,31 @@ export function openTargetOf(
  * which is exactly when it is new work. Sorting on `updatedAt` would reshuffle
  * the lane every time a verdict or status landed.
  */
+/**
+ * The drafts "queue all" sends, oldest first so the queue keeps the order
+ * they were written in. A draft whose plan's planner is still writing is
+ * left out: the planner may yet rewrite or drop it, and plan mode's own
+ * queue button waits for the same reason.
+ */
+export function queueAllDrafts(
+  drafts: readonly BoardCard[],
+  plans: readonly BoardPlan[],
+  sessionOf: (id: string) => SessionRecord | undefined,
+): BoardCard[] {
+  const writing = new Set(
+    plans
+      .filter((plan) => {
+        const planner = plan.sessionId === null ? undefined : sessionOf(plan.sessionId);
+        // A plan with no planner yet is one being dispatched: still writing.
+        return plan.sessionId === null || (planner !== undefined && isLive(planner));
+      })
+      .map((plan) => plan.id),
+  );
+  return drafts
+    .filter((card) => card.column === "draft" && (card.planId === null || !writing.has(card.planId)))
+    .sort((a, b) => a.position - b.position);
+}
+
 export function laneCards(cards: readonly BoardCard[], lane: string): BoardCard[] {
   return cards.filter((card) => laneOf(card) === lane).sort((a, b) => b.position - a.position);
 }
@@ -320,10 +347,11 @@ export function moveVerb(move: Move): string {
 }
 
 export function BoardView(): ReactNode {
-  const { api, select, newSession } = useHarness();
+  const { api } = useHarness();
   const board = useBoard();
   const plans = usePlans();
   const [planning, setPlanning] = usePlanning();
+  const [openThread, setOpenThread] = useBoardThread();
   const { sessions } = useSessions();
   const [notice, setNotice] = useState<string | null>(null);
   const [enabling, setEnabling] = useState(false);
@@ -338,6 +366,8 @@ export function BoardView(): ReactNode {
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const searching = query.trim().length > 0;
+  const [composing, setComposing] = useState(false);
+  const closeComposer = useCallback(() => setComposing(false), []);
 
   // ⌘F finds on the board the way it does in every Mac document window.
   // Nothing else in the app claims it, and the board is the one view whose
@@ -354,6 +384,23 @@ export function BoardView(): ReactNode {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // ⌘N on the board opens the new-card popup instead of the window-wide
+  // "new thread", which would leave the board for agent mode. Capture phase so
+  // it runs before App's bubble-phase ⌘N; only while the lanes are showing —
+  // with kanban off or plan mode open there is no board to stay on.
+  const lanesShowing = board.enabled === true && planning === null;
+  useEffect(() => {
+    if (!lanesShowing) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "n") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setComposing(true);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [lanesShowing]);
 
   // The lanes are wider than most windows now, so a hit can land in a lane
   // that is scrolled out of sight — "1 match" over a board that shows none.
@@ -536,7 +583,11 @@ export function BoardView(): ReactNode {
   const sessionOf = (card: BoardCard) => (card.sessionId === null ? undefined : byId.get(card.sessionId));
   const hits = searching ? board.cards.filter((card) => cardMatches(card, sessionOf(card), query)).length : 0;
 
-  return (
+  // Only a session this project knows gets the pane: a remembered id can
+  // outlive its session, and an unknown one would open onto an error.
+  const thread = openThread !== null && byId.has(openThread) ? openThread : null;
+
+  const view = (
     <main className="panel board">
       <header className="board-head">
         <h1 className="board-title">Board</h1>
@@ -607,14 +658,9 @@ export function BoardView(): ReactNode {
         {plans.available === true && (
           <PlanMenu plans={plans.plans} cards={board.cards} sessions={byId} onOpen={setPlanning} />
         )}
-        <button
-          type="button"
-          className="btn"
-          onClick={newSession}
-          title="Open a new thread to describe the card (⌘N)"
-        >
-          New card
-        </button>
+        {/* No header "New card": the Drafts lane's "+ New card" and ⌘N
+            already open one, and a second button beside Plan read as a
+            third way to do the same thing. */}
       </header>
       {(notice ?? board.error) !== null && (
         <p className="board-notice" role="status">
@@ -652,6 +698,14 @@ export function BoardView(): ReactNode {
                 <span className="rail-more-count">{shelvedHere.length}</span>
               </button>
             ) : null;
+          // Archived cards are left out: putting a card on the shelf is
+          // dealing with it, whether or not its thread was opened first.
+          const unread =
+            board.display.unread === "off" ? [] : onLane.filter((card) => isUnread(card));
+          const toQueue =
+            lane.id === "draft"
+              ? queueAllDrafts(onLane, plans.plans, (id) => byId.get(id))
+              : [];
           const move = dragging === null ? null : moveTo(dragging, lane.id);
           const armed = move !== null;
           const state = dragging === null ? "" : armed ? " is-armed" : " is-inert";
@@ -667,10 +721,32 @@ export function BoardView(): ReactNode {
             >
               <h2 className="board-lane-head">
                 <span className="board-lane-name">{lane.label}</span>
+                {!armed && unread.length > 0 && (
+                  <button
+                    type="button"
+                    className="board-lane-unread"
+                    title="Mark all as read"
+                    aria-label={`Mark ${unread.length} unread ${unread.length === 1 ? "card" : "cards"} as read`}
+                    onClick={() => attempt(() => Promise.all(unread.map((card) => api.markCardSeen(card.id))))}
+                  >
+                    {unread.length} unread
+                  </button>
+                )}
                 {armed && move !== null ? (
                   <span className="board-lane-move">{moveVerb(move)}</span>
                 ) : (
                   known && <span className="board-lane-count">{current}</span>
+                )}
+                {lane.id === "draft" && known && dragging === null && !searching && toQueue.length > 1 && (
+                  <button
+                    type="button"
+                    className="btn btn-quiet btn-icon board-lane-act"
+                    aria-label={`Queue all ${toQueue.length} drafts`}
+                    title={`Queue all ${toQueue.length} drafts`}
+                    onClick={() => attempt(() => api.submitCards(toQueue.map((card) => card.id)))}
+                  >
+                    <QueueAllIcon />
+                  </button>
                 )}
                 {lane.id === "done" && known && dragging === null && !searching && current > 1 && (
                   <button
@@ -698,7 +774,13 @@ export function BoardView(): ReactNode {
                   reader than the section's own label. */}
               <div className="board-lane-cards" onKeyDown={laneKeys(cards)}>
                 {lane.id === "draft" && !searching && (
-                  <button type="button" className="board-lane-new" onClick={newSession}>
+                  <button
+                    type="button"
+                    className="board-lane-new"
+                    aria-haspopup="dialog"
+                    title="New card (⌘N)"
+                    onClick={() => setComposing(true)}
+                  >
                     + New card
                   </button>
                 )}
@@ -745,7 +827,8 @@ export function BoardView(): ReactNode {
                       }
                       onDragLeave={() => setOverCard((id) => (id === card.id ? null : id))}
                       onDrop={lane.id === "queued" ? (event) => drop({ lane: "queued", card }, event) : undefined}
-                      onOpen={(id) => select(id)}
+                      onOpen={setOpenThread}
+                      openThread={thread}
                       onOpenPlan={
                         card.planId !== null && plans.plans.some((plan) => plan.id === card.planId)
                           ? () => setPlanning(card.planId)
@@ -756,6 +839,11 @@ export function BoardView(): ReactNode {
                       onCancel={() => attempt(() => api.cancelCard(card.id))}
                       onSave={(task) => attempt(() => api.patchCard(card.id, { task }))}
                       archived={shelf.has(card.id)}
+                      unread={
+                        board.display.unread !== "off" && !shelf.has(card.id) && isUnread(card)
+                          ? board.display.unread
+                          : null
+                      }
                       onArchive={
                         card.column === "done" && card.sessionId !== null
                           ? () => attempt(() => api.archive(card.sessionId!, !shelf.has(card.id)))
@@ -796,8 +884,11 @@ export function BoardView(): ReactNode {
       >
         drop here to cancel
       </div>
+      {composing && <NewCardSheet onClose={closeComposer} />}
     </main>
   );
+
+  return <BoardSplit board={view} threadId={thread} onClose={() => setOpenThread(null)} />;
 }
 
 /**
@@ -840,6 +931,8 @@ function Card(props: {
   onDragLeave(): void;
   onDrop?: ((event: DragEvent) => void) | undefined;
   onOpen(sessionId: string): void;
+  /** The session open beside the board, so the card that opened it can say so. */
+  openThread: string | null;
   /** Open the plan this card came from. Absent for cards no plan wrote. */
   onOpenPlan?: (() => void) | undefined;
   onStart(): void;
@@ -849,6 +942,8 @@ function Card(props: {
   onUnblock(name: string): void;
   /** Done cards only: its thread is on the archive shelf. */
   archived: boolean;
+  /** How to mark a Done card nobody has opened since it finished; null when it is read. */
+  unread: "highlight" | "dot" | null;
   /** Archive, or restore when `archived`. Absent where neither applies. */
   onArchive?: (() => void) | undefined;
 }): ReactNode {
@@ -856,6 +951,7 @@ function Card(props: {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(card.task);
   const openId = openTargetOf(card, session, evaluator);
+  const isOpen = openId !== null && openId === props.openThread;
   // Holding the card peeks at the same thread a click would open. Off while
   // editing (the press belongs to the textarea) and while this card is the
   // one being dragged.
@@ -917,13 +1013,14 @@ function Card(props: {
     <>
       <article
         data-card={card.id}
+        {...(isOpen ? { "aria-current": true } : {})}
         tabIndex={props.tabbable ? 0 : -1}
         onFocus={props.onFocus}
         className={`board-card board-card-${card.column}${props.dragging ? " is-dragging" : ""}${
           target === "block" ? " is-target" : ""
         }${target === "reorder" || target === "queue" ? " is-insert" : ""}${
           openId !== null ? " is-openable" : ""
-        }${props.archived ? " is-archived" : ""}`}
+        }${isOpen ? " is-open" : ""}${props.archived ? " is-archived" : ""}${props.unread !== null ? ` is-unread is-unread-${props.unread}` : ""}`}
         {...(openId !== null && !editing ? { onClick: openFromClick, onKeyDown: openFromKey } : {})}
         {...press.bind}
         draggable={draggable(card)}
@@ -949,6 +1046,9 @@ function Card(props: {
             <StatusGlyph status={status} />
           </span>
           <span className="board-card-title">{card.title}</span>
+          {props.unread !== null && (
+            <span className="board-card-unread" role="img" aria-label="unread" title="Not opened since it finished" />
+          )}
           <span className="board-card-end">
             <span className="board-card-time" title={new Date(card.updatedAt).toLocaleString()}>
               {fmtAgo(card.updatedAt)}

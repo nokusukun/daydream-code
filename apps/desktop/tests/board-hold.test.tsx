@@ -26,6 +26,7 @@ function card(column: BoardColumn, over: Partial<BoardCard> = {}): BoardCard {
     attentionReason: null,
     verdict: null,
     planId: null,
+    seenAt: "2026-09-24T00:00:00.000Z",
     createdAt: "2026-09-24T00:00:00.000Z",
     updatedAt: "2026-09-24T00:00:00.000Z",
     ...over,

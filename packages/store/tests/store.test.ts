@@ -284,6 +284,33 @@ describe("migrations", () => {
     );
   });
 
+  it("v11 counts cards already Done as read and leaves the rest unset", () => {
+    const sqlite = new Database(":memory:");
+    cleanups.push(() => sqlite.close());
+    for (const migration of migrations.slice(0, 10)) {
+      if (typeof migration === "string") sqlite.exec(migration);
+      else migration(sqlite);
+    }
+    sqlite.pragma("user_version = 10");
+    const insert = sqlite.prepare(
+      `INSERT INTO board_cards (id, project_id, lane, position, title, task,
+         request_json, created_at, updated_at)
+       VALUES (?, 'proj_1', ?, ?, 't', 't', '{}', '2026-01-01', ?)`,
+    );
+    insert.run("card_done", "done", 1, "2026-01-02");
+    insert.run("card_working", "working", 2, "2026-01-03");
+
+    runMigrations(sqlite);
+
+    const rows = sqlite
+      .prepare(`SELECT id, seen_at AS seenAt FROM board_cards ORDER BY position`)
+      .all();
+    expect(rows).toEqual([
+      { id: "card_done", seenAt: "2026-01-02" },
+      { id: "card_working", seenAt: null },
+    ]);
+  });
+
   it("backfills names and titles from task text", () => {
     const sqlite = openV1();
     insertV1Session(sqlite, "ses_a", "proj_1", "fix the failing tests", "2026-01-01");

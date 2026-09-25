@@ -25,7 +25,7 @@ vi.mock("../src/sessions.js", async () => ({
 }));
 vi.mock("../src/board.js", async () => ({
   ...(await vi.importActual<typeof import("../src/board.js")>("../src/board.js")),
-  useBoard: () => ({ enabled: true, cards: state.cards, error: null, refresh: vi.fn() }),
+  useBoard: () => ({ enabled: true, cards: state.cards, display: { unread: "highlight", peekMarksRead: true }, error: null, refresh: vi.fn() }),
 }));
 
 function session(id: string, archivedAt: string | null | undefined): SessionRecord {
@@ -47,6 +47,7 @@ function card(id: string, column: BoardColumn, sessionId: string | null): BoardC
     attentionReason: null,
     verdict: null,
     planId: null,
+    seenAt: "2026-09-24T00:00:00.000Z",
     createdAt: "2026-09-24T00:00:00.000Z",
     updatedAt: "2026-09-24T00:00:00.000Z",
   };

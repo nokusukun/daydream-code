@@ -1,28 +1,81 @@
-# Daydream Code
+<p align="center">
+  <img src="apps/desktop/icons/icon.svg" width="104" alt="">
+</p>
 
-**A local, multi-session coding harness with a shared project memory.**
+<h1 align="center">Daydream Code</h1>
 
-Daydream Code lets several coding-agent sessions work on the same project without losing the thread between them. Every project owns a durable master thread, every session journals its turns and tool calls, and completed work is summarized back into shared context for the sessions that follow.
+<p align="center">
+  <strong>Run several coding agents on one repo, with one memory they all share.</strong>
+</p>
 
-The repository contains two interfaces over the same core:
+<p align="center">
+  A desktop app and CLI for Claude and Codex. Every session reports back to a project-wide master thread,<br>
+  so the fifth agent you start already knows what the first four did.
+</p>
 
-- an Electron desktop app for day-to-day work across multiple projects; and
-- a CLI for dispatching sessions, inspecting history, and running the local API.
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#a-tour">Tour</a> ·
+  <a href="#cli">CLI</a> ·
+  <a href="#how-the-memory-model-works">How the memory works</a> ·
+  <a href="#security-model">Security</a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/board-light.png">
+  <img src="docs/images/board-dark.png" alt="The Daydream Code board: cards moving from Drafts through Queued, Evaluating and Working to Done, with one card blocked on a running session and two cards waiting on the user.">
+</picture>
+
+<p align="center"><sub>The board in the middle of a working day. The project is a demo texture painter; the tasks are made up.</sub></p>
 
 > [!IMPORTANT]
 > Daydream Code is currently a source-built project, not a packaged release. It is suitable for trusted local development environments. Review the [security model](#security-model) before running agents or exposing the API.
 
-## What it does
+## Why
 
-- **Runs concurrent coding sessions.** Dispatch focused work to Claude or Codex and continue a session later without rebuilding its context from scratch.
-- **Keeps a durable shared memory.** Sessions fork a project-level master thread and receive sibling updates at turn boundaries.
-- **Records a lossless journal.** Prompts, assistant turns, tool calls, results, questions, errors, and usage are stored in an append-only SQLite journal.
-- **Compacts without deleting history.** The live master context is reduced when it crosses its token budget, while full history and individual session journals remain available.
-- **Supports multiple projects.** The desktop app retains loaded project cores, shows activity across them, and switches projects without stopping their running sessions.
-- **Accepts images.** Paste, drop, or select PNG, JPEG, GIF, and WebP attachments.
-- **Coordinates agents and people.** Sessions can ask the user, ask or message sibling sessions, search prior work, and publish durable notes to the master thread.
-- **Exposes quick actions.** Save project commands as one-click actions; agents can suggest actions through the same tool surface.
-- **Composes from plugins.** Storage, drivers, tools, compaction, routes, session orchestration, and the HTTP transport are replaceable configuration entries.
+A coding agent is good at one task. Run four of them on the same repository and they start to trip over each other. None of them knows what the others are doing, two of them edit the same file, and each new session starts from nothing.
+
+Daydream Code gives every project a master thread. Sessions fork it when they start, report to it when they finish, and hear from their siblings between turns. Every prompt, tool call and result goes into an append-only journal, and nothing is ever deleted.
+
+## A tour
+
+### Queue work and let the board decide what can run
+
+![Queued, Evaluating, Working and Needs Attention lanes: one card blocked by a running session, one deferred behind another card](docs/images/board-lanes.png)
+
+With kanban mode on, every task becomes a card. Before a card starts, an evaluator session reads what is already running and decides whether the card can start now. If a running session is touching the same code, the card waits for that session. If an earlier card will conflict with it, it waits behind that card.
+
+Above, *Export UDIM tiles with Mari names* is blocked on the session fixing `udim.ts`. *Opacity channel* waits behind the export card, because both add rows to the exporter's channel table. When a blocker finishes, the waiting card is evaluated again without you touching it.
+
+Cards that need a person (a question, a failed run) collect in Needs Attention. Finished cards you haven't opened yet keep a dot until you do.
+
+### Watch any session, down to the tool call
+
+![A running session: its prompt, thinking, tool calls, a file it wrote, and an update from the master thread](docs/images/thread.png)
+
+A thread shows the agent's thinking, its replies, every tool call, and each file it wrote with a line count and a link into the code view. Master-thread updates appear inline, so you can watch a session find out that another card is waiting on it. You can send it a message while it runs to steer it.
+
+### Plan a feature, then queue it in one go
+
+![Plan mode: five numbered draft cards on the left, the planner's thread on the right](docs/images/plan.png)
+
+Hand plan mode a large prompt. A planner session reads the code and writes numbered draft cards in the order they can run. You can edit them, reorder them, or talk them over with the planner in the right-hand pane. Nothing starts until you press **Queue**.
+
+### One memory for the whole project
+
+![The master thread: dispatches, turn summaries, notes and board decisions in order](docs/images/master-thread.png)
+
+The master thread records every dispatch, turn summary, finished session and board decision. A new session forks it, so it starts out knowing what the project already knows. When the thread gets long it is compacted copy-on-write: a digest replaces the old prefix in the live context, and the full history stays on disk and readable.
+
+## Everything else
+
+- **Claude or Codex, per session.** Pick the driver, model and effort for each task, and continue any session later without rebuilding its context.
+- **A lossless journal.** Prompts, turns, tool calls, results, questions, errors and usage go into an append-only SQLite journal that agents can search.
+- **Several projects at once.** The desktop app keeps each project's core loaded, shows activity across all of them, and switches between them without stopping anything.
+- **Images.** Paste, drop or pick PNG, JPEG, GIF and WebP attachments.
+- **Agents that talk to each other and to you.** Sessions can ask you a question, ask or message a sibling, search earlier work, and pin notes to the master thread.
+- **Quick actions.** Save project commands as one-click buttons. Agents can suggest them through the same tools.
+- **Plugins all the way down.** Storage, drivers, tools, compaction, routes, session orchestration and the HTTP transport are each a config entry you can swap.
 
 ## Quick start
 
@@ -163,7 +216,7 @@ To make Codex the default for new sessions, select it in desktop settings. The p
 
 Kanban mode turns every new thread into a **card** that is evaluated before it runs. Cards move through Drafts, Queued, Evaluating, Working, Needs Attention and Done. The evaluator is a real session on the project's agent: it reads what the Working sessions are doing (their tasks, summaries and the files they have written), judges whether the new task can run alongside them, and reports through a `board_verdict` tool. A card can be **blocked** by one or more Working sessions and is re-evaluated once every blocker has finished; a follow-up on a Done card re-queues it.
 
-It is off by default. Turn it on for a project by enabling all four rows together, in the project layer or from the **kanban** section of desktop settings:
+It is off by default. Turn it on for a project by enabling the first four rows together, in the project layer or from the **kanban** section of desktop settings. The fifth, `board-planner`, adds plan mode, and the settings toggle turns it on with the rest:
 
 ```yaml
 - id: board
@@ -176,6 +229,8 @@ It is off by default. Turn it on for a project by enabling all four rows togethe
 - id: board-writeback
   disabled: false
 - id: board-routes
+  disabled: false
+- id: board-planner       # plan mode; the board runs without it
   disabled: false
 ```
 

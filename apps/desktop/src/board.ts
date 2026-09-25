@@ -7,21 +7,34 @@
  * normal state and not an error; anything else is.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, type ApiClient, type BoardCard, type BoardColumn, type BoardPlan } from "./api.js";
+import {
+  ApiError,
+  type ApiClient,
+  type BoardCard,
+  type BoardColumn,
+  type BoardDisplay,
+  type BoardPlan,
+} from "./api.js";
 import { useHarness } from "./harness.js";
 
 export interface BoardState {
   /** Null until the first answer; false when the project is not in kanban mode. */
   enabled: boolean | null;
   cards: BoardCard[];
+  /** The board routes row's display settings. */
+  display: BoardDisplay;
   error: string | null;
   refresh(): void;
 }
+
+/** What `board-routes` defaults to, for a core too old to send its settings. */
+export const DEFAULT_DISPLAY: BoardDisplay = { unread: "highlight", peekMarksRead: true };
 
 export function useBoard(): BoardState {
   const { api, subscribe, resyncTick } = useHarness();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [cards, setCards] = useState<BoardCard[]>([]);
+  const [display, setDisplay] = useState<BoardDisplay>(DEFAULT_DISPLAY);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
@@ -34,6 +47,7 @@ export function useBoard(): BoardState {
         setError(null);
         setEnabled(board.enabled);
         setCards(board.cards);
+        setDisplay(board.display ?? DEFAULT_DISPLAY);
       })
       .catch((cause: unknown) => {
         if (cancelled) return;
@@ -53,6 +67,10 @@ export function useBoard(): BoardState {
   useEffect(
     () =>
       subscribe((frame) => {
+        if (frame.kind === "board-display") {
+          setDisplay(frame.display);
+          return;
+        }
         if (frame.kind === "board-removed") {
           setCards((prev) => prev.filter((card) => card.id !== frame.id));
           return;
@@ -71,7 +89,10 @@ export function useBoard(): BoardState {
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
-  return useMemo(() => ({ enabled, cards, error, refresh }), [enabled, cards, error, refresh]);
+  return useMemo(
+    () => ({ enabled, cards, display, error, refresh }),
+    [enabled, cards, display, error, refresh],
+  );
 }
 
 export interface PlansState {
@@ -186,6 +207,15 @@ export const LANES: ReadonlyArray<{ id: string; label: string; columns: readonly
   { id: "attention", label: "Needs Attention", columns: ["attention"] },
   { id: "done", label: "Done", columns: ["done"] },
 ];
+
+/**
+ * A Done card whose result nobody has looked at yet. The same rule as the
+ * board package's `isUnread`, restated because the renderer takes only types
+ * from capability packages. Their runtime would bring the kernel along.
+ */
+export function isUnread(card: Pick<BoardCard, "column" | "seenAt">): boolean {
+  return card.column === "done" && card.seenAt === null;
+}
 
 export function laneOf(card: BoardCard): string {
   return LANES.find((lane) => lane.columns.includes(card.column))?.id ?? "queued";

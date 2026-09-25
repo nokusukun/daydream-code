@@ -493,6 +493,29 @@ describe("kanban mode", () => {
     expect(ctx.board.get(b.id)!.verdict?.decision).toBe("proceed");
   });
 
+  it("submitMany queues exactly the drafts it is given, in their order, and skips the rest", async () => {
+    const { ctx, hang } = await bootProject({ work: [{ tool: "hang" }], evaluator: [{ tool: "hang" }] });
+    const a = ctx.board.create({ task: "first", request: { driver: "mock" }, draft: true });
+    const b = ctx.board.create({ task: "second", request: { driver: "mock" }, draft: true });
+    const c = ctx.board.create({ task: "third", request: { driver: "mock" }, draft: true });
+    const left = ctx.board.create({ task: "not asked for", request: { driver: "mock" }, draft: true });
+    const gone = ctx.board.create({ task: "cancelled", request: { driver: "mock" }, draft: true });
+    ctx.board.cancel(gone.id);
+
+    // Out of order, with a duplicate, a cancelled card and an unknown id:
+    // the caller is queuing what it saw, and those are already dealt with.
+    const moved = ctx.board.submitMany([c.id, a.id, gone.id, "card_nope", b.id, a.id]);
+    expect(moved.map((card) => card.id)).toEqual([a.id, b.id, c.id]);
+    for (const id of [a.id, b.id, c.id]) expect(ctx.board.get(id)!.column).not.toBe("draft");
+    expect(ctx.board.get(left.id)!.column).toBe("draft");
+    // Positions are kept, so the queue runs them in the order they were written.
+    const positions = [a, b, c].map((card) => ctx.board.get(card.id)!.position);
+    expect([...positions].sort((x, y) => x - y)).toEqual(positions);
+    // Nothing left to move is a no-op, not an error.
+    expect(ctx.board.submitMany([a.id, b.id])).toEqual([]);
+    hang.release();
+  });
+
   it("a follow-up on a done card re-queues it as new work and the session continues once cleared", async () => {
     const { ctx } = await bootProject({
       work: [{ turn: "round one" }],
@@ -516,6 +539,46 @@ describe("kanban mode", () => {
     // The same thread ran twice: two session_ended rows on one journal.
     expect(ctx.journal.read({ sessionId, types: ["session_ended"] })).toHaveLength(2);
     expect(masterNotes(ctx).some((n) => n.includes("re-queued with a follow-up"))).toBe(true);
+  });
+
+  it("a finished card is unread until someone looks at it, and a follow-up that finishes is unread again", async () => {
+    const { ctx } = await bootProject({
+      work: [{ turn: "round one" }],
+      evaluator: [verdict({ decision: "proceed", reason: "clear" })],
+    });
+    const card = await queue(ctx, "build the widget");
+    const done = await cardIn(ctx, card.id, "done");
+    expect(done.seenAt).toBeNull();
+
+    const moved: BoardCard[] = [];
+    const seen: BoardCard[] = [];
+    ctx.on("board/moved", (c: BoardCard) => moved.push(c));
+    ctx.on("board/seen", (c: BoardCard) => seen.push(c));
+    const notes = masterNotes(ctx).length;
+
+    const read = ctx.board.markSeen(card.id);
+    expect(read.seenAt).not.toBeNull();
+    // "finished 2h ago" must not turn into "just now" because someone read it.
+    expect(read.updatedAt).toBe(done.updatedAt);
+    expect(seen.map((c) => c.id)).toEqual([card.id]);
+    // Not a move: the master thread would announce the card as done twice.
+    expect(moved).toEqual([]);
+    expect(masterNotes(ctx)).toHaveLength(notes);
+
+    // Idempotent: a second report neither restamps nor re-announces.
+    expect(ctx.board.markSeen(card.id).seenAt).toBe(read.seenAt);
+    expect(seen).toHaveLength(1);
+
+    await expect(ctx.sessions.continueSession(done.sessionId!, "now polish it")).rejects.toBeInstanceOf(
+      DeferredError,
+    );
+    // A report racing the follow-up lands on a card that is no longer Done.
+    const requeued = ctx.board.markSeen(card.id);
+    expect(requeued.column).not.toBe("done");
+    expect(seen).toHaveLength(1);
+
+    const again = await cardIn(ctx, card.id, "done");
+    expect(again.seenAt).toBeNull();
   });
 
   it("a session blocked on a question for the user is Needs Attention until answered", async () => {
@@ -675,9 +738,17 @@ describe("kanban mode", () => {
 
     const created = (await call("POST", "/api/board/cards", { task: "over http", draft: true })) as BoardCard;
     expect(created.column).toBe("draft");
-    const board = (await call("GET", "/api/board")) as { enabled: boolean; cards: BoardCard[] };
+    const board = (await call("GET", "/api/board")) as {
+      enabled: boolean;
+      cards: BoardCard[];
+      display: unknown;
+    };
     expect(board.enabled).toBe(true);
     expect(board.cards.map((c) => c.id)).toContain(created.id);
+    expect(board.display).toEqual({ unread: "highlight", peekMarksRead: true });
+    // Reading a card that has not finished changes nothing.
+    const unchanged = (await call("POST", `/api/board/cards/${created.id}/seen`)) as BoardCard;
+    expect(unchanged).toMatchObject({ id: created.id, column: "draft", seenAt: null });
 
     let status: number | undefined;
     let payload: unknown;

@@ -127,8 +127,8 @@ function entryLine(entry: ThreadEntry, labels: Map<string, SessionLabel>): strin
 }
 
 /**
- * Consumer plugin: live sibling awareness. At every turn boundary the runner
- * emits session/collect-injections; this plugin contributes a
+ * Consumer plugin: live sibling awareness. At every turn that happens anyway —
+ * a run opening, or queued input at a boundary — this plugin contributes a
  * `[master thread update]` block with everything on master past the session's
  * lastSeenMasterSeq cursor, then advances the cursor. Own entries, entries
  * that only echo this session back to itself, and session_messages addressed
@@ -141,7 +141,20 @@ const masterInject = {
   apply(ctx: Context) {
     ctx.on(
       "session/collect-injections",
-      (session: SessionRecord, blocks: string[], causes?: Set<SessionId>) => {
+      (
+        session: SessionRecord,
+        blocks: string[],
+        causes: Set<SessionId>,
+        withInput: boolean,
+      ) => {
+        // Sibling news never starts a turn by itself. When every finished
+        // session woke to read it, each reply ("nothing for me here") was more
+        // news for the others, and with a few sessions live the board spent
+        // most of its turns that way. Echo suppression only breaks chains
+        // that pass back through a session; this stops them all. The cursor
+        // is left alone, so the backlog rides the next turn that happens
+        // anyway.
+        if (!withInput) return;
         const master = ctx.threads.ensureMaster();
         const maxSeq = ctx.threads.maxSeq(master.id);
         if (maxSeq <= session.lastSeenMasterSeq) return;
@@ -167,7 +180,7 @@ const masterInject = {
 
         if (fresh.length === 0) return;
         for (const entry of fresh) {
-          for (const cause of causesOf(entry)) causes?.add(cause);
+          for (const cause of causesOf(entry)) causes.add(cause);
         }
         const shown = fresh.slice(-MAX_ENTRIES);
         const dropped = fresh.length - shown.length;

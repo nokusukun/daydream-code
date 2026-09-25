@@ -5,6 +5,7 @@
  */
 import type { JournalEvent, SessionRecord, ThreadEntry } from "@daydream-code/shared";
 import type { BoardCard, BoardPlan } from "@daydream-code/board";
+import type { BoardDisplay } from "@daydream-code/board/routes";
 
 export type StreamFrame =
   | { kind: "hello"; lastEventId: number }
@@ -15,6 +16,8 @@ export type StreamFrame =
   /** Published by the board routes; absent entirely when kanban mode is off. */
   | { kind: "board"; card: BoardCard }
   | { kind: "board-removed"; id: string }
+  /** Sent each time the board routes row mounts, so a settings change reaches open windows. */
+  | { kind: "board-display"; display: BoardDisplay }
   /** Published by the planner row, when a plan's planner is linked. */
   | { kind: "board-plan"; plan: BoardPlan };
 

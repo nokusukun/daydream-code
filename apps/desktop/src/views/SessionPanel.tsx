@@ -22,6 +22,7 @@ import {
 import type { NextMessage } from "@daydream-code/session";
 import type { EditableMessage } from "@daydream-code/session/transcript";
 import { useHarness } from "../harness.js";
+import { useShownThread } from "../board-read.js";
 import { pendingQuestionFrom } from "../pending-question.js";
 import { QuestionPrompt } from "./QuestionPrompt.js";
 import { PanelHead, type PanelCloseAction } from "./PanelHead.js";
@@ -50,7 +51,11 @@ import { openTextContextMenu } from "../text-context.js";
 import { useBoard } from "../board.js";
 import { boardHold } from "../board-hold.js";
 
-export function SessionPanel(props: { id: string; close?: PanelCloseAction }): ReactNode {
+export function SessionPanel(props: {
+  id: string;
+  close?: PanelCloseAction;
+  expand?: PanelCloseAction;
+}): ReactNode {
   const { id } = props;
   const { api, subscribe, resyncTick, view, connection } = useHarness();
   const { status } = useWorkspace();
@@ -61,6 +66,9 @@ export function SessionPanel(props: { id: string; close?: PanelCloseAction }): R
     null,
   );
   const [error, setError] = useState<string | null>(null);
+  // Counted from the moment the transcript is drawn, not the skeleton: a
+  // finished card is read when its result was on screen.
+  useShownThread(events === null ? null : id, "open");
 
   useEffect(() => {
     let cancelled = false;
@@ -186,6 +194,7 @@ export function SessionPanel(props: { id: string; close?: PanelCloseAction }): R
           session={session}
           reportedModel={reportedModel}
           {...(props.close === undefined ? {} : { close: props.close })}
+          {...(props.expand === undefined ? {} : { expand: props.expand })}
         />
         {error !== null && (
           <div className="error-bar">
@@ -360,6 +369,7 @@ function Head(props: {
   /** Model the driver actually ran, when the session pinned none. */
   reportedModel: string | null;
   close?: PanelCloseAction;
+  expand?: PanelCloseAction;
 }): ReactNode {
   const { modelLabel } = useHarness();
   const { session } = props;
@@ -385,6 +395,7 @@ function Head(props: {
     return (
       <PanelHead
         {...(props.close === undefined ? {} : { close: props.close })}
+        {...(props.expand === undefined ? {} : { expand: props.expand })}
         title={
           <span
             className="skeleton skeleton-row"
@@ -411,6 +422,7 @@ function Head(props: {
   return (
     <PanelHead
       {...(props.close === undefined ? {} : { close: props.close })}
+      {...(props.expand === undefined ? {} : { expand: props.expand })}
       title={
         <>
           <StatusGlyph status={session.status} />

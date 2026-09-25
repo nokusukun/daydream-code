@@ -82,6 +82,9 @@ const boardWriteback = {
     });
 
     const told = new Set<string>();
+    // Unlike master-thread news, this may wake a finished blocker on its own:
+    // the waiting cards need its closing summary, and `told` caps it at once
+    // per (card, blocker).
     ctx.on("session/collect-injections", (session: SessionRecord, blocks: string[]) => {
       const waiting = ctx.board
         .list()
