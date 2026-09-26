@@ -37,6 +37,12 @@ const option = (name) => {
 const publish = option("publish") ?? "never";
 const arch = option("arch") ?? process.arch;
 
+// The release workflow passes signing secrets unconditionally, so an unset
+// secret arrives as "" — which electron-builder reads as a certificate path.
+for (const name of ["CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"]) {
+  if (process.env[name] === "") delete process.env[name];
+}
+
 function run(command, commandArgs, cwd) {
   console.log(`[package] ${command} ${commandArgs.join(" ")}`);
   const result = spawnSync(command, commandArgs, {
