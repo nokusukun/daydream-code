@@ -1,0 +1,75 @@
+# Push a version tag (`git tag v0.2.0 && git push origin v0.2.0`) to build the
+# desktop app and publish it as a GitHub release. Installed copies poll the
+# latest release and update themselves (apps/desktop/electron/updater.ts).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # One draft up front, so the parallel builds upload into the same release
+  # instead of racing to create it.
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --draft --title "$TAG" --generate-notes --verify-tag
+
+  build:
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest # arm64
+          - os: windows-latest # x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The tag is the version: electron-builder names the artifacts, and the
+      # updater compares against, whatever package.json says.
+      - run: npm pkg set "version=${GITHUB_REF_NAME#v}"
+        working-directory: apps/desktop
+      - run: pnpm exec tsc -b
+      - run: pnpm -C apps/desktop build
+      - run: node scripts/package.mjs --publish always
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Optional. Without these the macOS build is signed ad hoc; see
+          # README "Releases".
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --draft=false --latest

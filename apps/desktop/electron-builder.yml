@@ -1,0 +1,47 @@
+# Consumed by scripts/package.mjs, which runs electron-builder against the
+# `pnpm deploy` staging dir — paths here are relative to that dir.
+appId: ai.daydream.code
+productName: Daydream Code
+copyright: Copyright © 2026 Daydream Code
+
+files:
+  - dist/**
+  - dist-electron/**
+  - "!dist-electron/**/*.{d.ts,d.ts.map,tsbuildinfo}"
+  - icons/icon.png
+  - package.json
+  - node_modules/**
+
+# The harness imports plugins by bare specifier at runtime and the agent SDKs
+# spawn their own platform binaries; both are simpler to keep working from a
+# plain directory than from inside an asar archive.
+asar: false
+npmRebuild: false
+
+mac:
+  target:
+    - dmg
+    - zip # the zip is what the in-app updater downloads
+  icon: icons/icon.icns
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+dmg:
+  artifactName: Daydream-Code-${version}-${arch}.${ext}
+
+win:
+  target: nsis
+  icon: icons/icon.png
+  artifactName: Daydream-Code-Setup-${version}.${ext}
+
+nsis:
+  oneClick: true
+  perMachine: false
+
+publish:
+  provider: github
+  owner: nokusukun
+  repo: daydream-code
+  releaseType: draft

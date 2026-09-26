@@ -29,6 +29,8 @@ for (const [name, dependencies] of Object.entries(defs)) {
     type: "module",
     main: "./dist/index.js",
     types: "./dist/index.d.ts",
+    // Packaging (pnpm deploy) honours .gitignore, which excludes dist.
+    files: ["dist"],
     exports: {
       ".": { types: "./dist/index.d.ts", default: "./dist/index.js" },
       "./*": { types: "./dist/*.d.ts", default: "./dist/*.js" },

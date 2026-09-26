@@ -29,7 +29,7 @@
 <p align="center"><sub>The board in the middle of a working day. The project is a demo texture painter; the tasks are made up.</sub></p>
 
 > [!IMPORTANT]
-> Daydream Code is currently a source-built project, not a packaged release. It is suitable for trusted local development environments. Review the [security model](#security-model) before running agents or exposing the API.
+> Daydream Code is early software, suitable for trusted local development environments. Review the [security model](#security-model) before running agents or exposing the API.
 
 ## Why
 
@@ -79,7 +79,19 @@ The master thread records every dispatch, turn summary, finished session and boa
 
 ## Quick start
 
-### Prerequisites
+### Download
+
+Installers for macOS (Apple silicon) and Windows are on the [releases page](https://github.com/nokusukun/daydream-code/releases/latest). Installed copies check for new releases in the background and offer to restart into them; on macOS there is also **Daydream Code → Check for Updates…**.
+
+The macOS build is not notarized yet, so Gatekeeper blocks the first launch and reports the app as damaged. After moving it to Applications, clear the quarantine flag once:
+
+```bash
+xattr -cr "/Applications/Daydream Code.app"
+```
+
+Updates installed by the app itself don't need this step.
+
+### Prerequisites (building from source)
 
 - [Node.js](https://nodejs.org/) 22 or newer
 - [pnpm](https://pnpm.io/) 9 or newer
@@ -122,7 +134,22 @@ pnpm -C apps/desktop build
 pnpm -C apps/desktop start
 ```
 
-This produces and runs an unpackaged local build. Installer, signing, notarization, and release automation are not part of the repository yet.
+This produces and runs an unpackaged local build. To produce the installers instead:
+
+```bash
+pnpm -C apps/desktop package   # writes apps/desktop/release/
+```
+
+### Releases
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`. It builds the macOS (arm64) and Windows (x64) installers, uploads them to a GitHub release for that tag, and publishes the release. The tag sets the version, so `apps/desktop/package.json` doesn't need a bump:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The macOS build is signed ad hoc unless the repository has the `MAC_CERTIFICATE_P12_BASE64` and `MAC_CERTIFICATE_PASSWORD` secrets (a Developer ID Application certificate), plus `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` for notarization. Squirrel.Mac only installs updates between builds that share a Developer ID signature, so the app replaces its own bundle on macOS rather than going through it.
 
 ## CLI
 

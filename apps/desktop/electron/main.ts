@@ -44,6 +44,7 @@ import {
   type QuickActionResult,
 } from "./quick-actions.js";
 import { createScreenKeeper } from "./power-save.js";
+import { applyPendingUpdateOnExit, checkForUpdates, startAutoUpdates } from "./updater.js";
 import {
   TerminalSessions,
   parseOpenRequest,
@@ -888,10 +889,9 @@ function registerIpc(): void {
  * Temporary app mark: the facet the master thread already wears, on the same
  * tinted-navy ground the window surfaces are mixed from.
  *
- * Set at runtime rather than baked into a bundle because there is no packaging
- * step yet — unpackaged Electron shows its own icon in the Dock otherwise, and
- * `icon:` on BrowserWindow is a no-op on macOS. `icons/icon.icns` is here for
- * whenever the build config lands.
+ * Packaged builds get `icons/icon.icns` from electron-builder; this covers dev
+ * runs, where unpackaged Electron shows its own icon in the Dock otherwise and
+ * `icon:` on BrowserWindow is a no-op on macOS.
  */
 function applyAppIcon(): void {
   const png = join(appDir, "icons", "icon.png");
@@ -915,6 +915,7 @@ function installApplicationMenu(): void {
         label: APP_NAME,
         submenu: [
           { role: "about" },
+          { label: "Check for Updates…", click: () => void checkForUpdates(true) },
           { type: "separator" },
           { role: "services" },
           { type: "separator" },
@@ -1127,6 +1128,7 @@ if (smokeRoot !== undefined && smokeRoot.length > 0) {
     installApplicationMenu();
     applyAppIcon();
     createWindow();
+    startAutoUpdates();
     electronApp.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -1139,8 +1141,15 @@ electronApp.on("window-all-closed", () => {
 
 let quitting = false;
 electronApp.on("will-quit", (event) => {
-  if (quitting || projects.size === 0) return;
+  if (quitting) return;
+  if (projects.size === 0) {
+    applyPendingUpdateOnExit();
+    return;
+  }
   event.preventDefault();
   quitting = true;
-  void disposeProjects().finally(() => electronApp.exit(0));
+  void disposeProjects().finally(() => {
+    applyPendingUpdateOnExit();
+    electronApp.exit(0);
+  });
 });
