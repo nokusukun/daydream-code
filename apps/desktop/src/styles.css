@@ -52,6 +52,9 @@
   --r-md: 8px;
   --r-lg: 12px;
   --r-xl: 18px;
+  /* Menus sit between control and pane: 12px on a 320px menu reads as a web
+     panel, 8px as a tooltip. */
+  --r-menu: 10px;
 
   /* Motion ---------------------------------------------------------------- */
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
@@ -80,6 +83,21 @@
     0 1px 2px -1px var(--glass-shade);
   --glass-control-shadow-hi: inset 0 1px 0 var(--glass-specular),
     0 2px 6px -2px var(--glass-shade);
+
+  /* The edge and lift of every floating surface, named once. Each surface
+     copied its own recipe and no two lifts matched. Three heights, by what
+     the surface rests on: a pane stands on the window, a slab floats over the
+     canvas, a chip sits in it. `--pane-edge` is a rim that catches light, so
+     it only reads against something darker; a field you type into keeps
+     `--border`, or in the light theme it vanishes into the pane it sits in. */
+  --pane-edge: color-mix(in oklab, var(--glass-edge) 72%, var(--border));
+  --pane-rim: inset 0 1px 0 var(--glass-specular),
+    inset 0 -1px 0 var(--glass-specular-soft);
+  --lift-pane: 0 18px 48px -24px var(--glass-shade),
+    0 5px 16px -10px var(--glass-shade);
+  --lift-slab: 0 12px 32px -14px var(--glass-shade),
+    0 3px 8px -5px var(--glass-shade);
+  --lift-chip: 0 8px 24px -14px var(--glass-shade);
 
   --toolbar-h: 50px;
   /*
@@ -747,12 +765,10 @@ pre {
    a box around the window rather than around a surface. */
 .sidebar {
   overflow: hidden;
-  border: 1px solid color-mix(in oklab, var(--glass-edge) 72%, var(--border));
+  border: 1px solid var(--pane-edge);
   border-radius: var(--r-xl);
   box-shadow: inset 0 1px 0 var(--glass-specular),
-    inset 1px 0 0 var(--glass-specular-soft),
-    0 18px 48px -24px var(--glass-shade),
-    0 5px 16px -10px var(--glass-shade);
+    inset 1px 0 0 var(--glass-specular-soft), var(--lift-pane);
 }
 
 .panel {
@@ -762,8 +778,13 @@ pre {
   box-shadow: none;
 }
 
+/* `.glass` brings a blur, but the fill here is opaque, so there is nothing
+   for it to show: the rail paid for a compositing layer it never used. A
+   blur that separates no layer does not exist. */
 .sidebar {
   background: var(--panel-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /*
@@ -1213,8 +1234,7 @@ pre {
   border: 1px solid color-mix(in oklab, var(--info) 34%, var(--glass-edge));
   border-radius: 999px;
   background: var(--panel-surface);
-  box-shadow: inset 0 1px 0 var(--glass-specular),
-    0 8px 24px -14px var(--glass-shade);
+  box-shadow: inset 0 1px 0 var(--glass-specular), var(--lift-chip);
   animation: pop-in var(--t-base) var(--ease-out-quart) both;
 }
 
@@ -1277,8 +1297,7 @@ pre {
   border: 1px solid var(--glass-edge);
   border-radius: 999px;
   background: var(--panel-surface);
-  box-shadow: inset 0 1px 0 var(--glass-specular),
-    0 8px 24px -14px var(--glass-shade);
+  box-shadow: inset 0 1px 0 var(--glass-specular), var(--lift-chip);
   animation: pop-in var(--t-base) var(--ease-out-quart) both;
 }
 
@@ -1330,9 +1349,7 @@ pre {
   border: 1px solid var(--border);
   background: var(--panel-surface);
   position: relative;
-  box-shadow: inset 0 1px 0 var(--glass-specular),
-    inset 0 -1px 0 var(--glass-specular-soft),
-    0 12px 32px -12px var(--glass-shade), 0 2px 8px -4px var(--glass-shade);
+  box-shadow: var(--pane-rim), var(--lift-slab);
   transition: background var(--t-fast) var(--ease-out-quart),
     border-color var(--t-fast) var(--ease-out-quart),
     box-shadow var(--t-fast) var(--ease-out-quart);
@@ -1871,16 +1888,13 @@ button {
   height: 46px;
   padding: 0 var(--s3) 0 var(--s5);
   overflow: hidden;
-  border: 1px solid color-mix(in oklab, var(--glass-edge) 72%, var(--border));
+  border: 1px solid var(--pane-edge);
   border-radius: var(--r-xl);
   background: var(--panel-surface);
   min-width: 0;
   position: relative;
   z-index: 4;
-  box-shadow: inset 0 1px 0 var(--glass-specular),
-    inset 0 -1px 0 var(--glass-specular-soft),
-    0 12px 30px -22px var(--glass-shade),
-    0 4px 10px -7px var(--glass-shade);
+  box-shadow: var(--pane-rim), var(--lift-slab);
 }
 
 .bar-title {
@@ -3277,9 +3291,10 @@ table.fibers td:first-child {
     --tb-control: var(--surface-0);
     --tb-control-hi: var(--surface-2);
   }
-  /* The question card and the fibers header hardcode their own blur rather than
-     taking `--glass-control-filter`, so neutralising the token is not enough to
-     reach them. */
+  /* The fibers header hardcodes its own blur rather than taking
+     `--glass-control-filter`, so neutralising the token is not enough to reach
+     it. The question card is opaque already; it is listed so high contrast
+     paints it on the same surface as the composer it stands in for. */
   .glass,
   .glass-strong,
   .composer-field,
@@ -3950,15 +3965,15 @@ table.fibers td:first-child {
   padding: 0 var(--s6) var(--s6);
 }
 
+/* The card takes the composer's slot, so it takes the composer's material:
+   a solid slab. It was an 82% tint with a 40px blur, but over the canvas that
+   blur has nothing to sample (see `.panel`), so the transcript showed through
+   the question sharp, at 18%, exactly where the user has to read. */
 .question-card {
   border-radius: var(--r-xl);
   border: 1px solid color-mix(in oklab, var(--warn) 34%, var(--border));
-  background: var(--glass-tint-strong);
-  backdrop-filter: blur(40px) saturate(190%) brightness(1.05);
-  -webkit-backdrop-filter: blur(40px) saturate(190%) brightness(1.05);
-  box-shadow: inset 0 1px 0 var(--glass-specular),
-    inset 0 -1px 0 var(--glass-specular-soft),
-    0 12px 32px -12px var(--glass-shade), 0 2px 8px -4px var(--glass-shade);
+  background: var(--panel-surface);
+  box-shadow: var(--pane-rim), var(--lift-slab);
   padding: var(--s4) var(--s5) var(--s4);
   display: flex;
   flex-direction: column;
@@ -4115,14 +4130,6 @@ table.fibers td:first-child {
   }
 }
 
-@media (prefers-reduced-transparency: reduce) {
-  .question-card {
-    background: var(--bg-2, var(--glass-tint-strong));
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-}
-
 /* ==========================================================================
    Project switcher
    ========================================================================== */
@@ -4157,8 +4164,7 @@ table.fibers td:first-child {
   display: flex;
   flex-direction: column;
   background: var(--surface-1);
-  /* Menu radius, not card radius: 12px on a 320px menu reads as a web panel. */
-  border-radius: 10px;
+  border-radius: var(--r-menu);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-pop), inset 0 1px 0 var(--glass-specular);
   overflow: hidden;
@@ -5377,7 +5383,7 @@ table.fibers td:first-child {
   z-index: 60;
   min-width: 260px;
   padding: var(--s1);
-  border-radius: 10px;
+  border-radius: var(--r-menu);
   border: 1px solid var(--border);
   background: var(--surface-1);
   box-shadow: var(--shadow-pop), inset 0 1px 0 var(--glass-specular);
@@ -7653,12 +7659,10 @@ table.fibers td:first-child {
   position: relative;
   overflow: hidden;
   background: var(--panel-surface);
-  border: 1px solid color-mix(in oklab, var(--glass-edge) 72%, var(--border));
+  border: 1px solid var(--pane-edge);
   border-radius: var(--r-xl);
   box-shadow: inset 0 1px 0 var(--glass-specular),
-    inset 1px 0 0 var(--glass-specular-soft),
-    0 18px 48px -24px var(--glass-shade),
-    0 5px 16px -10px var(--glass-shade);
+    inset 1px 0 0 var(--glass-specular-soft), var(--lift-pane);
 }
 
 .term-panel > * {
@@ -7947,12 +7951,17 @@ table.fibers td:first-child {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid color-mix(in oklab, var(--glass-edge) 72%, var(--border));
+  border: 1px solid var(--pane-edge);
   border-radius: var(--r-xl);
+  /* "Like the rail" includes its fill. `.glass` left these at a 62% tint
+     while the rail beside them is solid, so two panes of one kind read as two
+     materials, and the blur under the tint had only the transparent window
+     to sample. */
+  background: var(--panel-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   box-shadow: inset 0 1px 0 var(--glass-specular),
-    inset 1px 0 0 var(--glass-specular-soft),
-    0 18px 48px -24px var(--glass-shade),
-    0 5px 16px -10px var(--glass-shade);
+    inset 1px 0 0 var(--glass-specular-soft), var(--lift-pane);
 }
 
 .thread-pane > .panel {
@@ -7964,6 +7973,17 @@ table.fibers td:first-child {
    second time. */
 .thread-pane .panel-top {
   padding-right: 0;
+}
+
+/* Inside a pane the bar is the pane's own head, not a second slab. On the
+   open canvas it floats with its own edge and lift; here that drew a rounded
+   card one pixel inside a rounded pane, two edges and two rims stacked along
+   the top. It keeps its fill, because the transcript scrolls under it. */
+.thread-pane .panel-bar {
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* In split view, dismissal belongs to the same header as the thread identity
@@ -8038,12 +8058,10 @@ table.fibers td:first-child {
   flex-direction: column;
   overflow: hidden;
   background: var(--panel-surface);
-  border: 1px solid color-mix(in oklab, var(--glass-edge) 72%, var(--border));
+  border: 1px solid var(--pane-edge);
   border-radius: var(--r-xl);
   box-shadow: inset 0 1px 0 var(--glass-specular),
-    inset 1px 0 0 var(--glass-specular-soft),
-    0 18px 48px -24px var(--glass-shade),
-    0 5px 16px -10px var(--glass-shade);
+    inset 1px 0 0 var(--glass-specular-soft), var(--lift-pane);
 }
 
 /* The pane owns the glass edge. Its content keeps its native rows but sheds
@@ -9037,9 +9055,7 @@ table.fibers td:first-child {
   border-radius: var(--r-xl);
   border: 1px solid var(--border);
   background: var(--panel-surface);
-  box-shadow: inset 0 1px 0 var(--glass-specular),
-    inset 0 -1px 0 var(--glass-specular-soft),
-    0 12px 32px -12px var(--glass-shade), 0 2px 8px -4px var(--glass-shade);
+  box-shadow: var(--pane-rim), var(--lift-slab);
   transition: background var(--t-fast) var(--ease-out-quart),
     border-color var(--t-fast) var(--ease-out-quart),
     box-shadow var(--t-fast) var(--ease-out-quart);

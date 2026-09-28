@@ -51,6 +51,7 @@ The raw OS accent is tuned for macOS, not for WCAG (white on the default blue is
 | Text | `--text-1` (primary) / `--text-2` (secondary) / `--text-3` (tertiary) |
 | Lines | `--hairline` (dividers), `--border` (controls) |
 | Glass | `--glass-tint`, `--glass-tint-strong`, `--glass-specular`, `--glass-edge`, `--glass-shade` |
+| Elevation | `--pane-edge`, `--pane-rim`, `--lift-pane` / `--lift-slab` / `--lift-chip` |
 | Semantic | `--ok`, `--warn`, `--bad`, `--info` |
 
 Three theme blocks define them: `:root, :root[data-theme="dark"]`,
@@ -166,6 +167,16 @@ renderer gets `.no-vibrancy` and paints opaque surfaces instead.
   keep contrast predictable, `backdrop-filter: blur() saturate() brightness()`,
   and an inset specular top edge. The sidebar adds an edge-lensing hairline on
   its trailing edge, which is what sells it as a pane rather than a blur.
+- **Floating surfaces share one elevation vocabulary.** A pane (rail, split
+  thread, terminal, workspace view) stands on the window: `--pane-edge`, an
+  inset top and leading specular, `--lift-pane`. A slab (panel bar, composer,
+  question card, plan prompt) floats over the canvas: `--pane-rim`,
+  `--lift-slab`. A chip (the notice pills) sits in it: `--lift-chip`. Panes and
+  slabs paint `--panel-surface` opaque, because a blur over the transparent
+  canvas has nothing to sample in Electron; glass there is the edge, rim and
+  lift, not a tint. Fields you type into keep `--border`: the pane edge is a
+  rim light and vanishes against a light pane. Inside a split pane the panel
+  bar drops its own edge and becomes the pane's head, with a hairline below.
 - **Controls are the same material.** `--glass-control` / `--glass-control-hi`
   give buttons, the palette trigger, and the model trigger a translucent tint,
   a real blur, a specular top edge and a contact shadow. They are pills, not
