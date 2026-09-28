@@ -924,7 +924,7 @@ export function DispatchComposer(props: {
    */
   onCreated?(): void;
 }): ReactNode {
-  const { api, select, drafts, setMode } = useHarness();
+  const { api, select, drafts, setMode, connection } = useHarness();
   const { enabled: kanban } = useBoard();
   // The draft outlives this view, which disappears the moment a run is
   // clicked; the text is still here when you come back.
@@ -1009,6 +1009,7 @@ export function DispatchComposer(props: {
         <>
           <ModelSelector value={choice} onChange={setChoice} disabled={busy} />
           <span className="composer-spacer" />
+          <ProjectTarget name={connection.name} rootPath={connection.rootPath} />
           {kanban === true && (
             <button
               type="button"
@@ -1030,6 +1031,38 @@ export function DispatchComposer(props: {
         </>
       }
     />
+  );
+}
+
+/**
+ * Which project the task is about to land in, said where the eye already is
+ * when it commits: beside the send button. The toolbar names the project too,
+ * but the new-card sheet sits over it behind a scrim, and cards kept ending up
+ * on the wrong board because nothing in the composer said which one this was.
+ *
+ * A folder glyph rather than the toolbar's project mark: the mark's favicon
+ * comes from the project registry, and reading that here would reopen every
+ * project's store on each composer mount just to decorate a label.
+ */
+function ProjectTarget(props: { name: string; rootPath: string }): ReactNode {
+  return (
+    <span
+      className="composer-project"
+      title={`New work goes to ${props.name}
+${props.rootPath}`}
+      aria-label={`Project: ${props.name}`}
+    >
+      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+        <path
+          d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.4 1.5h4.8A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinejoin="round"
+        />
+      </svg>
+      <span className="composer-project-name">{props.name}</span>
+    </span>
   );
 }
 

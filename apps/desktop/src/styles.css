@@ -1649,6 +1649,41 @@ pre {
   }
 }
 
+/* The dispatch composer's target project. Quiet, but never the thing that
+   gives first: it is the one fact that decides where the task lands, so under
+   pressure the name ellipsizes and only the narrowest pane folds it to the
+   folder glyph, whose tooltip still names it. */
+.composer-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 22ch;
+  height: 22px;
+  padding: 0 var(--s2);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--text-1) 6%, transparent);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.composer-project > svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+.composer-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@container composer (max-width: 380px) {
+  .composer-project-name {
+    display: none;
+  }
+}
+
 .composer-hint {
   font-size: var(--text-xs);
   color: var(--text-3);
